@@ -5,6 +5,7 @@ import testCasesRouter from './testCases.js';
 import uploadsRouter from './uploads.js';
 import scriptsRouter from './scripts.js';
 import runsRouter from './runs.js';
+import healsRouter from './heals.js';
 
 const router = Router();
 
@@ -22,10 +23,8 @@ router.use('/projects/:projectId/scripts', scriptsRouter);
 // ── Runs (Stage 5) ────────────────────────────────────────────────────────
 router.use('/projects/:projectId/runs', runsRouter);
 
-// ── Healing (Stage 6) ─────────────────────────────────────────────────────
-router.use('/projects/:projectId/heals', (_req: Request, res: Response) => {
-  res.status(501).json({ error: 'Heal routes not yet implemented' });
-});
+// ── Healing (Stage 7) ─────────────────────────────────────────────────────
+router.use('/projects/:projectId/heals', healsRouter);
 
 // ── Reports (Stage 7) ─────────────────────────────────────────────────────
 router.use('/projects/:projectId/reports', (_req: Request, res: Response) => {
