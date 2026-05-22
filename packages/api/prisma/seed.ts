@@ -1,13 +1,13 @@
 import 'dotenv/config';
-import {
-  PrismaClient,
-  GlobalRole,
-  ProjectRole,
-  TestCaseType,
-  TestCaseStatus,
-  Priority,
-} from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+
+// String constants matching schema values (enums not supported in SQLite / Prisma 5)
+const GlobalRole  = { SUPER_ADMIN: 'SUPER_ADMIN', USER: 'USER' } as const;
+const ProjectRole = { ADMIN: 'ADMIN', QA_ENGINEER: 'QA_ENGINEER', VIEWER: 'VIEWER' } as const;
+const TestCaseType   = { UI: 'UI', API: 'API', SIT: 'SIT' } as const;
+const TestCaseStatus = { DRAFT: 'DRAFT', APPROVED: 'APPROVED', DEPRECATED: 'DEPRECATED' } as const;
+const Priority = { LOW: 'LOW', MEDIUM: 'MEDIUM', HIGH: 'HIGH', CRITICAL: 'CRITICAL' } as const;
 
 const prisma = new PrismaClient();
 
