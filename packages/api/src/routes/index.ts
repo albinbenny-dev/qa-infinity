@@ -1,22 +1,22 @@
 import { Router, Request, Response } from 'express';
 import projectsRouter from './projects.js';
 import authRouter from './auth.js';
+import testCasesRouter from './testCases.js';
+import uploadsRouter from './uploads.js';
+import scriptsRouter from './scripts.js';
 
 const router = Router();
 
 // ── Mounted routers ────────────────────────────────────────────────────────
 router.use('/projects', projectsRouter);
 router.use('/auth', authRouter);
+router.use('/upload', uploadsRouter);
 
 // ── Test Cases (Stage 4) ───────────────────────────────────────────────────
-router.use('/projects/:projectId/test-cases', (_req: Request, res: Response) => {
-  res.status(501).json({ error: 'Test case routes not yet implemented' });
-});
+router.use('/projects/:projectId/test-cases', testCasesRouter);
 
-// ── Scripts (Stage 5) ─────────────────────────────────────────────────────
-router.use('/projects/:projectId/scripts', (_req: Request, res: Response) => {
-  res.status(501).json({ error: 'Script routes not yet implemented' });
-});
+// ── Scripts (Stage 6) ─────────────────────────────────────────────────────
+router.use('/projects/:projectId/scripts', scriptsRouter);
 
 // ── Runs (Stage 5) ────────────────────────────────────────────────────────
 router.use('/projects/:projectId/runs', (_req: Request, res: Response) => {

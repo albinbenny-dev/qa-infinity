@@ -6,8 +6,8 @@ export function useProjects() {
   return useQuery({
     queryKey: ['projects'],
     queryFn: async () => {
-      const res = await api.get<Project[]>('/projects');
-      return res.data;
+      const res = await api.get<{ projects: Project[] }>('/projects');
+      return res.data.projects;
     },
   });
 }
@@ -16,8 +16,8 @@ export function useProject(slug: string | undefined) {
   return useQuery({
     queryKey: ['project', slug],
     queryFn: async () => {
-      const res = await api.get<Project[]>('/projects');
-      const project = res.data.find((p) => p.slug === slug);
+      const res = await api.get<{ projects: Project[] }>('/projects');
+      const project = res.data.projects.find((p) => p.slug === slug);
       if (!project) throw new Error(`Project "${slug}" not found`);
       return project;
     },
@@ -30,8 +30,8 @@ export function useProjectById(id: string | undefined) {
   return useQuery({
     queryKey: ['project-by-id', id],
     queryFn: async () => {
-      const res = await api.get<Project>(`/projects/${id}`);
-      return res.data;
+      const res = await api.get<{ project: Project }>(`/projects/${id}`);
+      return res.data.project;
     },
     enabled: !!id,
   });
@@ -46,8 +46,8 @@ export function useCreateProject() {
       baseUrl?: string;
       color?: string;
     }) => {
-      const res = await api.post<Project>('/projects', data);
-      return res.data;
+      const res = await api.post<{ project: Project }>('/projects', data);
+      return res.data.project;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] });
@@ -59,8 +59,8 @@ export function useUpdateProject(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (data: Partial<Project>) => {
-      const res = await api.put<Project>(`/projects/${projectId}`, data);
-      return res.data;
+      const res = await api.put<{ project: Project }>(`/projects/${projectId}`, data);
+      return res.data.project;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] });
@@ -85,10 +85,64 @@ export function useProjectEnvConfigs(projectId: string | undefined) {
   return useQuery({
     queryKey: ['project-envs', projectId],
     queryFn: async () => {
-      const res = await api.get<EnvConfig[]>(`/projects/${projectId}/env-configs`);
-      return res.data;
+      const res = await api.get<{ envs: EnvConfig[] }>(`/projects/${projectId}/envs`);
+      return res.data.envs;
     },
     enabled: !!projectId,
+  });
+}
+
+export function useCreateEnvConfig(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      name: string;
+      baseUrl: string;
+      username?: string;
+      password?: string;
+      isDefault?: boolean;
+    }) => {
+      const res = await api.post<{ env: EnvConfig }>(`/projects/${projectId}/envs`, data);
+      return res.data.env;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-envs', projectId] });
+    },
+  });
+}
+
+export function useUpdateEnvConfig(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...data
+    }: {
+      id: string;
+      name?: string;
+      baseUrl?: string;
+      username?: string | null;
+      password?: string | null;
+      isDefault?: boolean;
+    }) => {
+      const res = await api.put<{ env: EnvConfig }>(`/projects/${projectId}/envs/${id}`, data);
+      return res.data.env;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-envs', projectId] });
+    },
+  });
+}
+
+export function useDeleteEnvConfig(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/projects/${projectId}/envs/${id}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-envs', projectId] });
+    },
   });
 }
 
@@ -96,8 +150,8 @@ export function useProjectMembers(projectId: string | undefined) {
   return useQuery({
     queryKey: ['project-members', projectId],
     queryFn: async () => {
-      const res = await api.get<ProjectMember[]>(`/projects/${projectId}/members`);
-      return res.data;
+      const res = await api.get<{ members: ProjectMember[] }>(`/projects/${projectId}/members`);
+      return res.data.members;
     },
     enabled: !!projectId,
   });
@@ -107,8 +161,8 @@ export function useRequirementDocs(projectId: string | undefined) {
   return useQuery({
     queryKey: ['req-docs', projectId],
     queryFn: async () => {
-      const res = await api.get<RequirementDoc[]>(`/projects/${projectId}/req-docs`);
-      return res.data;
+      const res = await api.get<{ docs: RequirementDoc[] }>(`/projects/${projectId}/req-docs`);
+      return res.data.docs;
     },
     enabled: !!projectId,
   });

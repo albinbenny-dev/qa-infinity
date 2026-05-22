@@ -71,6 +71,8 @@ model EnvConfig {
   projectId String
   name      String
   baseUrl   String
+  username  String?
+  password  String?
   isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

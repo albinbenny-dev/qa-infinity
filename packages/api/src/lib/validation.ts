@@ -59,12 +59,16 @@ export const UpdateMemberSchema = z.object({
 export const CreateEnvConfigSchema = z.object({
   name: z.string().min(1).max(50),
   baseUrl: z.string().url('Must be a valid URL'),
+  username: z.string().max(200).optional(),
+  password: z.string().max(200).optional(),
   isDefault: z.boolean().optional().default(false),
 });
 
 export const UpdateEnvConfigSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   baseUrl: z.string().url('Must be a valid URL').optional(),
+  username: z.string().max(200).optional().nullable(),
+  password: z.string().max(200).optional().nullable(),
   isDefault: z.boolean().optional(),
 });
 

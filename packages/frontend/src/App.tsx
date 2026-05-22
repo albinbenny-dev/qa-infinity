@@ -4,6 +4,9 @@ import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 import GlobalProjects from './pages/GlobalProjects';
 import ProjectSettings from './pages/ProjectSettings';
+import TestWriter from './pages/TestWriter';
+import TCLibrary from './pages/TCLibrary';
+import Scripts from './pages/Scripts';
 import { isAuthenticated } from './lib/auth';
 
 // ── Protected route ────────────────────────────────────────────────────────
@@ -65,9 +68,9 @@ export default function App() {
 
         {/* Per-project screens */}
         <Route path="/projects/:slug/dashboard"    element={<PlaceholderScreen title="Dashboard" />} />
-        <Route path="/projects/:slug/writer"       element={<PlaceholderScreen title="Test Writer" />} />
-        <Route path="/projects/:slug/tc-library"   element={<PlaceholderScreen title="TC Library" />} />
-        <Route path="/projects/:slug/scripts"      element={<PlaceholderScreen title="Script Agent" />} />
+        <Route path="/projects/:slug/writer"       element={<TestWriter />} />
+        <Route path="/projects/:slug/tc-library"   element={<TCLibrary />} />
+        <Route path="/projects/:slug/scripts"      element={<Scripts />} />
         <Route path="/projects/:slug/execution"    element={<PlaceholderScreen title="Execution" />} />
         <Route path="/projects/:slug/healing"      element={<PlaceholderScreen title="Healing Agent" />} />
         <Route path="/projects/:slug/reports"      element={<PlaceholderScreen title="Reports" />} />

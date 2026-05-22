@@ -516,4 +516,63 @@
   /* ── Radix UI overrides ── */
   [role="dialog"] { font-family: var(--font-ui); }
   [data-radix-popper-content-wrapper] { z-index: 9999 !important; }
+
+  /* ── TC Library ── */
+  .tc-checkbox {
+    width: 16px; height: 16px;
+    border-radius: 3px;
+    border: 1.5px solid var(--border2);
+    background: var(--surface2);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    color: white;
+    font-size: 10px;
+    transition: all 0.12s;
+  }
+  .tc-checkbox.checked {
+    background: var(--cyan);
+    border-color: var(--cyan);
+  }
+  .tc-checkbox.indeterminate {
+    background: var(--violet-dim);
+    border-color: var(--violet);
+    color: var(--violet);
+  }
+  .tc-checkbox:hover { border-color: var(--cyan); }
+
+  .tc-item { transition: background 0.12s; }
+  .tc-item:hover { background: var(--surface2) !important; }
+  .tc-item.selected {
+    background: var(--cyan-dim);
+    border-left: 2px solid var(--cyan);
+  }
+
+  /* ── Toggle switch ── */
+  .toggle-switch {
+    position: relative;
+    width: 34px; height: 20px;
+    border-radius: 100px;
+    background: var(--border2);
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle-switch.on { background: var(--violet); }
+  .toggle-knob {
+    position: absolute;
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: white;
+    top: 3px; left: 3px;
+    transition: left 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  }
+  .toggle-switch.on .toggle-knob { left: 17px; }
+
+  /* ── Stats row (library) ── */
+  .stats-row {
+    display: grid;
+    gap: 12px;
+  }
 }

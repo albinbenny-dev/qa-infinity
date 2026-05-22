@@ -282,6 +282,20 @@ projectRouter.delete(
 
 // ── Members ────────────────────────────────────────────────────────────────
 
+// GET /api/projects/:projectId/members — list all members of a project
+projectRouter.get('/members', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const members = await prisma.projectMember.findMany({
+      where: { projectId: req.project.id },
+      include: { user: { select: { id: true, name: true, email: true, globalRole: true } } },
+      orderBy: { joinedAt: 'asc' },
+    });
+    res.json({ members });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/projects/:projectId/members — add a member by email
 projectRouter.post(
   '/members',
@@ -387,7 +401,7 @@ projectRouter.post(
         return;
       }
 
-      const { name, baseUrl, isDefault } = parsed.data;
+      const { name, baseUrl, username, password, isDefault } = parsed.data;
 
       // If new env is default, clear other defaults first
       if (isDefault) {
@@ -398,7 +412,14 @@ projectRouter.post(
       }
 
       const env = await prisma.envConfig.create({
-        data: { projectId: req.project.id, name, baseUrl, isDefault: isDefault ?? false },
+        data: {
+          projectId: req.project.id,
+          name,
+          baseUrl,
+          username: username ?? null,
+          password: password ?? null,
+          isDefault: isDefault ?? false,
+        },
       });
 
       res.status(201).json({ env });

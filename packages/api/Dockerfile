@@ -1,12 +1,18 @@
 FROM node:20-alpine
 
-# Install pnpm and curl (curl needed for HEALTHCHECK)
-RUN npm install -g pnpm && apk add --no-cache curl openssl openssl-dev
+# Install pnpm, curl, and Chromium for UI screenshot capture
+RUN npm install -g pnpm@9 && \
+    apk add --no-cache curl openssl openssl-dev \
+      chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
+# Tell playwright-core where to find the system Chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 WORKDIR /app
 
 # Copy workspace files for dependency resolution
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/api/package.json ./packages/api/
 RUN pnpm install --frozen-lockfile
 

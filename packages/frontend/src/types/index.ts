@@ -45,6 +45,8 @@ export interface EnvConfig {
   projectId: string;
   name: string;
   baseUrl: string;
+  username?: string | null;
+  password?: string | null;
   isDefault: boolean;
 }
 
@@ -96,6 +98,20 @@ export interface RunResult {
   errorMessage?: string;
   screenshotPath?: string;
   tracePath?: string;
+}
+
+export interface Script {
+  id: string;
+  projectId: string;
+  testCaseId?: string | null;
+  filename: string;
+  isCustomUpload: boolean;
+  createdAt: string;
+  updatedAt: string;
+  testCase?: Pick<TestCase, 'id' | 'tcId' | 'title'> & { useCaseTag?: string | null };
+  lastRunStatus?: 'PASSED' | 'FAILED' | 'RUNNING' | 'PENDING' | 'CANCELLED' | null;
+  size?: number | null;
+  modifiedAt?: string | null;
 }
 
 export interface HealProposal {
