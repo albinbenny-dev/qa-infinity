@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "qa-infinity-frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@qa-infinity/frontend", "dev"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}
