@@ -1,14 +1,45 @@
+import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import AppShell from './components/layout/AppShell';
+import Login from './pages/Login';
+import GlobalProjects from './pages/GlobalProjects';
+import ProjectSettings from './pages/ProjectSettings';
+import { isAuthenticated } from './lib/auth';
 
-// ── Placeholder screen component ───────────────────────────────────────────
+// ── Protected route ────────────────────────────────────────────────────────
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+}
+
+// ── Placeholder for screens not yet implemented ────────────────────────────
 function PlaceholderScreen({ title }: { title: string }) {
   return (
-    <div className="min-h-screen bg-bg-base flex items-center justify-center">
-      <div className="card text-center space-y-2 p-8">
-        <div className="text-accent-cyan text-4xl font-bold">∞</div>
-        <h1 className="text-text-primary text-xl font-semibold">{title}</h1>
-        <p className="text-text-muted text-sm">Screen coming in next stage</p>
-      </div>
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '12px',
+        padding: '40px',
+      }}
+    >
+      <div style={{ fontSize: '48px', color: 'var(--6d-orange)' }}>∞</div>
+      <h1 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text)' }}>{title}</h1>
+      <p
+        style={{
+          fontSize: '12px',
+          color: 'var(--text-dim)',
+          fontFamily: 'var(--font-mono)',
+          textAlign: 'center',
+        }}
+      >
+        This screen is coming in an upcoming stage.
+      </p>
     </div>
   );
 }
@@ -17,59 +48,36 @@ function PlaceholderScreen({ title }: { title: string }) {
 export default function App() {
   return (
     <Routes>
-      {/* Root redirect */}
-      <Route path="/" element={<Navigate to="/projects" replace />} />
-
-      {/* Auth */}
-      <Route path="/login" element={<PlaceholderScreen title="Login" />} />
+      {/* Auth pages — no shell */}
+      <Route path="/login"    element={<Login />} />
       <Route path="/register" element={<PlaceholderScreen title="Register" />} />
 
-      {/* Global project list */}
-      <Route path="/projects" element={<PlaceholderScreen title="Projects" />} />
+      {/* All protected pages — wrapped in AppShell */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <AppShell />
+          </ProtectedRoute>
+        }
+      >
+        {/* Global projects list */}
+        <Route path="/projects" element={<GlobalProjects />} />
 
-      {/* Per-project screens */}
-      <Route
-        path="/projects/:slug/dashboard"
-        element={<PlaceholderScreen title="Dashboard" />}
-      />
-      <Route
-        path="/projects/:slug/writer"
-        element={<PlaceholderScreen title="Test Writer" />}
-      />
-      <Route
-        path="/projects/:slug/tc-library"
-        element={<PlaceholderScreen title="TC Library" />}
-      />
-      <Route
-        path="/projects/:slug/scripts"
-        element={<PlaceholderScreen title="Script Agent" />}
-      />
-      <Route
-        path="/projects/:slug/execution"
-        element={<PlaceholderScreen title="Execution" />}
-      />
-      <Route
-        path="/projects/:slug/healing"
-        element={<PlaceholderScreen title="Healing Agent" />}
-      />
-      <Route
-        path="/projects/:slug/reports"
-        element={<PlaceholderScreen title="Reports" />}
-      />
-      <Route
-        path="/projects/:slug/chat"
-        element={<PlaceholderScreen title="Chat Agent" />}
-      />
-      <Route
-        path="/projects/:slug/copy-export"
-        element={<PlaceholderScreen title="Copy / Export" />}
-      />
-      <Route
-        path="/projects/:slug/settings"
-        element={<PlaceholderScreen title="Project Settings" />}
-      />
+        {/* Per-project screens */}
+        <Route path="/projects/:slug/dashboard"    element={<PlaceholderScreen title="Dashboard" />} />
+        <Route path="/projects/:slug/writer"       element={<PlaceholderScreen title="Test Writer" />} />
+        <Route path="/projects/:slug/tc-library"   element={<PlaceholderScreen title="TC Library" />} />
+        <Route path="/projects/:slug/scripts"      element={<PlaceholderScreen title="Script Agent" />} />
+        <Route path="/projects/:slug/execution"    element={<PlaceholderScreen title="Execution" />} />
+        <Route path="/projects/:slug/healing"      element={<PlaceholderScreen title="Healing Agent" />} />
+        <Route path="/projects/:slug/reports"      element={<PlaceholderScreen title="Reports" />} />
+        <Route path="/projects/:slug/chat"         element={<PlaceholderScreen title="Chat Agent" />} />
+        <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />
+        <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
+      </Route>
 
-      {/* Catch-all */}
+      {/* Root redirect */}
+      <Route path="/" element={<Navigate to="/projects" replace />} />
       <Route path="*" element={<Navigate to="/projects" replace />} />
     </Routes>
   );

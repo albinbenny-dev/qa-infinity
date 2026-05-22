@@ -1,15 +1,12 @@
 import { Router, Request, Response } from 'express';
 import projectsRouter from './projects.js';
+import authRouter from './auth.js';
 
 const router = Router();
 
 // ── Mounted routers ────────────────────────────────────────────────────────
 router.use('/projects', projectsRouter);
-
-// ── Auth (Stage 3) ─────────────────────────────────────────────────────────
-router.use('/auth', (_req: Request, res: Response) => {
-  res.status(501).json({ error: 'Auth routes not yet implemented — coming in Stage 3' });
-});
+router.use('/auth', authRouter);
 
 // ── Test Cases (Stage 4) ───────────────────────────────────────────────────
 router.use('/projects/:projectId/test-cases', (_req: Request, res: Response) => {
