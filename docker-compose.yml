@@ -39,6 +39,7 @@ services:
     restart: unless-stopped
     ports:
       - "4000:4000"
+      - "5555:5555"   # Prisma Studio (dev only)
     env_file:
       - .env
     environment:

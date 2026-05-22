@@ -10,8 +10,9 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/api/package.json ./packages/api/
 RUN pnpm install --frozen-lockfile
 
-# Copy Prisma schema (generation requires DATABASE_URL set at runtime)
+# Copy Prisma schema and generate client
 COPY packages/api/prisma ./packages/api/prisma
+RUN cd packages/api && npx prisma generate
 
 # Copy source
 COPY packages/api/src ./packages/api/src
