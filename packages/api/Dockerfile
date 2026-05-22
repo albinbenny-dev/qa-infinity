@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
 # Install pnpm and curl (curl needed for HEALTHCHECK)
-RUN npm install -g pnpm && apk add --no-cache curl
+RUN npm install -g pnpm && apk add --no-cache curl openssl openssl-dev
 
 WORKDIR /app
 
