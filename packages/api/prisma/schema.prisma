@@ -75,38 +75,42 @@ enum MessageRole {
 // ── Models ─────────────────────────────────────────────────────────────────
 
 model User {
-  id           String        @id @default(cuid())
-  email        String        @unique
+  id           String          @id @default(cuid())
+  email        String          @unique
   name         String
   passwordHash String
-  globalRole   GlobalRole    @default(USER)
-  createdAt    DateTime      @default(now())
+  globalRole   GlobalRole      @default(USER)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
   memberships  ProjectMember[]
-  projects     Project[]     @relation("CreatedBy")
+  projects     Project[]       @relation("CreatedBy")
 }
 
 model Project {
-  id             String          @id @default(cuid())
-  name           String
-  slug           String          @unique
-  description    String?
-  baseUrl        String?
-  color          String          @default("#22d3ee")
-  reqLibraryPath String?
-  createdAt      DateTime        @default(now())
-  createdBy      String
-  creator        User            @relation("CreatedBy", fields: [createdBy], references: [id])
+  id              String           @id @default(cuid())
+  name            String
+  slug            String           @unique
+  description     String?
+  baseUrl         String?
+  color           String           @default("#22d3ee")
+  reqLibraryPath  String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  createdBy       String
+  creator         User             @relation("CreatedBy", fields: [createdBy], references: [id])
 
-  members        ProjectMember[]
-  envConfigs     EnvConfig[]
+  members         ProjectMember[]
+  envConfigs      EnvConfig[]
   requirementDocs RequirementDoc[]
-  testCases      TestCase[]
-  scripts        Script[]
-  runs           Run[]
-  schedules      Schedule[]
-  heals          Heal[]
-  reports        Report[]
-  chatMessages   ChatMessage[]
+  testCases       TestCase[]
+  scripts         Script[]
+  runs            Run[]
+  schedules       Schedule[]
+  heals           Heal[]
+  reports         Report[]
+  chatMessages    ChatMessage[]
+
+  @@index([createdBy])
 }
 
 model ProjectMember {
@@ -114,21 +118,26 @@ model ProjectMember {
   projectId String
   userId    String
   role      ProjectRole @default(QA_ENGINEER)
+  createdAt DateTime    @default(now())
   project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, userId])
+  @@index([userId])
 }
 
 model EnvConfig {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   projectId String
   name      String
   baseUrl   String
-  isDefault Boolean @default(false)
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, name])
+  @@index([projectId])
 }
 
 model RequirementDoc {
@@ -140,6 +149,9 @@ model RequirementDoc {
   isActive   Boolean  @default(true)
   uploadedAt DateTime @default(now())
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectId, isActive])
 }
 
 model TestCase {
@@ -148,11 +160,11 @@ model TestCase {
   tcId           String
   title          String
   description    String?
-  steps          String
+  steps          String         @default("[]")
   expectedResult String
   type           TestCaseType   @default(UI)
   tags           String         @default("[]")
-  useCaseTag     String
+  useCaseTag     String?
   status         TestCaseStatus @default(DRAFT)
   priority       Priority       @default(MEDIUM)
   sourceRef      String?
@@ -163,35 +175,46 @@ model TestCase {
   runResults     RunResult[]
 
   @@unique([projectId, tcId])
+  @@index([projectId])
+  @@index([projectId, useCaseTag])
+  @@index([projectId, status])
+  @@index([projectId, type])
 }
 
 model Script {
-  id            String    @id @default(cuid())
-  projectId     String
-  testCaseId    String?
-  filename      String
-  content       String
-  isCustomUpload Boolean  @default(false)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  testCase      TestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
-  runResults    RunResult[]
+  id             String    @id @default(cuid())
+  projectId      String
+  testCaseId     String?
+  filename       String
+  content        String
+  isCustomUpload Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testCase       TestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  runResults     RunResult[]
+
+  @@index([projectId])
+  @@index([testCaseId])
 }
 
 model Run {
-  id          String    @id @default(cuid())
+  id          String      @id @default(cuid())
   projectId   String
   name        String
   environment String
-  status      RunStatus @default(PENDING)
+  status      RunStatus   @default(PENDING)
   startedAt   DateTime?
   completedAt DateTime?
   triggerType TriggerType @default(MANUAL)
-  createdAt   DateTime  @default(now())
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt   DateTime    @default(now())
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   results     RunResult[]
   report      Report?
+
+  @@index([projectId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
 }
 
 model RunResult {
@@ -209,6 +232,9 @@ model RunResult {
   testCase       TestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
   script         Script?   @relation(fields: [scriptId], references: [id], onDelete: SetNull)
   heals          Heal[]
+
+  @@index([runId])
+  @@index([testCaseId])
 }
 
 model Schedule {
@@ -223,6 +249,9 @@ model Schedule {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectId, isActive])
 }
 
 model Heal {
@@ -238,6 +267,9 @@ model Heal {
   updatedAt    DateTime   @updatedAt
   project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   runResult    RunResult  @relation(fields: [runResultId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectId, status])
 }
 
 model Report {
@@ -250,6 +282,8 @@ model Report {
   createdAt   DateTime  @default(now())
   project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   run         Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
 }
 
 model ChatMessage {

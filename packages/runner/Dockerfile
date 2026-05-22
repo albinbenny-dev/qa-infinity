@@ -7,7 +7,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 WORKDIR /app
 
-COPY package.json ./
+# Copy workspace files for dependency resolution
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/runner/package.json ./packages/runner/
 RUN pnpm install --frozen-lockfile
 
 # Volumes mounted at runtime:
