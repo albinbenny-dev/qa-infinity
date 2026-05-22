@@ -6,6 +6,9 @@ import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import apiRouter from './routes/index.js';
+import { setRunsNamespace } from './lib/socket.js';
+import { loadSchedules } from './lib/scheduler.js';
+import { startRunWorker } from './jobs/runWorker.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -26,9 +29,13 @@ runsNamespace.on('connection', (socket) => {
   if (runId) {
     void socket.join(`run:${runId}`);
   }
+  socket.on('joinRun', ({ runId: rid }: { runId: string }) => {
+    if (rid) void socket.join(`run:${rid}`);
+  });
 });
 
-export { runsNamespace };
+// Register namespace so workers can emit without circular imports
+setRunsNamespace(runsNamespace);
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
@@ -85,4 +92,16 @@ httpServer.listen(PORT, () => {
   console.log(`[qa-api] Server running  → http://0.0.0.0:${PORT}`);
   console.log(`[qa-api] Environment     → ${process.env.NODE_ENV ?? 'development'}`);
   console.log(`[qa-api] Socket.io       → /runs namespace ready`);
+
+  // Start BullMQ worker only if Redis is configured
+  if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {
+    try {
+      startRunWorker();
+    } catch (err) {
+      console.warn('[qa-api] Run worker failed to start (Redis may be unavailable):', (err as Error).message);
+    }
+  }
+
+  // Load saved schedules from DB
+  void loadSchedules();
 });

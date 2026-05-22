@@ -41,8 +41,8 @@ export default function UseCaseGroup({
   const tcIds = tcs.map((tc) => tc.id);
   const selectedCount = tcIds.filter((id) => selectedIds.has(id)).length;
   const allSelected = tcIds.length > 0 && selectedCount === tcIds.length;
-  const passedCount = tcs.filter((tc) => tc.lastRun?.status === 'pass').length;
-  const failedCount = tcs.filter((tc) => tc.lastRun?.status === 'fail').length;
+  const passedCount = tcs.filter((tc) => tc.lastRun?.status === 'PASSED').length;
+  const failedCount = tcs.filter((tc) => tc.lastRun?.status === 'FAILED').length;
 
   function handleHeaderCheckbox(e: React.MouseEvent) {
     e.stopPropagation();

@@ -12,10 +12,17 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/runner/package.json ./packages/runner/
 RUN pnpm install --frozen-lockfile
 
+# Copy runner HTTP server source
+COPY packages/runner/src ./packages/runner/src
+
 # Volumes mounted at runtime:
-#   /scripts    → compiled .spec.ts files partitioned by projectId
+#   /scripts    → compiled .spec.js files partitioned by projectId
 #   /artifacts  → screenshots, traces, videos partitioned by projectId
-#
-# This container has no CMD — the qa-api triggers runs via:
-#   docker exec qa-runner pnpm playwright test /scripts/{projectId}/{script}.spec.ts
 VOLUME ["/scripts", "/artifacts"]
+
+EXPOSE 5001
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:5001/health || exit 1
+
+CMD ["node", "packages/runner/src/index.js"]

@@ -18,13 +18,13 @@ export default function Sidebar({ slug }: SidebarProps) {
           label: 'Overview',
           items: [
             { label: 'Dashboard', path: `/projects/${slug}/dashboard`, icon: '▦' },
+            { label: 'TC Library', path: `/projects/${slug}/tc-library`, icon: '📋', badge: activeProject?._count?.testCases ?? undefined, badgeVariant: 'green' },
           ],
         },
         {
           label: 'Agents',
           items: [
             { label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', badge: 'AI', badgeVariant: 'blue' },
-            { label: 'TC Library', path: `/projects/${slug}/tc-library`, icon: '📋', badge: activeProject?._count?.testCases ?? undefined, badgeVariant: 'green' },
             { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨' },
             { label: 'Execution', path: `/projects/${slug}/execution`, icon: '▶' },
             { label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳' },
@@ -143,7 +143,6 @@ export default function Sidebar({ slug }: SidebarProps) {
         <Link
           to="/projects"
           className={`nav-item${location.pathname === '/projects' ? ' active' : ''}`}
-          style={{ fontSize: '12px', padding: '6px 10px' }}
         >
           <span className="nav-icon">🌐</span>
           All Projects

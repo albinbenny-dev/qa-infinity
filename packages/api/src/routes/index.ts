@@ -4,6 +4,7 @@ import authRouter from './auth.js';
 import testCasesRouter from './testCases.js';
 import uploadsRouter from './uploads.js';
 import scriptsRouter from './scripts.js';
+import runsRouter from './runs.js';
 
 const router = Router();
 
@@ -19,9 +20,7 @@ router.use('/projects/:projectId/test-cases', testCasesRouter);
 router.use('/projects/:projectId/scripts', scriptsRouter);
 
 // ── Runs (Stage 5) ────────────────────────────────────────────────────────
-router.use('/projects/:projectId/runs', (_req: Request, res: Response) => {
-  res.status(501).json({ error: 'Run routes not yet implemented' });
-});
+router.use('/projects/:projectId/runs', runsRouter);
 
 // ── Healing (Stage 6) ─────────────────────────────────────────────────────
 router.use('/projects/:projectId/heals', (_req: Request, res: Response) => {

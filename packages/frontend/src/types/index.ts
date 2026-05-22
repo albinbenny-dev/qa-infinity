@@ -93,11 +93,24 @@ export interface RunResult {
   id: string;
   runId: string;
   testCaseId: string;
-  status: 'pass' | 'fail' | 'skip';
+  status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'CANCELLED';
   duration?: number;
   errorMessage?: string;
   screenshotPath?: string;
   tracePath?: string;
+}
+
+export interface Schedule {
+  id: string;
+  projectId: string;
+  name: string;
+  cronExpression: string;
+  testCaseIds: string;
+  environment: string;
+  isActive: boolean;
+  emailRecipients: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Script {
