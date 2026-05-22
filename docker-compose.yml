@@ -1,0 +1,103 @@
+name: qa-infinity
+
+# ── Named volumes ──────────────────────────────────────────────────────────
+volumes:
+  qa-data:
+    driver: local
+  qa-scripts:
+    driver: local
+  qa-artifacts:
+    driver: local
+  qa-reqdocs:
+    driver: local
+
+# ── Services ───────────────────────────────────────────────────────────────
+services:
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  qa-redis:
+    image: redis:7-alpine
+    container_name: qa-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - qa-net
+
+  # ── API ──────────────────────────────────────────────────────────────────
+  qa-api:
+    build:
+      context: ./packages/api
+      dockerfile: Dockerfile
+    container_name: qa-api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+      - REDIS_URL=redis://qa-redis:6379
+      - DATABASE_URL=file:/data/qa-infinity.db
+      - CORS_ORIGIN=http://localhost:3000
+    depends_on:
+      qa-redis:
+        condition: service_healthy
+    volumes:
+      - qa-data:/data
+      - qa-scripts:/scripts
+      - qa-artifacts:/artifacts
+      - qa-reqdocs:/requirements
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - qa-net
+
+  # ── Runner ───────────────────────────────────────────────────────────────
+  qa-runner:
+    build:
+      context: ./packages/runner
+      dockerfile: Dockerfile
+    container_name: qa-runner
+    restart: unless-stopped
+    depends_on:
+      qa-api:
+        condition: service_healthy
+    volumes:
+      - qa-scripts:/scripts
+      - qa-artifacts:/artifacts
+    networks:
+      - qa-net
+
+  # ── UI ───────────────────────────────────────────────────────────────────
+  qa-ui:
+    build:
+      context: ./packages/frontend
+      dockerfile: Dockerfile
+    container_name: qa-ui
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      qa-api:
+        condition: service_healthy
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - qa-net
+
+# ── Network ────────────────────────────────────────────────────────────────
+networks:
+  qa-net:
+    driver: bridge

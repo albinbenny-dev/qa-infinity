@@ -1,6 +1,46 @@
-﻿.env
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# Dependencies
 node_modules/
+**/node_modules/
+
+# Build outputs
 dist/
+**/dist/
+build/
+
+# Database files
 *.db
-coverage/
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Prisma generated client
+packages/api/src/generated/
+
+# Playwright artifacts
+test-results/
+playwright-report/
+**/artifacts/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Test coverage
+coverage/
+
+# pnpm
+.pnpm-store/

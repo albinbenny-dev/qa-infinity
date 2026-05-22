@@ -1,20 +1,27 @@
 {
   "name": "qa-infinity",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "description": "Autonomous AI-powered QA automation platform",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "concurrently -n api,ui -c cyan,magenta \"pnpm --filter @qa-infinity/api dev\" \"pnpm --filter @qa-infinity/frontend dev\"",
+    "build": "pnpm --filter @qa-infinity/api build && pnpm --filter @qa-infinity/frontend build",
+    "type-check": "pnpm --filter @qa-infinity/api tsc --noEmit && pnpm --filter @qa-infinity/frontend type-check",
+    "docker:up": "docker compose up --build",
+    "docker:up:detach": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:logs:api": "docker compose logs -f qa-api",
+    "docker:reset": "docker compose down -v && docker compose up --build -d"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "^11.2.2",
+      "version": "^9.0.0",
       "onFail": "download"
     }
-  },
-  "type": "module"
+  }
 }
