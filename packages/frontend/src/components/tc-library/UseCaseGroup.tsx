@@ -16,6 +16,7 @@ export interface UseCaseGroupProps {
   onRunIndividual: (tc: TestCase) => void;
   onDeleteTc: (tc: TestCase) => void;
   onDeleteGroup: (name: string) => void;
+  onEditTc: (tc: TestCase) => void;
 }
 
 const COLUMNS_HEADER = ['', 'Test Case', 'Type', 'Automation', 'Last Run', ''];
@@ -34,6 +35,7 @@ export default function UseCaseGroup({
   onRunIndividual,
   onDeleteTc,
   onDeleteGroup,
+  onEditTc,
 }: UseCaseGroupProps) {
   const [expandedTcId, setExpandedTcId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -287,6 +289,7 @@ export default function UseCaseGroup({
               onToggle={onToggleTc}
               onRunIndividual={onRunIndividual}
               onDelete={onDeleteTc}
+              onEdit={onEditTc}
               isExpanded={expandedTcId === tc.id}
               onExpand={handleExpandTc}
             />

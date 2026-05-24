@@ -6,6 +6,7 @@ import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { addRunJob } from '../lib/queue.js';
 import { registerSchedule, unregisterSchedule } from '../lib/scheduler.js';
 import { testRunQueue } from '../lib/queue.js';
+import { emitToRun } from '../lib/socket.js';
 
 // ── Zod schemas ────────────────────────────────────────────────────────────
 
@@ -61,12 +62,16 @@ async function resolveScriptPaths(
     }));
 }
 
-async function getEnvBaseUrl(projectId: string, envName: string): Promise<string> {
+async function getEnvConfig(projectId: string, envName: string): Promise<{ baseUrl: string; username: string; password: string }> {
   const env = await prisma.envConfig.findFirst({
     where: { projectId, name: envName },
-    select: { baseUrl: true },
+    select: { baseUrl: true, username: true, password: true },
   });
-  return env?.baseUrl ?? '';
+  return {
+    baseUrl: env?.baseUrl ?? '',
+    username: env?.username ?? '',
+    password: env?.password ?? '',
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -161,6 +166,58 @@ router.put('/schedules/:id', async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 });
 
+// POST /runs/schedules/:id/run-now  → immediately fire a schedule
+router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const schedule = await prisma.schedule.findFirst({
+      where: { id, projectId: req.project.id },
+    });
+    if (!schedule) { res.status(404).json({ error: 'Schedule not found' }); return; }
+
+    const testCaseIds: string[] = JSON.parse(schedule.testCaseIds);
+    if (testCaseIds.length === 0) {
+      res.status(400).json({ error: 'Schedule has no test cases configured.' });
+      return;
+    }
+
+    const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
+    if (resolved.length === 0) {
+      res.status(400).json({ error: 'No scripts found for scheduled test cases. Generate scripts first.' });
+      return;
+    }
+
+    const envConfig = await getEnvConfig(req.project.id, schedule.environment);
+
+    const run = await prisma.run.create({
+      data: {
+        projectId: req.project.id,
+        name: `Scheduled (now): ${schedule.name}`,
+        environment: schedule.environment,
+        status: 'PENDING',
+        triggerType: 'SCHEDULED',
+      },
+    });
+
+    await addRunJob({
+      runId: run.id,
+      projectId: req.project.id,
+      testCaseIds: resolved.map((r) => r.testCaseId),
+      scriptPaths: resolved.map((r) => r.scriptPath),
+      environment: schedule.environment,
+      envBaseUrl: envConfig.baseUrl,
+      envUsername: envConfig.username,
+      envPassword: envConfig.password,
+      parallelWorkers: 2,
+      headless: true,
+      browser: 'chromium',
+      triggerType: 'SCHEDULED',
+    });
+
+    res.status(201).json({ run });
+  } catch (err) { next(err); }
+});
+
 // DELETE /runs/schedules/:id
 router.delete('/schedules/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -193,7 +250,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return;
     }
 
-    const envBaseUrl = await getEnvBaseUrl(req.project.id, environment);
+    const envConfig = await getEnvConfig(req.project.id, environment);
 
     const run = await prisma.run.create({
       data: {
@@ -211,7 +268,9 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
       environment,
-      envBaseUrl,
+      envBaseUrl: envConfig.baseUrl,
+      envUsername: envConfig.username,
+      envPassword: envConfig.password,
       parallelWorkers,
       headless,
       browser,
@@ -242,7 +301,7 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
       return;
     }
 
-    const envBaseUrl = await getEnvBaseUrl(req.project.id, environment);
+    const envConfig = await getEnvConfig(req.project.id, environment);
 
     const run = await prisma.run.create({
       data: {
@@ -260,7 +319,9 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
       testCaseIds: [testCaseId],
       scriptPaths: [resolved[0].scriptPath],
       environment,
-      envBaseUrl,
+      envBaseUrl: envConfig.baseUrl,
+      envUsername: envConfig.username,
+      envPassword: envConfig.password,
       parallelWorkers: 1,
       headless,
       browser,
@@ -282,11 +343,11 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
     const { useCaseTag, environment, parallelWorkers, headless, browser } = parsed.data;
 
     const tcs = await prisma.testCase.findMany({
-      where: { projectId: req.project.id, useCaseTag, status: 'APPROVED' },
+      where: { projectId: req.project.id, useCaseTag, status: { in: ['APPROVED', 'DRAFT'] } },
       select: { id: true },
     });
     if (tcs.length === 0) {
-      res.status(400).json({ error: `No approved test cases in use case group "${useCaseTag}"` });
+      res.status(400).json({ error: `No test cases found in use case group "${useCaseTag}"` });
       return;
     }
 
@@ -297,7 +358,7 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
       return;
     }
 
-    const envBaseUrl = await getEnvBaseUrl(req.project.id, environment);
+    const envConfig = await getEnvConfig(req.project.id, environment);
 
     const run = await prisma.run.create({
       data: {
@@ -315,7 +376,9 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
       environment,
-      envBaseUrl,
+      envBaseUrl: envConfig.baseUrl,
+      envUsername: envConfig.username,
+      envPassword: envConfig.password,
       parallelWorkers,
       headless,
       browser,
@@ -390,7 +453,10 @@ router.post('/:runId/cancel', async (req: Request, res: Response, next: NextFunc
       data: { status: 'CANCELLED', completedAt: new Date() },
     });
 
-    // Try to remove from queue if still pending
+    // Immediately tell the frontend the run is cancelled — don't wait for the worker
+    emitToRun(run.id, 'run:cancelled', { runId: run.id });
+
+    // Try to remove from queue if still pending (no-op if already executing)
     try {
       const job = await testRunQueue.getJob(run.id);
       if (job) await job.remove();

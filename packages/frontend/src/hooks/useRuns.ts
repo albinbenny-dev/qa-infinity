@@ -168,15 +168,38 @@ export function useCreateSchedule(projectId: string) {
   });
 }
 
+export interface UpdateSchedulePayload {
+  id: string;
+  name?: string;
+  cronExpression?: string;
+  testCaseIds?: string[];
+  environment?: string;
+  isActive?: boolean;
+  emailRecipients?: string[];
+}
+
 export function useUpdateSchedule(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...data }: { id: string; isActive?: boolean; name?: string; cronExpression?: string }) => {
+    mutationFn: async ({ id, ...data }: UpdateSchedulePayload) => {
       const res = await api.put<{ schedule: Schedule }>(`/projects/${projectId}/runs/schedules/${id}`, data);
       return res.data.schedule;
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['schedules', projectId] });
+    },
+  });
+}
+
+export function useRunNow(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (scheduleId: string) => {
+      const res = await api.post<{ run: Run }>(`/projects/${projectId}/runs/schedules/${scheduleId}/run-now`);
+      return res.data.run;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['runs', projectId] });
     },
   });
 }

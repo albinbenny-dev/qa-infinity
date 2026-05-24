@@ -70,7 +70,7 @@ export default function TCListPanel({
 }: TCListPanelProps) {
   const [viewMode, setViewMode] = useState<'usecase' | 'flat'>('usecase');
   const [typeFilter, setTypeFilter] = useState<'' | 'UI' | 'API' | 'SIT'>('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('scripted');
   const [search, setSearch] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(AIRTEL_USE_CASES));
 

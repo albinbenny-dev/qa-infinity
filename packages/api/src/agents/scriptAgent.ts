@@ -1,5 +1,8 @@
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { createLLM } from '../lib/llm.js';
+import { prisma } from '../lib/prisma.js';
+import { readScript } from '../services/scriptFileService.js';
+import type { LoginInstructions, NavNode, PageLocators } from '../types/scanner.js';
 
 export interface ScriptAgentInput {
   testCase: {
@@ -11,12 +14,15 @@ export interface ScriptAgentInput {
     expectedResult: string;
     type: string;
     useCaseTag?: string | null;
+    generationHints?: string | null; // stored per-TC hints
   };
   project: {
+    id: string;
     name: string;
     baseUrl?: string | null;
   };
   existingPOMs: string[]; // filenames of already-generated POM classes
+  contextNote?: string;   // ephemeral user-typed context for this run
 }
 
 export interface ScriptAgentResult {
@@ -25,13 +31,42 @@ export interface ScriptAgentResult {
   pomFilename?: string;
 }
 
-const SYSTEM_PROMPT = `You are a senior QA automation engineer for the Airtel Ventas platform.
+const SYSTEM_PROMPT_BASE = `You are a senior QA automation engineer.
 Generate a production-ready Playwright TypeScript test using @playwright/test
-for the Airtel Ventas platform (baseUrl: {BASE_URL}).
+for the target application (baseUrl: {BASE_URL}).
 Page Object Model pattern required. Import POMs from ./pages/.
 Locator priority: getByRole > getByLabel > getByTestId > CSS > XPath.
-Use page.goto('/ventas/...') for navigation — preserve Ventas URL patterns.
 Return ONLY raw TypeScript — no markdown fences, no explanations.
+
+{PLATFORM_CONTEXT}
+
+### Base URL — CRITICAL
+The Playwright config sets baseURL from the BASE_URL environment variable at runtime.
+ALWAYS use relative paths in page.goto() calls — e.g. page.goto('/') NOT page.goto('http://localhost:3000/').
+Never hardcode an absolute URL in any page.goto(), page.request, or navigation call.
+
+### Timeout Defaults for Post-Login Assertions
+- Use { timeout: 15000 } on toBeVisible() and toHaveURL() calls that follow a login action.
+
+### Shared login — CRITICAL
+When multiple tests in the same describe block all require a login step:
+- EITHER write ONE comprehensive test that covers all the behaviours in sequence.
+- OR use test.beforeAll to log in ONCE and reuse the context (via storageState) across tests.
+- NEVER write 3 (or more) separate tests that each independently call navigate() + login().
+  Repeating full login in every test multiplies run time and generates redundant heal jobs on failure.
+
+### Never hardcode dynamic/installation-specific values — CRITICAL
+Do NOT hardcode project slugs, user IDs, entity names, or any value that changes per installation.
+BAD:  page.goto('/projects/test/dashboard')  ← 'test' is a hardcoded slug
+GOOD: skip navigation to specific entities, or derive slug/id from a previous step or env var.
+If the test case requires navigating into a specific project/entity, use process.env.TEST_PROJECT_SLUG
+or note in a comment that the value must be replaced — do not invent a placeholder slug.
+
+### POM method contract — CRITICAL
+Every method called on a POM instance in the spec (e.g. loginPage.login(), dashboardPage.waitForLoad())
+MUST be explicitly defined in the ===POM=== section of your response.
+Do not call any method that you have not written in the POM class body.
+If no suitable method exists, write one in the POM — never call an undefined method.
 
 Output format — use these exact separators:
 ===SPEC===
@@ -43,17 +78,265 @@ If a suitable POM already exists (listed in existingPOMs), skip the ===POM=== se
 The spec file must import from '@playwright/test', include a test.describe block,
 use async/await, and handle assertions with expect().`;
 
+const SYSTEM_PROMPT_SELF_CONTAINED = `You are a senior QA automation engineer.
+Generate a production-ready Playwright TypeScript test using @playwright/test
+for the target application (baseUrl: {BASE_URL}).
+Self-contained mode: do NOT import from ./pages/ or any local modules.
+All page interactions must be written inline in this single file.
+Locator priority: getByRole > getByLabel > getByTestId > CSS > XPath.
+Return ONLY raw TypeScript — no markdown fences, no explanations.
+
+{PLATFORM_CONTEXT}
+
+### Base URL — CRITICAL
+The Playwright config sets baseURL from the BASE_URL environment variable at runtime.
+ALWAYS use relative paths in page.goto() calls — e.g. page.goto('/') NOT page.goto('http://localhost:3000/').
+Never hardcode an absolute URL in any page.goto(), page.request, or navigation call.
+
+### Timeout Defaults for Post-Login Assertions
+- Use { timeout: 15000 } on toBeVisible() and toHaveURL() calls that follow a login action.
+
+### Shared login — CRITICAL
+When multiple tests in the same describe block all require a login step:
+- EITHER write ONE comprehensive test that covers all the behaviours in sequence.
+- OR use test.beforeAll to log in ONCE and reuse the context (via storageState) across tests.
+- NEVER write 3 (or more) separate tests that each independently call navigate() + login().
+  Repeating full login in every test multiplies run time and generates redundant heal jobs on failure.
+
+### Never hardcode dynamic/installation-specific values — CRITICAL
+Do NOT hardcode project slugs, user IDs, entity names, or any value that changes per installation.
+BAD:  page.goto('/projects/test/dashboard')  ← 'test' is a hardcoded slug
+GOOD: skip navigation to specific entities, or derive slug/id from a previous step or env var.
+If the test case requires navigating into a specific project/entity, use process.env.TEST_PROJECT_SLUG
+or note in a comment that the value must be replaced — do not invent a placeholder slug.
+
+Output format — use this exact separator:
+===SPEC===
+<content of the .spec.ts file>
+
+The spec file must import from '@playwright/test', include a test.describe block,
+use async/await, and handle assertions with expect().`;
+
+export async function getProjectPlatformSection(
+  projectId: string,
+  useCaseTag?: string | null,
+): Promise<string> {
+  const ctx = await prisma.projectContext.findUnique({ where: { projectId } });
+
+  if (!ctx || !ctx.loginInstructions) {
+    return [
+      '## Platform Context',
+      '(No UI scan found for this project — run a UI scan from Project Settings > UI Scanner to enable real locators)',
+      '',
+      'Locator priority: getByRole > getByLabel > getByTestId > CSS > XPath.',
+    ].join('\n');
+  }
+
+  const login = JSON.parse(ctx.loginInstructions) as LoginInstructions;
+  const navMap = ctx.navigationMap ? (JSON.parse(ctx.navigationMap) as NavNode[]) : [];
+  const locators = ctx.pageLocators
+    ? (JSON.parse(ctx.pageLocators) as Record<string, PageLocators>)
+    : {};
+
+  const loginSection = buildLoginSection(login);
+  const navSection = buildNavSection(navMap, useCaseTag);
+  const locatorSection = buildLocatorSection(locators, useCaseTag, navMap);
+
+  const sections = [
+    `## Platform Context — ${new Date().toISOString().split('T')[0]} (from UI scan)`,
+    '',
+  ];
+
+  if (ctx.customInstructions) {
+    sections.push('### Custom Project Instructions');
+    sections.push(ctx.customInstructions);
+    sections.push('');
+  }
+
+  sections.push(loginSection, '', navSection, '', locatorSection);
+
+  return sections.join('\n');
+}
+
+function buildLoginSection(login: LoginInstructions): string {
+  const lines = ['### Login Flow'];
+  lines.push(`Login type: ${login.loginType}`);
+  lines.push(`Post-login URL: ${login.postLoginUrl}`);
+  if (login.notes) lines.push(`Notes: ${login.notes}`);
+  lines.push('');
+  lines.push('Selectors:');
+  lines.push(`  Username: ${login.selectors.username || '(not detected)'}`);
+  lines.push(`  Password: ${login.selectors.password || '(not detected)'}`);
+  lines.push(`  Submit:   ${login.selectors.submit || '(not detected)'}`);
+  lines.push('');
+  lines.push('Steps:');
+  for (const step of login.steps) {
+    const sel = step.selector ? ` [${step.selector}]` : '';
+    lines.push(`  ${step.order}. ${step.action}: ${step.description}${sel}`);
+  }
+  lines.push('');
+  lines.push('Credentials come from env vars: process.env.TC_USERNAME and process.env.TC_PASSWORD');
+  return lines.join('\n');
+}
+
+function buildNavSection(navMap: NavNode[], useCaseTag?: string | null): string {
+  const lines = ['### Navigation Map'];
+  if (navMap.length === 0) {
+    lines.push('(No navigation map available)');
+    return lines.join('\n');
+  }
+
+  function renderNode(node: NavNode, indent: number): void {
+    const prefix = '  '.repeat(indent);
+    lines.push(`${prefix}- ${node.label}: ${node.url}`);
+    for (const child of (node.children ?? [])) {
+      renderNode(child, indent + 1);
+    }
+  }
+
+  const nodesToRender = useCaseTag
+    ? navMap.filter((n) => n.label.toLowerCase().includes(useCaseTag.toLowerCase()) || (n.children ?? []).some((c) => c.label.toLowerCase().includes(useCaseTag.toLowerCase())))
+    : navMap;
+
+  for (const node of (nodesToRender.length > 0 ? nodesToRender : navMap).slice(0, 40)) {
+    renderNode(node, 0);
+  }
+
+  return lines.join('\n');
+}
+
+function buildLocatorSection(
+  locators: Record<string, PageLocators>,
+  useCaseTag?: string | null,
+  navMap?: NavNode[],
+): string {
+  const lines = ['### Page Locators'];
+  const entries = Object.values(locators);
+
+  if (entries.length === 0) {
+    lines.push('(No locators captured)');
+    return lines.join('\n');
+  }
+
+  // Scope to use case if provided
+  let filtered = entries;
+  if (useCaseTag && navMap) {
+    const matchingLabels = new Set(
+      navMap
+        .filter((n) => n.label.toLowerCase().includes(useCaseTag.toLowerCase()))
+        .map((n) => n.label.toLowerCase()),
+    );
+    if (matchingLabels.size > 0) {
+      filtered = entries.filter((e) => matchingLabels.has(e.navLabel.toLowerCase()));
+    }
+  }
+
+  for (const page of filtered.slice(0, 15)) {
+    lines.push(`\n#### ${page.navLabel} (${page.urlPattern})`);
+    for (const loc of page.locators.slice(0, 20)) {
+      lines.push(`  - ${loc.semanticName}: \`${loc.selector}\``);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ── Golden examples (few-shot grounding) ──────────────────────────────────
+
+async function getGoldenExamples(
+  projectId: string,
+  useCaseTag?: string | null,
+): Promise<string> {
+  const goldenScripts = await prisma.script.findMany({
+    where: {
+      projectId,
+      isGolden: true,
+      ...(useCaseTag ? { testCase: { useCaseTag } } : {}),
+    },
+    include: { testCase: { select: { tcId: true, title: true } } },
+    orderBy: { updatedAt: 'desc' },
+    take: 2,
+  });
+
+  // Fall back to any golden scripts from this project if none match the use-case
+  const scripts =
+    goldenScripts.length > 0
+      ? goldenScripts
+      : await prisma.script.findMany({
+          where: { projectId, isGolden: true },
+          include: { testCase: { select: { tcId: true, title: true } } },
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+        });
+
+  if (scripts.length === 0) return '';
+
+  const lines: string[] = [
+    '## Working Examples From This Project',
+    'The following scripts have been verified against this application.',
+    'Match their selector style, base URL usage, navigation patterns, and import paths exactly.',
+    '',
+  ];
+
+  for (const s of scripts) {
+    const label = s.testCase
+      ? `${s.testCase.tcId} — ${s.testCase.title}`
+      : s.filename;
+    lines.push(`### Example: ${label}`);
+    try {
+      const content = readScript(s.projectId, s.filename);
+      // Cap at 3000 chars to avoid context bloat; include from top
+      lines.push('```typescript');
+      lines.push(content.slice(0, 3000));
+      if (content.length > 3000) lines.push('// … (truncated)');
+      lines.push('```');
+    } catch {
+      // File not on disk — fall back to DB content
+      if (s.content) {
+        lines.push('```typescript');
+        lines.push(s.content.slice(0, 3000));
+        if (s.content.length > 3000) lines.push('// … (truncated)');
+        lines.push('```');
+      }
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
 export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAgentResult> {
-  const llm = createLLM({ temperature: 0.1 });
+  const llm = createLLM({ temperature: 0.1, agentName: 'script-agent', projectId: input.project.id });
 
   const baseUrl = input.project.baseUrl ?? 'http://localhost:3000';
-  const systemPrompt = SYSTEM_PROMPT.replace('{BASE_URL}', baseUrl);
+  const [platformSection, goldenSection] = await Promise.all([
+    getProjectPlatformSection(input.project.id, input.testCase.useCaseTag),
+    getGoldenExamples(input.project.id, input.testCase.useCaseTag),
+  ]);
+  const fullPlatformContext = goldenSection
+    ? `${platformSection}\n\n${goldenSection}`
+    : platformSection;
+  const promptTemplate = input.existingPOMs.length === 0
+    ? SYSTEM_PROMPT_SELF_CONTAINED
+    : SYSTEM_PROMPT_BASE;
+  const systemPrompt = promptTemplate
+    .replace('{BASE_URL}', baseUrl)
+    .replace('{PLATFORM_CONTEXT}', fullPlatformContext);
 
   const steps = parseJsonArray(input.testCase.steps);
   const pomListText =
     input.existingPOMs.length > 0
       ? `\nExisting POMs (do NOT regenerate): ${input.existingPOMs.join(', ')}`
-      : '\nNo existing POMs yet — generate one if needed.';
+      : '\nNo existing POMs — write self-contained inline code only. Do NOT import from ./pages/.';
+
+  // Build combined user context: stored hints + ephemeral contextNote
+  const contextParts: string[] = [];
+  if (input.testCase.generationHints?.trim()) {
+    contextParts.push(`Stored hints for this test case:\n${input.testCase.generationHints.trim()}`);
+  }
+  if (input.contextNote?.trim()) {
+    contextParts.push(`Additional context provided for this run:\n${input.contextNote.trim()}`);
+  }
 
   const userPrompt = [
     `Project: ${input.project.name}`,
@@ -71,6 +354,11 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     ...steps.map((s, i) => `  ${i + 1}. ${s}`),
     '',
     `Expected Result: ${input.testCase.expectedResult}`,
+    ...(contextParts.length > 0 ? [
+      '',
+      '### User Context & Locator Hints — FOLLOW THESE EXACTLY',
+      ...contextParts,
+    ] : []),
   ].join('\n');
 
   const response = await llm.invoke([new SystemMessage(systemPrompt), new HumanMessage(userPrompt)]);

@@ -84,6 +84,20 @@
 }
 
 /* ═══════════════════════════════════════════════════
+   SCAN PROGRESS ANIMATION
+═══════════════════════════════════════════════════ */
+@keyframes scan-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+.scan-progress-fill-animated {
+  background-size: 200% 100%;
+  background-image: linear-gradient(90deg, var(--6d-blue) 0%, var(--6d-orange) 50%, var(--6d-blue) 100%);
+  animation: scan-shimmer 2s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════
    BASE
 ═══════════════════════════════════════════════════ */
 @layer base {

@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
 # Install pnpm, curl, and Chromium for UI screenshot capture
-RUN npm install -g pnpm@9 && \
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate && \
     apk add --no-cache curl openssl openssl-dev \
       chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
@@ -14,7 +14,8 @@ WORKDIR /app
 # Copy workspace files for dependency resolution
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/api/package.json ./packages/api/
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Copy Prisma schema and generate client
 COPY packages/api/prisma ./packages/api/prisma
@@ -29,4 +30,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-CMD ["pnpm", "--filter", "@qa-infinity/api", "dev"]
+CMD sh -c "cd packages/api && npx prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"

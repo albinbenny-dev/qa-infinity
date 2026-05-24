@@ -10,6 +10,12 @@ export interface WriterInput {
   projectName: string;
   testTypes: ('UI' | 'API' | 'SIT')[];
   additionalContext?: string;
+  existingUseCaseTags?: string[];
+  /** Titles of test cases already saved in the project — writer must not generate duplicates */
+  existingTestCaseTitles?: string[];
+  projectContextSummary?: string;
+  /** Exact number of test cases the agent must produce for this call */
+  targetTcCount?: number;
 }
 
 const GeneratedTestCaseSchema = z.object({
@@ -31,39 +37,78 @@ export interface WriterResult {
   duplicatesRemoved: number;
 }
 
-const SYSTEM_PROMPT = `You are a senior QA engineer for the Airtel Ventas platform.
-Generate targeted test cases from the provided inputs. Maximum 15 test cases total.
-Use project library docs as background context.
+const SYSTEM_PROMPT = `You are a senior QA engineer.
+Generate test cases from the provided inputs. The caller specifies the TARGET_TC_COUNT; produce exactly that many test cases — no more, no fewer.
+
+PROJECT REQUIREMENT LIBRARY: The prompt includes a section with uploaded requirement docs (BRD, HLD, existing test cases, specs).
+Use these as authoritative context — derive test scenarios, acceptance criteria, and business rules directly from them.
+If a document already contains test case titles or scenarios, use them as a foundation and expand coverage.
+
+EXISTING TEST CASES: If the prompt contains an EXISTING TEST CASES section, you MUST check every title you plan to generate
+against that list. Do NOT generate a test case that is substantially similar (same feature + same action + same outcome)
+to any existing one. If all obvious scenarios are already covered, generate tests for edge cases, negative paths, or
+combinations not yet represented.
 
 When UI screenshots are provided, carefully analyse the actual screen:
 - Identify every form, input field, button, dropdown, and navigation element visible.
 - Derive test cases that cover the visible happy paths, form validations, empty states, and error conditions.
 - Note any visible labels, placeholders, or hint text and use them in step descriptions.
 
-For each test case assign a useCaseTag from these Airtel Ventas use case groups:
-  'Primary Sales', 'Stock Management', 'Dealer Onboarding & KYC',
-  'Sales API', 'Secondary Sales', 'Distributor API'
-Create new use case names only if none of the above apply.
-Include happy path AND negative/edge cases. Be concise — keep steps and descriptions brief.
+Coverage strategy — for each use case, ensure:
+1. At least one happy-path (end-to-end success) test
+2. At least one negative/validation test (invalid input, missing required field, unauthorised access)
+3. At least one boundary/edge-case test (empty state, max length, special characters)
+4. Any remaining slots filled with functional tests for each distinct action or workflow on the pages
+
+For useCaseTag: always use the use case name supplied in the input exactly as given.
+
+Be concise — keep steps and descriptions brief.
 Return ONLY a valid JSON array. Each element:
 { title, description, steps: string[], expectedResult, type:'UI'|'API'|'SIT',
   tags: string[], useCaseTag: string, priority:'LOW'|'MEDIUM'|'HIGH'|'CRITICAL', sourceRef: string }
 IMPORTANT: Output must be complete, valid JSON. Do not truncate the array.`;
 
 export async function runWriterAgent(input: WriterInput): Promise<WriterResult> {
-  const llm = createLLM({ temperature: 0.3 });
+  const llm = createLLM({ temperature: 0, agentName: 'writer-agent' });
 
   const inputSummary = input.inputs
     .map((inp) => `[${inp.type.toUpperCase()}] ${inp.label}:\n${inp.content.slice(0, 2000)}`)
     .join('\n\n---\n\n');
 
+  const targetCount = input.targetTcCount ?? 6;
+
   const userParts: string[] = [
     `Project: ${input.projectName}`,
     `Test types to generate: ${input.testTypes.join(', ')}`,
+    `TARGET_TC_COUNT: ${targetCount} (you must produce exactly ${targetCount} test cases)`,
   ];
 
   if (input.additionalContext) {
     userParts.push(`Additional context: ${input.additionalContext}`);
+  }
+
+  if (input.existingUseCaseTags && input.existingUseCaseTags.length > 0) {
+    userParts.push(
+      '',
+      '=== EXISTING USE CASE TAGS FOR THIS PROJECT (reuse when applicable) ===',
+      input.existingUseCaseTags.join(', '),
+    );
+  }
+
+  if (input.existingTestCaseTitles && input.existingTestCaseTitles.length > 0) {
+    userParts.push(
+      '',
+      '=== EXISTING TEST CASES (DO NOT duplicate — skip any scenario already covered) ===',
+      input.existingTestCaseTitles.slice(0, 200).map((t) => `• ${t}`).join('\n'),
+    );
+  }
+
+  if (input.projectContextSummary) {
+    userParts.push(
+      '',
+      '=== UI CONTEXT (from live scan) ===',
+      input.projectContextSummary,
+    );
   }
 
   userParts.push(

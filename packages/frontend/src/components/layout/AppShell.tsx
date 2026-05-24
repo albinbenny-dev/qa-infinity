@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { Outlet, useParams } from 'react-router-dom';
 import BrandBanner from './BrandBanner';
 import Sidebar from './Sidebar';
+import ChatWidget from '../chat/ChatWidget';
+import ScanNotificationManager from '../scan/ScanNotificationManager';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProjects } from '../../hooks/useProjects';
 
@@ -24,6 +26,9 @@ export default function AppShell() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+      {/* Global scan background listener — fires notifications regardless of active page */}
+      <ScanNotificationManager />
+
       {/* Fixed top banner */}
       <BrandBanner />
 
@@ -50,6 +55,8 @@ export default function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      <ChatWidget />
     </div>
   );
 }

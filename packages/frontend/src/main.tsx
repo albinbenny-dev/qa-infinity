@@ -29,8 +29,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               color: '#e2e8f0',
               border: '1px solid #1e3a5f',
             },
-            success: { iconTheme: { primary: '#34d399', secondary: '#0d1b2e' } },
-            error: { iconTheme: { primary: '#f87171', secondary: '#0d1b2e' } },
+            success: {
+              style: { background: '#0d1b2e', color: '#e2e8f0', border: '1px solid rgba(52,211,153,0.4)' },
+              iconTheme: { primary: '#34d399', secondary: '#0d1b2e' },
+            },
+            error: {
+              style: { background: '#0d1b2e', color: '#e2e8f0', border: '1px solid rgba(248,113,113,0.4)' },
+              iconTheme: { primary: '#f87171', secondary: '#0d1b2e' },
+            },
           }}
         />
       </BrowserRouter>

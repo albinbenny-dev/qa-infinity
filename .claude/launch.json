@@ -3,8 +3,9 @@
   "configurations": [
     {
       "name": "qa-infinity-frontend",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@qa-infinity/frontend", "dev"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "vite", "--port", "3000", "--host"],
+      "cwd": "packages/frontend",
       "port": 3000,
       "autoPort": true
     }

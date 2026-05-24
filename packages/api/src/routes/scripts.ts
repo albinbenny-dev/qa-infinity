@@ -4,13 +4,11 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
-import { runScriptAgent } from '../agents/scriptAgent.js';
+import { addScriptGenJob } from '../lib/queue.js';
 import {
   saveScript,
-  savePOM,
   readScript,
   deleteScript,
-  listPOMFiles,
   getScriptFileMeta,
   exportZip,
 } from '../services/scriptFileService.js';
@@ -24,6 +22,8 @@ router.use(requireProjectAccess as unknown as RequestHandler);
 
 const GenerateSchema = z.object({
   testCaseIds: z.array(z.string().min(1)).min(1).max(50),
+  withHeal: z.boolean().optional().default(false),
+  contextNote: z.string().max(4000).optional(),
 });
 
 const SaveContentSchema = z.object({
@@ -70,6 +70,9 @@ router.get('/', async (req: Request, res: Response) => {
         testCaseId: s.testCaseId,
         filename: s.filename,
         isCustomUpload: s.isCustomUpload,
+        isGolden: s.isGolden,
+        verificationStatus: s.verificationStatus,
+        suspectedIssue: s.suspectedIssue,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         testCase: s.testCase,
@@ -86,7 +89,7 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /generate — generate scripts for test cases ──────────────────────
+// ── POST /generate — enqueue script-generation jobs ───────────────────────
 
 router.post('/generate', async (req: Request, res: Response) => {
   try {
@@ -96,94 +99,203 @@ router.post('/generate', async (req: Request, res: Response) => {
       return;
     }
 
-    const { testCaseIds } = parsed.data;
-    const project = req.project;
-    const existingPOMs = listPOMFiles(project.id);
+    const { testCaseIds, withHeal, contextNote } = parsed.data;
+    const projectId = req.project.id;
 
-    const created: object[] = [];
+    const tcs = await prisma.testCase.findMany({
+      where: { id: { in: testCaseIds }, projectId },
+      select: { id: true, tcId: true, title: true, type: true, useCaseTag: true },
+    });
+    const tcMap = new Map(tcs.map((t) => [t.id, t]));
+
+    const queued: object[] = [];
     const errors: { testCaseId: string; error: string }[] = [];
 
     for (const tcId of testCaseIds) {
-      try {
-        const tc = await prisma.testCase.findFirst({
-          where: { id: tcId, projectId: project.id },
-        });
-
-        if (!tc) {
-          errors.push({ testCaseId: tcId, error: 'Test case not found' });
-          continue;
-        }
-
-        const result = await runScriptAgent({
-          testCase: {
-            id: tc.id,
-            tcId: tc.tcId,
-            title: tc.title,
-            description: tc.description,
-            steps: tc.steps,
-            expectedResult: tc.expectedResult,
-            type: tc.type,
-            useCaseTag: tc.useCaseTag,
-          },
-          project: { name: project.name, baseUrl: project.baseUrl },
-          existingPOMs,
-        });
-
-        // Derive a safe filename: e.g. "TC-PROJ-001-checkout-flow.spec.ts"
-        const slug = tc.title
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '')
-          .slice(0, 60);
-        const filename = `${tc.tcId}-${slug}.spec.ts`;
-
-        // Persist spec to filesystem
-        saveScript(project.id, filename, result.specContent);
-
-        // Persist POM if returned
-        if (result.pomContent && result.pomFilename) {
-          savePOM(project.id, result.pomFilename, result.pomContent);
-          existingPOMs.push(result.pomFilename);
-        }
-
-        // Upsert Script record in DB
-        const existing = await prisma.script.findFirst({
-          where: { projectId: project.id, testCaseId: tc.id },
-        });
-
-        const script = existing
-          ? await prisma.script.update({
-              where: { id: existing.id },
-              data: { filename, content: result.specContent, updatedAt: new Date() },
-            })
-          : await prisma.script.create({
-              data: {
-                projectId: project.id,
-                testCaseId: tc.id,
-                filename,
-                content: result.specContent,
-                isCustomUpload: false,
-              },
-            });
-
-        created.push({
-          id: script.id,
-          filename: script.filename,
-          testCaseId: tc.id,
-          tcId: tc.tcId,
-          title: tc.title,
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`[scripts] generate failed for ${tcId}:`, e);
-        errors.push({ testCaseId: tcId, error: msg });
+      const tc = tcMap.get(tcId);
+      if (!tc) {
+        errors.push({ testCaseId: tcId, error: 'Test case not found' });
+        continue;
       }
+
+      const scriptJob = await prisma.scriptJob.create({
+        data: {
+          projectId,
+          testCaseId: tc.id,
+          phase: 'QUEUED',
+          withHeal,
+          maxHealAttempts: 2,
+        },
+      });
+
+      await addScriptGenJob({
+        scriptJobId: scriptJob.id,
+        projectId,
+        testCaseId: tc.id,
+        withHeal,
+        contextNote: contextNote || undefined,
+      });
+
+      queued.push({
+        scriptJobId: scriptJob.id,
+        testCaseId: tc.id,
+        tcId: tc.tcId,
+        title: tc.title,
+        type: tc.type,
+        useCaseTag: tc.useCaseTag,
+        withHeal,
+        phase: 'QUEUED',
+      });
     }
 
-    res.status(200).json({ created, errors });
+    res.status(202).json({ queued, errors, withHeal });
   } catch (err) {
     console.error('[scripts] POST /generate', err);
-    res.status(500).json({ error: 'Script generation failed' });
+    res.status(500).json({ error: 'Failed to enqueue script-generation jobs' });
+  }
+});
+
+// ── GET /jobs — list recent / active script-generation jobs ───────────────
+
+router.get('/jobs', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.project.id;
+    const activeOnly = req.query.active === '1';
+
+    const where = activeOnly
+      ? {
+          projectId,
+          phase: { in: ['QUEUED', 'GENERATING', 'GENERATED', 'QUEUED_VERIFY', 'VERIFYING', 'HEALING'] },
+        }
+      : { projectId };
+
+    const jobs = await prisma.scriptJob.findMany({
+      where,
+      include: {
+        script: { select: { id: true, filename: true, verificationStatus: true, suspectedIssue: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    // Attach the testCase tcId/title so the UI can render without an extra fetch
+    const tcs = await prisma.testCase.findMany({
+      where: { id: { in: jobs.map((j) => j.testCaseId) } },
+      select: { id: true, tcId: true, title: true, type: true, useCaseTag: true },
+    });
+    const tcMap = new Map(tcs.map((t) => [t.id, t]));
+    const enriched = jobs.map((j) => ({ ...j, testCase: tcMap.get(j.testCaseId) ?? null }));
+
+    res.json({ jobs: enriched });
+  } catch (err) {
+    console.error('[scripts] GET /jobs', err);
+    res.status(500).json({ error: 'Failed to list script jobs' });
+  }
+});
+
+// ── DELETE /jobs/finished — dismiss completed/failed jobs ─────────────────
+
+router.delete('/jobs/finished', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.project.id;
+    await prisma.scriptJob.deleteMany({
+      where: {
+        projectId,
+        phase: { in: ['VERIFIED', 'GENERATED', 'MANUAL_REVIEW', 'FAILED'] },
+      },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[scripts] DELETE /jobs/finished', err);
+    res.status(500).json({ error: 'Failed to dismiss jobs' });
+  }
+});
+
+// ── DELETE /jobs/all — force-clear all jobs (including stuck active ones) ──
+
+router.delete('/jobs/all', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.project.id;
+    await prisma.scriptJob.deleteMany({ where: { projectId } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[scripts] DELETE /jobs/all', err);
+    res.status(500).json({ error: 'Failed to clear jobs' });
+  }
+});
+
+// ── POST /jobs/:jobId/retry — re-queue a failed/review job with new context ─
+
+router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.project.id;
+    const { contextNote, withHeal, saveHints } = req.body as {
+      contextNote?: string;
+      withHeal?: boolean;
+      saveHints?: boolean;
+    };
+
+    const existingJob = await prisma.scriptJob.findFirst({
+      where: { id: req.params.jobId, projectId },
+    });
+    if (!existingJob) {
+      res.status(404).json({ error: 'Script job not found' });
+      return;
+    }
+    if (!['FAILED', 'MANUAL_REVIEW', 'GENERATED', 'VERIFIED'].includes(existingJob.phase)) {
+      res.status(422).json({ error: `Job phase "${existingJob.phase}" is not retryable` });
+      return;
+    }
+
+    const tc = await prisma.testCase.findFirst({
+      where: { id: existingJob.testCaseId, projectId },
+      select: { id: true, tcId: true, title: true, type: true, useCaseTag: true },
+    });
+    if (!tc) {
+      res.status(404).json({ error: 'Test case not found' });
+      return;
+    }
+
+    // Persist hints to TestCase if requested
+    if (saveHints && contextNote?.trim()) {
+      await prisma.testCase.update({
+        where: { id: tc.id },
+        data: { generationHints: contextNote.trim() },
+      });
+    }
+
+    const useHeal = withHeal ?? existingJob.withHeal;
+    const newJob = await prisma.scriptJob.create({
+      data: {
+        projectId,
+        testCaseId: tc.id,
+        phase: 'QUEUED',
+        withHeal: useHeal,
+        maxHealAttempts: existingJob.maxHealAttempts,
+      },
+    });
+
+    await addScriptGenJob({
+      scriptJobId: newJob.id,
+      projectId,
+      testCaseId: tc.id,
+      withHeal: useHeal,
+      contextNote: contextNote || undefined,
+    });
+
+    res.status(202).json({
+      scriptJobId: newJob.id,
+      testCaseId: tc.id,
+      tcId: tc.tcId,
+      title: tc.title,
+      type: tc.type,
+      useCaseTag: tc.useCaseTag,
+      withHeal: useHeal,
+      phase: 'QUEUED',
+    });
+  } catch (err) {
+    console.error('[scripts] POST /jobs/:jobId/retry', err);
+    res.status(500).json({ error: 'Failed to retry job' });
   }
 });
 
@@ -250,6 +362,28 @@ router.put('/:id/content', async (req: Request, res: Response) => {
   }
 });
 
+// ── PATCH /:id/golden — toggle the isGolden flag ──────────────────────────
+
+router.patch('/:id/golden', async (req: Request, res: Response) => {
+  try {
+    const script = await prisma.script.findFirst({
+      where: { id: req.params.id, projectId: req.project.id },
+    });
+    if (!script) {
+      res.status(404).json({ error: 'Script not found' });
+      return;
+    }
+    const updated = await prisma.script.update({
+      where: { id: script.id },
+      data: { isGolden: !script.isGolden },
+    });
+    res.json({ id: updated.id, isGolden: updated.isGolden });
+  } catch (err) {
+    console.error('[scripts] PATCH /:id/golden', err);
+    res.status(500).json({ error: 'Failed to update golden status' });
+  }
+});
+
 // ── DELETE /:id ────────────────────────────────────────────────────────────
 
 router.delete('/:id', async (req: Request, res: Response) => {
@@ -261,6 +395,17 @@ router.delete('/:id', async (req: Request, res: Response) => {
     if (!script) {
       res.status(404).json({ error: 'Script not found' });
       return;
+    }
+
+    // Clear heal history so exhaust state doesn't bleed into a replacement script
+    const linkedResultIds = await prisma.runResult.findMany({
+      where: { scriptId: script.id },
+      select: { id: true },
+    });
+    if (linkedResultIds.length > 0) {
+      await prisma.heal.deleteMany({
+        where: { runResultId: { in: linkedResultIds.map((r) => r.id) } },
+      });
     }
 
     await prisma.script.delete({ where: { id: script.id } });

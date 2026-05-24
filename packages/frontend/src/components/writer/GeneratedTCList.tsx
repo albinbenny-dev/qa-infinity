@@ -8,7 +8,6 @@ interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'stat
 
 interface GeneratedTCListProps {
   testCases: GeneratedTC[];
-  savedTestCases: TestCase[];
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onSelectAll: () => void;
@@ -16,6 +15,7 @@ interface GeneratedTCListProps {
   onEdit: (tempId: string, patch: Partial<GeneratedTC>) => void;
   onSave: (tcs: GeneratedTC[]) => void;
   onDelete: (tempId: string) => void;
+  onApprove: (tc: GeneratedTC) => void;
   isSaving: boolean;
 }
 
@@ -45,6 +45,7 @@ function TCCard({
   onToggleSelect,
   onEdit,
   onDelete,
+  onApprove,
 }: {
   tc: GeneratedTC;
   isSaved: boolean;
@@ -52,6 +53,7 @@ function TCCard({
   onToggleSelect: () => void;
   onEdit: (patch: Partial<GeneratedTC>) => void;
   onDelete: () => void;
+  onApprove: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [newTag, setNewTag] = useState('');
@@ -341,6 +343,24 @@ function TCCard({
               </div>
             </div>
           )}
+
+          {/* Approve action */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '4px' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); onApprove(); }}
+              style={{
+                padding: '7px 18px', borderRadius: 'var(--radius)', fontSize: '12px', fontWeight: 700,
+                background: 'linear-gradient(135deg, var(--6d-orange), #D9601A)',
+                color: '#fff', border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '6px',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              ✓ Approve &amp; Go to Library
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -349,7 +369,6 @@ function TCCard({
 
 export default function GeneratedTCList({
   testCases,
-  savedTestCases,
   selectedIds,
   onToggleSelect,
   onSelectAll,
@@ -357,22 +376,19 @@ export default function GeneratedTCList({
   onEdit,
   onSave,
   onDelete,
+  onApprove,
   isSaving,
 }: GeneratedTCListProps) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'UI' | 'API' | 'SIT'>('ALL');
 
-  const savedWithTempId = savedTestCases.map((tc) => ({ ...tc, _tempId: tc.id }));
-  const allTcs = [...testCases, ...savedWithTempId];
-
-  const filtered = allTcs.filter((tc) => {
+  const filtered = testCases.filter((tc) => {
     if (typeFilter !== 'ALL' && tc.type !== typeFilter) return false;
     if (search && !tc.title.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
-  const pendingTcs = testCases; // only unsaved ones can be selected for save
-  const selectedPending = pendingTcs.filter((tc) => selectedIds.has(tc._tempId));
+  const selectedPending = testCases.filter((tc) => selectedIds.has(tc._tempId));
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
@@ -383,11 +399,6 @@ export default function GeneratedTCList({
         <div className="card-title">
           📋 Generated Test Cases
           <span className="badge badge-cyan" style={{ marginLeft: '6px' }}>{testCases.length}</span>
-          {savedTestCases.length > 0 && (
-            <span className="badge badge-violet" style={{ marginLeft: '4px', fontSize: '9px' }}>
-              +{savedTestCases.length} saved
-            </span>
-          )}
         </div>
         <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
@@ -429,25 +440,23 @@ export default function GeneratedTCList({
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
           <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '13px', lineHeight: 1.6 }}>
-            {allTcs.length === 0
+            {testCases.length === 0
               ? <>No test cases generated yet.<br />Add inputs on the left and click Generate.</>
               : 'No test cases match the current filter.'}
           </div>
         ) : (
-          filtered.map((tc) => {
-            const isSaved = savedTestCases.some((s) => s.id === tc._tempId);
-            return (
-              <TCCard
-                key={tc._tempId}
-                tc={tc}
-                isSaved={isSaved}
-                isSelected={selectedIds.has(tc._tempId)}
-                onToggleSelect={() => !isSaved && onToggleSelect(tc._tempId)}
-                onEdit={(patch) => onEdit(tc._tempId, patch)}
-                onDelete={() => onDelete(tc._tempId)}
-              />
-            );
-          })
+          filtered.map((tc) => (
+            <TCCard
+              key={tc._tempId}
+              tc={tc}
+              isSaved={false}
+              isSelected={selectedIds.has(tc._tempId)}
+              onToggleSelect={() => onToggleSelect(tc._tempId)}
+              onEdit={(patch) => onEdit(tc._tempId, patch)}
+              onDelete={() => onDelete(tc._tempId)}
+              onApprove={() => onApprove(tc)}
+            />
+          ))
         )}
       </div>
 
@@ -459,11 +468,11 @@ export default function GeneratedTCList({
         <span style={{ fontSize: '12px', color: 'var(--text-mid)', fontFamily: 'var(--font-mono)' }}>
           {selectedIds.size > 0
             ? `${selectedIds.size} selected`
-            : `${testCases.length} pending · ${savedTestCases.length} in library`}
+            : `${testCases.length} pending`}
         </span>
 
         {testCases.length > 0 && (
-          selectedIds.size < pendingTcs.length ? (
+          selectedIds.size < testCases.length ? (
             <button
               onClick={() => onSelectAll()}
               style={{ fontSize: '11px', color: 'var(--cyan)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}

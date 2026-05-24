@@ -7,6 +7,7 @@ interface TCTableRowProps {
   onToggle: (id: string) => void;
   onRunIndividual: (tc: TestCase) => void;
   onDelete: (tc: TestCase) => void;
+  onEdit?: (tc: TestCase) => void;
   isRunning?: boolean;
   isExpanded?: boolean;
   onExpand?: (id: string | null) => void;
@@ -51,6 +52,7 @@ export default function TCTableRow({
   onToggle,
   onRunIndividual,
   onDelete,
+  onEdit,
   isRunning = false,
   isExpanded = false,
   onExpand,
@@ -305,6 +307,24 @@ export default function TCTableRow({
 
           {/* Action row */}
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+            {onEdit && (
+              <button
+                onClick={() => onEdit(tc)}
+                style={{
+                  padding: '5px 14px',
+                  background: 'var(--cyan-dim)',
+                  border: '1px solid rgba(37,99,171,0.3)',
+                  borderRadius: '5px',
+                  color: 'var(--cyan)',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  marginLeft: 'auto',
+                }}
+              >
+                ✏ Edit TC
+              </button>
+            )}
             <button
               onClick={() => onDelete(tc)}
               style={{
@@ -316,7 +336,7 @@ export default function TCTableRow({
                 fontSize: '11px',
                 fontWeight: 700,
                 cursor: 'pointer',
-                marginLeft: 'auto',
+                ...(onEdit ? {} : { marginLeft: 'auto' }),
               }}
             >
               🗑 Delete TC

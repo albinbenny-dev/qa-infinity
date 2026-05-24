@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useProjects, useCreateProject } from '../hooks/useProjects';
@@ -33,6 +33,7 @@ function StatTile({
 function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void }) {
   const [hovered, setHovered] = useState(false);
   const gradientIdx = project.id.charCodeAt(0) % PROJECT_GRADIENTS.length;
+  const projectColor = project.color ?? PROJECT_GRADIENTS[gradientIdx];
 
   const totalTests  = project._count?.testCases ?? 0;
   const passing     = 0; // populated in later stages
@@ -42,6 +43,8 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
 
   return (
     <div
+      data-testid="project-card"
+      data-project-slug={project.slug}
       onClick={onOpen}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -78,7 +81,7 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
               width: '36px',
               height: '36px',
               borderRadius: '9px',
-              background: PROJECT_GRADIENTS[gradientIdx],
+              background: projectColor,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -91,7 +94,7 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
             {project.name.slice(0, 1).toUpperCase()}
           </div>
           <div>
-            <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>
+            <div data-testid="project-name" style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>
               {project.name}
             </div>
             <div
@@ -439,14 +442,13 @@ function CreateProjectModal({
 
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function GlobalProjects() {
-  const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
   const { data: projects = [], isLoading } = useProjects();
   const { setActiveProject } = useProjectStore();
 
   function openProject(project: Project) {
     setActiveProject(project);
-    navigate(`/projects/${project.slug}/dashboard`);
+    // navigation is handled by the <Link> wrapper on each card
   }
 
   const totalProjects = projects.length;
@@ -517,9 +519,30 @@ export default function GlobalProjects() {
             Loading projects…
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+          <div data-testid="projects-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+            {projects.length === 0 && (
+              <div
+                data-testid="projects-empty-state"
+                style={{
+                  gridColumn: '1 / -1',
+                  textAlign: 'center',
+                  padding: '48px 24px',
+                  color: 'var(--text-dim)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '12px',
+                }}
+              >
+                No projects yet. Create your first project to get started.
+              </div>
+            )}
             {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} onOpen={() => openProject(p)} />
+              <Link
+                key={p.id}
+                to={`/projects/${p.slug}/dashboard`}
+                style={{ textDecoration: 'none', display: 'block' }}
+              >
+                <ProjectCard project={p} onOpen={() => openProject(p)} />
+              </Link>
             ))}
 
             {/* Create new project card */}

@@ -1,12 +1,12 @@
-import { useReducer, useCallback, useMemo } from 'react';
+import { useReducer, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useProject, useRequirementDocs, useProjectEnvConfigs } from '../hooks/useProjects';
 import {
   useGenerateTestCases,
   useSaveTestCases,
   useUploadFile,
-  useTestCases,
 } from '../hooks/useTestCases';
+import { useProjectContext, useUpdateContext } from '../hooks/useScans';
 import InputQueue, { type InputQueueState } from '../components/writer/InputQueue';
 import GeneratedTCList from '../components/writer/GeneratedTCList';
 import DocsReference from '../components/writer/DocsReference';
@@ -88,9 +88,8 @@ export default function TestWriter() {
   const { data: project } = useProject(slug);
   const { data: docs = [] } = useRequirementDocs(project?.id);
   const { data: envConfigs = [] } = useProjectEnvConfigs(project?.id);
-  const { data: savedData } = useTestCases(project?.id, { limit: 200 });
-  const savedTCs = savedData?.testCases ?? [];
-
+  const { data: context } = useProjectContext(project?.id);
+  const updateCtx = useUpdateContext(project?.id ?? '');
   const generateMutation = useGenerateTestCases(project?.id ?? '');
   const saveMutation = useSaveTestCases(project?.id ?? '');
   const uploadMutation = useUploadFile();
@@ -100,6 +99,44 @@ export default function TestWriter() {
     generatedTCs: [],
     selectedIds: new Set<string>(),
   });
+
+  // Track whether we have loaded the scan draft into state
+  const draftLoadedRef = useRef(false);
+
+  // Load pending scan draft into writer state on first availability
+  useEffect(() => {
+    if (draftLoadedRef.current) return;
+    if (!context?.pendingTCDraft?.length) return;
+
+    draftLoadedRef.current = true;
+    const draftTCs: GeneratedTC[] = context.pendingTCDraft.map((tc, i) => ({
+      title: tc.title,
+      description: tc.description,
+      steps: Array.isArray(tc.steps) ? tc.steps : [],
+      expectedResult: tc.expectedResult,
+      type: tc.type,
+      tags: Array.isArray(tc.tags) ? tc.tags : [],
+      useCaseTag: tc.useCaseTag,
+      priority: tc.priority ?? 'MEDIUM',
+      sourceRef: tc.sourceRef,
+      lastRun: undefined,
+      _tempId: `scan-${Date.now()}-${i}`,
+    }));
+
+    dispatch({ type: 'SET_GENERATED', tcs: draftTCs });
+  }, [context?.pendingTCDraft]);
+
+  // Once all scan-sourced TCs have been handled (saved/deleted), clear the DB draft
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+    if (!context?.pendingTCDraft?.length) return;
+    const hasScanTCs = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
+    if (!hasScanTCs) {
+      void updateCtx.mutateAsync({ pendingTCDraft: null }).catch(() => {});
+    }
+  }, [state.generatedTCs, context?.pendingTCDraft]);
+
+  const hasScanDraft = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
 
   const inputCount = useMemo(() => {
     const { jiraStories, refTCs, uploadedDocs, uiScreenUrls } = state.inputState;
@@ -187,6 +224,21 @@ export default function TestWriter() {
     [project, saveMutation, state.generatedTCs],
   );
 
+  const handleApprove = useCallback(
+    async (tc: GeneratedTC) => {
+      if (!project) return;
+      try {
+        const { _tempId: _, ...rest } = tc;
+        await saveMutation.mutateAsync([{ ...rest, status: 'APPROVED' as const }]);
+        dispatch({ type: 'DELETE_GENERATED', tempId: tc._tempId });
+        navigate(`/projects/${slug}/tc-library`);
+      } catch (err) {
+        console.error('[TestWriter] Approve failed:', err);
+      }
+    },
+    [project, saveMutation, slug, navigate],
+  );
+
   const handleToggleDoc = useCallback(
     async (docId: string, isActive: boolean) => {
       if (!project) return;
@@ -272,6 +324,31 @@ export default function TestWriter() {
         </div>
       )}
 
+      {/* Scan draft banner */}
+      {hasScanDraft && (
+        <div style={{
+          margin: '0 24px',
+          padding: '10px 16px',
+          background: 'var(--violet-dim)',
+          border: '1px solid rgba(37,99,171,0.3)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12px',
+          color: 'var(--text-mid)',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: '16px' }}>🔍</span>
+          <span style={{ flex: 1 }}>
+            <strong style={{ color: 'var(--cyan)' }}>
+              {state.generatedTCs.filter((tc) => tc._tempId.startsWith('scan-')).length} test cases
+            </strong>
+            {' '}auto-generated from the latest UI scan. Review, edit, then approve or save to TC Library.
+          </span>
+        </div>
+      )}
+
       {/* 3-column grid */}
       <div
         style={{
@@ -297,7 +374,6 @@ export default function TestWriter() {
         {/* MIDDLE */}
         <GeneratedTCList
           testCases={state.generatedTCs}
-          savedTestCases={savedTCs}
           selectedIds={state.selectedIds}
           onToggleSelect={(id) => dispatch({ type: 'TOGGLE_SELECT', id })}
           onSelectAll={() => dispatch({ type: 'SELECT_ALL', ids: allFilteredIds })}
@@ -305,6 +381,7 @@ export default function TestWriter() {
           onEdit={(tempId, patch) => dispatch({ type: 'EDIT_GENERATED', tempId, patch })}
           onSave={handleSave}
           onDelete={(tempId) => dispatch({ type: 'DELETE_GENERATED', tempId })}
+          onApprove={handleApprove}
           isSaving={saveMutation.isPending}
         />
 

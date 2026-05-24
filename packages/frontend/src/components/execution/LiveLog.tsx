@@ -8,6 +8,9 @@ interface LiveLogProps {
   elapsedMs: number;
   onStop: () => void;
   isStopping: boolean;
+  onHeal?: () => void;
+  isHealing?: boolean;
+  healTriggered?: boolean;
 }
 
 const KIND_STYLE: Record<string, { color: string; prefix: string }> = {
@@ -36,7 +39,7 @@ function formatElapsed(ms: number): string {
   return `${s}s`;
 }
 
-export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStopping }: LiveLogProps) {
+export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStopping, onHeal, isHealing, healTriggered }: LiveLogProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new log lines
@@ -259,20 +262,50 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
             {isStopping ? '■ Stopping…' : '■ Stop Run'}
           </button>
         ) : (
-          <div style={{
-            textAlign: 'center',
-            fontSize: 10,
-            fontFamily: 'var(--font-mono)',
-            color: status === 'complete'
-              ? (stats.failed > 0 ? 'rgba(220,38,38,0.6)' : 'rgba(42,157,143,0.6)')
-              : 'rgba(226,232,240,0.2)',
-            padding: '2px 0',
-          }}>
-            {status === 'complete'
-              ? `Run complete · ${stats.passed} passed · ${stats.failed} failed`
-              : status === 'error'
-              ? 'Run ended with an error'
-              : 'No run in progress'}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{
+              textAlign: 'center',
+              fontSize: 10,
+              fontFamily: 'var(--font-mono)',
+              color: status === 'complete'
+                ? (stats.failed > 0 ? 'rgba(220,38,38,0.6)' : 'rgba(42,157,143,0.6)')
+                : 'rgba(226,232,240,0.2)',
+              padding: '2px 0',
+            }}>
+              {status === 'complete'
+                ? `Run complete · ${stats.passed} passed · ${stats.failed} failed`
+                : status === 'error'
+                ? 'Run ended with an error'
+                : 'No run in progress'}
+            </div>
+            {status === 'complete' && stats.failed > 0 && onHeal && (
+              <button
+                onClick={onHeal}
+                disabled={healTriggered || isHealing}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  background: healTriggered
+                    ? 'rgba(245,158,11,0.08)'
+                    : 'transparent',
+                  border: `1px solid ${healTriggered ? 'rgba(245,158,11,0.35)' : 'rgba(245,158,11,0.55)'}`,
+                  borderRadius: 6,
+                  color: healTriggered ? 'rgba(245,158,11,0.55)' : '#F59E0B',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: (healTriggered || isHealing) ? 'not-allowed' : 'pointer',
+                  fontFamily: 'var(--font-ui)',
+                  opacity: (healTriggered || isHealing) ? 0.75 : 1,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {isHealing
+                  ? '⚡ Analysing failures…'
+                  : healTriggered
+                  ? `⚡ Heal queued for ${stats.failed} test${stats.failed !== 1 ? 's' : ''}`
+                  : `⚡ Heal ${stats.failed} Failed Test${stats.failed !== 1 ? 's' : ''}`}
+              </button>
+            )}
           </div>
         )}
       </div>

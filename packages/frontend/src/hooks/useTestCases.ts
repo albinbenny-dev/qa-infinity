@@ -87,6 +87,7 @@ export function useSaveTestCases(projectId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }
@@ -115,6 +116,7 @@ export function useDeleteTestCase(projectId: string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }
@@ -193,6 +195,7 @@ export function useBulkDelete(projectId: string) {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['tc-library-stats', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }

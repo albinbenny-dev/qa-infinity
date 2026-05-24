@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js';
 import { emitToRun } from '../lib/socket.js';
 import { addHealJob } from '../lib/queue.js';
 import type { RunJobPayload } from '../lib/queue.js';
+import { generateReport } from '../services/reportService.js';
 
 const ARTIFACTS_ROOT = process.env.ARTIFACTS_PATH ?? '/artifacts';
 
@@ -16,9 +17,14 @@ interface PWTestResult {
   attachments?: Array<{ name: string; path?: string }>;
 }
 
+interface PWTestRun {
+  status: string;
+  results: PWTestResult[];
+}
+
 interface PWTestCase {
   title: string;
-  results: PWTestResult[];
+  tests: PWTestRun[];
 }
 
 interface PWSuite {
@@ -51,7 +57,7 @@ function flattenTests(suite: PWSuite): PWTestCase[] {
 // ── Main job processor ─────────────────────────────────────────────────────
 async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   const { runId, projectId, testCaseIds, scriptPaths, environment, envBaseUrl,
-    parallelWorkers, headless, browser } = job.data;
+    envUsername, envPassword, parallelWorkers, headless, browser } = job.data;
 
   const total = scriptPaths.length;
   const artifactsDir = path.join(ARTIFACTS_ROOT, projectId, runId);
@@ -80,9 +86,22 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   }
 
   // ── 3. Initialise RunResult records ─────────────────────────────────────
+  // Fetch scripts up-front so RunResults are linked — healService requires scriptId
+  const scriptRecords = await prisma.script.findMany({
+    where: { testCaseId: { in: testCaseIds }, projectId },
+    select: { id: true, testCaseId: true },
+    orderBy: { updatedAt: 'desc' },
+  });
+  const tcIdToScriptId = new Map<string, string>();
+  for (const s of scriptRecords) {
+    if (s.testCaseId && !tcIdToScriptId.has(s.testCaseId)) {
+      tcIdToScriptId.set(s.testCaseId, s.id);
+    }
+  }
+
   for (const tcId of testCaseIds) {
     await prisma.runResult.create({
-      data: { runId, testCaseId: tcId, status: 'PENDING' },
+      data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: tcIdToScriptId.get(tcId) },
     });
   }
 
@@ -91,12 +110,33 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     where: { runId },
     select: { id: true, testCaseId: true },
   });
-  const tcIdToRunResultId = new Map(runResults.map((r) => [r.testCaseId, r.id]));
+  const tcIdToRunResultId = new Map<string, string>(
+    runResults.map((r: { testCaseId: string; id: string }) => [r.testCaseId, r.id] as [string, string]),
+  );
 
   const startTime = Date.now();
   let totalPassed = 0;
   let totalFailed = 0;
   let totalSkipped = 0;
+
+  // One AbortController for the entire run. The cancel watcher below aborts it
+  // the moment the DB status flips to CANCELLED, which propagates into the
+  // active spawnPlaywright fetch — killing the runner child process via disconnect.
+  const runAbortController = new AbortController();
+  let userCancelled = false;
+
+  // Poll every 2 s while scripts are executing — much cheaper than per-step checks
+  const cancelWatcher = setInterval(async () => {
+    if (userCancelled) { clearInterval(cancelWatcher); return; }
+    try {
+      const s = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
+      if (s?.status === 'CANCELLED') {
+        userCancelled = true;
+        runAbortController.abort();
+        clearInterval(cancelWatcher);
+      }
+    } catch { /* DB hiccup — keep polling */ }
+  }, 2000);
 
   // ── 5. Execute each script ───────────────────────────────────────────────
   for (let i = 0; i < scriptPaths.length; i++) {
@@ -105,9 +145,8 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     const scriptName = path.basename(scriptPath);
     const runResultId = tcIdToRunResultId.get(testCaseId);
 
-    // Re-check cancellation before each script
-    const runStatus = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
-    if (runStatus?.status === 'CANCELLED') {
+    // Check for cancellation before starting each script
+    if (runAbortController.signal.aborted) {
       emitLog(runId, 'warn', `■ Run cancelled — skipping remaining ${scriptPaths.length - i} scripts`);
       break;
     }
@@ -124,9 +163,22 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     const result = await spawnPlaywright(
       scriptPath,
       reportFile,
-      { parallelWorkers, headless, browser, envBaseUrl, environment },
+      { parallelWorkers, headless, browser, envBaseUrl, envUsername, envPassword, environment },
       (line) => emitLog(runId, 'run', line),
+      runAbortController.signal,
     );
+
+    // If the run was cancelled mid-script, mark result and stop
+    if (runAbortController.signal.aborted) {
+      if (runResultId) {
+        await prisma.runResult.update({
+          where: { id: runResultId },
+          data: { status: 'FAILED', errorMessage: 'Run was cancelled' },
+        });
+      }
+      emitLog(runId, 'warn', '■ Run cancelled during script execution');
+      break;
+    }
 
     // Parse report or use exit-code fallback
     let passed = false;
@@ -135,15 +187,28 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     let screenshotPath: string | undefined;
 
     if (result.reportData) {
-      const tests = (result.reportData.suites ?? []).flatMap(flattenTests);
-      const testResult = tests[0]?.results?.[0];
-      passed = testResult?.status === 'passed';
-      duration = Math.round(testResult?.duration ?? 0);
-      if (!passed) {
-        errorMessage = testResult?.error?.message?.slice(0, 500) ?? result.error ?? 'Test failed';
+      const stats = result.reportData.stats;
+      const totalTests = (stats?.expected ?? 0) + (stats?.unexpected ?? 0) + (stats?.skipped ?? 0);
+      duration = Math.round(stats?.duration ?? result.durationMs);
+
+      if (totalTests === 0) {
+        passed = false;
+        errorMessage = 'No tests ran — possible import or syntax error in the script.';
+      } else {
+        passed = (stats?.unexpected ?? 1) === 0;
+        if (!passed) {
+          const allSpecs = (result.reportData.suites ?? []).flatMap(flattenTests);
+          const failingResult = allSpecs
+            .flatMap((spec) => spec.tests ?? [])
+            .flatMap((run) => run.results ?? [])
+            .find((r: PWTestResult) => r.status !== 'passed');
+          errorMessage = failingResult?.error?.message?.slice(0, 500) ?? result.error ?? 'Test failed';
+          const screenshot = failingResult?.attachments?.find(
+            (a: { name: string; path?: string }) => a.name === 'screenshot',
+          );
+          if (screenshot?.path) screenshotPath = screenshot.path;
+        }
       }
-      const screenshot = testResult?.attachments?.find((a) => a.name === 'screenshot');
-      if (screenshot?.path) screenshotPath = screenshot.path;
     } else {
       passed = result.exitCode === 0;
       duration = result.durationMs;
@@ -173,16 +238,45 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     });
   }
 
+  // Stop the cancel watcher and abort any in-flight fetch
+  clearInterval(cancelWatcher);
+  runAbortController.abort();
+
   const elapsed = Date.now() - startTime;
+
+  // If the run was cancelled by the user, just emit the stopped log and exit —
+  // the cancel route already updated the DB status to CANCELLED.
+  if (userCancelled) {
+    emitLog(runId, 'warn', `■ Run stopped · ${totalPassed} passed · ${totalFailed} failed`);
+    return;
+  }
+
   const runFinalStatus = totalFailed === 0 ? 'PASSED' : 'FAILED';
 
   // ── 5. Update run final status ───────────────────────────────────────────
-  const existingRun = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
-  if (existingRun?.status !== 'CANCELLED') {
-    await prisma.run.update({
-      where: { id: runId },
-      data: { status: runFinalStatus, completedAt: new Date() },
+  await prisma.run.update({
+    where: { id: runId },
+    data: { status: runFinalStatus, completedAt: new Date() },
+  });
+
+  // ── 6. Queue heal jobs for failures (skipped if run was cancelled by user) ──
+  if (totalFailed > 0) {
+    const failedResults = await prisma.runResult.findMany({
+      where: { runId, status: 'FAILED' },
+      select: { id: true },
     });
+    if (failedResults.length > 0) {
+      emitLog(runId, 'info',
+        `⚡ Queueing heal analysis for ${failedResults.length} failed test${failedResults.length !== 1 ? 's' : ''}…`,
+      );
+    }
+    for (const r of failedResults) {
+      try {
+        await addHealJob({ runResultId: r.id, projectId });
+      } catch (err) {
+        emitLog(runId, 'warn', `⚠ Could not queue heal job: ${(err as Error).message}`);
+      }
+    }
   }
 
   emitLog(runId, 'info',
@@ -192,18 +286,10 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     passed: totalPassed, failed: totalFailed, skipped: totalSkipped, duration: elapsed,
   });
 
-  // ── 6. Queue heal jobs for failures ─────────────────────────────────────
-  if (totalFailed > 0) {
-    const failedResults = await prisma.runResult.findMany({
-      where: { runId, status: 'FAILED' },
-      select: { id: true },
-    });
-    for (const r of failedResults) {
-      try {
-        await addHealJob({ runResultId: r.id, projectId });
-      } catch { /* heal is best-effort */ }
-    }
-  }
+  // ── 7. Auto-generate report (best-effort, fire-and-forget after close) ───
+  void generateReport(runId).catch((err) =>
+    console.error('[run-worker] Auto-report generation failed:', err),
+  );
 }
 
 // ── Helper: emit log line ────────────────────────────────────────────────────
@@ -222,16 +308,28 @@ interface SpawnResult {
 async function spawnPlaywright(
   scriptPath: string,
   reportFile: string,
-  opts: { parallelWorkers: number; headless: boolean; browser: string; envBaseUrl: string; environment: string },
+  opts: { parallelWorkers: number; headless: boolean; browser: string; envBaseUrl: string; envUsername: string; envPassword: string; environment: string },
   onLine: (line: string) => void,
+  externalSignal?: AbortSignal,
 ): Promise<SpawnResult> {
   const start = Date.now();
   const runnerUrl = process.env.RUNNER_URL ?? 'http://qa-runner:5001';
+
+  // Hard cap: 120 s (runner's 90 s kill timer + 30 s network/startup buffer)
+  const controller = new AbortController();
+  const fetchTimeout = setTimeout(() => controller.abort(), 120_000);
+
+  // Forward external cancellation (e.g. user clicked Stop Run)
+  if (externalSignal) {
+    if (externalSignal.aborted) { controller.abort(); }
+    else { externalSignal.addEventListener('abort', () => controller.abort(), { once: true }); }
+  }
 
   try {
     const response = await fetch(`${runnerUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         scriptPath,
         reportFile,
@@ -239,6 +337,8 @@ async function spawnPlaywright(
         workers: opts.parallelWorkers,
         headless: opts.headless,
         baseUrl: opts.envBaseUrl || '',
+        username: opts.envUsername || '',
+        password: opts.envPassword || '',
         environment: opts.environment,
       }),
     });
@@ -266,12 +366,24 @@ async function spawnPlaywright(
       }
     }
 
+    clearTimeout(fetchTimeout);
     const durationMs = Date.now() - start;
     return { exitCode, reportData, durationMs };
   } catch (err: unknown) {
+    clearTimeout(fetchTimeout);
     const durationMs = Date.now() - start;
     const message = err instanceof Error ? err.message : String(err);
-    return { exitCode: 1, error: `Runner unavailable: ${message}`, durationMs };
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    const isCancelled = isAbort && externalSignal?.aborted;
+    return {
+      exitCode: 1,
+      error: isCancelled
+        ? 'Cancelled'
+        : isAbort
+        ? 'Runner timed out after 120 s — script may be hanging'
+        : `Runner unavailable: ${message}`,
+      durationMs,
+    };
   }
 }
 

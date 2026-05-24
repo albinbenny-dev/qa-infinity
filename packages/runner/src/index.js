@@ -24,7 +24,10 @@ function findPlaywrightBin() {
 }
 
 const CONFIG_CONTENT = `module.exports = {
+  timeout: 60000,           // hard cap: 60 s per test
   use: {
+    actionTimeout: 15000,   // 15 s for each action (fill, click, …)
+    navigationTimeout: 20000, // 20 s for page loads / waitForNavigation
     baseURL: process.env.BASE_URL || '',
     screenshot: 'only-on-failure',
     trace: 'on-first-retry',
@@ -79,6 +82,8 @@ const server = http.createServer(async (req, res) => {
       workers = 1,
       headless = true,
       baseUrl = '',
+      username = '',
+      password = '',
       environment = '',
     } = body;
 
@@ -111,6 +116,8 @@ const server = http.createServer(async (req, res) => {
 
     const env = Object.assign({}, process.env, {
       BASE_URL: baseUrl || '',
+      TC_USERNAME: username || '',
+      TC_PASSWORD: password || '',
       TEST_ENV: environment || '',
       PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile,
       CI: '1',
@@ -153,6 +160,27 @@ const server = http.createServer(async (req, res) => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    let procDone = false;
+
+    // Kill the Playwright process immediately when the API worker disconnects
+    // (e.g. user clicked Stop Run, which aborts the fetch on the worker side)
+    req.on('close', () => {
+      if (!procDone && !proc.killed) {
+        proc.kill('SIGTERM');
+        setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 3000);
+      }
+      clearTimeout(killTimer);
+    });
+
+    // Hard-kill the browser process if it hasn't exited within 90 s
+    // (Playwright's own 60 s test timeout + 30 s browser-startup / shutdown buffer)
+    const HARD_KILL_MS = 90_000;
+    const killTimer = setTimeout(() => {
+      sendLine({ type: 'log', text: `[runner] Script exceeded ${HARD_KILL_MS / 1000}s hard limit — killing process` });
+      proc.kill('SIGTERM');
+      setTimeout(() => proc.kill('SIGKILL'), 5_000);
+    }, HARD_KILL_MS);
+
     const sendLine = (obj) => {
       res.write(JSON.stringify(obj) + '\n');
     };
@@ -171,6 +199,8 @@ const server = http.createServer(async (req, res) => {
     proc.stderr.on('data', handleChunk);
 
     proc.on('close', (exitCode) => {
+      procDone = true;
+      clearTimeout(killTimer);
       let reportData = null;
       try {
         if (fs.existsSync(reportFile)) {
@@ -183,6 +213,7 @@ const server = http.createServer(async (req, res) => {
     });
 
     proc.on('error', (err) => {
+      clearTimeout(killTimer);
       sendLine({ type: 'done', exitCode: 1, reportData: null, error: err.message });
       res.end();
     });

@@ -1,13 +1,19 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../lib/api';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dialog from '@radix-ui/react-dialog';
+import { useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { Lock, Map, Target, ClipboardList, ScanLine } from 'lucide-react';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import {
   useProjectEnvConfigs,
   useProjectMembers,
   useRequirementDocs,
+  useUploadReqDoc,
+  useToggleReqDoc,
+  useDeleteReqDoc,
   useUpdateProject,
   useDeleteProject,
   useCreateEnvConfig,
@@ -15,6 +21,18 @@ import {
 } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import { PROJECT_GRADIENTS, getInitials } from '../lib/utils';
+import {
+  useScans,
+  useScan,
+  useProjectContext,
+  useStartScan,
+  useUpdateContext,
+  useUpdateLoginInstructions,
+  useDeleteScan,
+} from '../hooks/useScans';
+import ScanProgress from '../components/scanner/ScanProgress';
+import LoginInstructions from '../components/scanner/LoginInstructions';
+import NavigationMap from '../components/scanner/NavigationMap';
 
 const LABEL_STYLE: React.CSSProperties = {
   display: 'block',
@@ -521,8 +539,14 @@ function MembersTab() {
 // ── Req Library tab ────────────────────────────────────────────────────────
 function ReqLibraryTab() {
   const { activeProject } = useProjectStore();
-  const { data: docs = [] } = useRequirementDocs(activeProject?.id);
+  const projectId = activeProject?.id ?? '';
+  const { data: docs = [] } = useRequirementDocs(projectId);
+  const uploadDoc  = useUploadReqDoc(projectId);
+  const toggleDoc  = useToggleReqDoc(projectId);
+  const deleteDoc  = useDeleteReqDoc(projectId);
   const [folderPath, setFolderPath] = useState(activeProject?.reqLibraryPath ?? '');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const TYPE_BADGE: Record<string, string> = {
     pdf: 'badge-fail',
@@ -532,8 +556,47 @@ function ReqLibraryTab() {
     txt: 'badge-draft',
   };
 
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      await uploadDoc.mutateAsync(file);
+      toast.success(`${file.name} uploaded.`);
+    } catch {
+      toast.error('Upload failed.');
+    }
+  }
+
+  async function handleToggle(id: string, current: boolean) {
+    try {
+      await toggleDoc.mutateAsync({ id, isActive: !current });
+    } catch {
+      toast.error('Failed to update document.');
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteDoc.mutateAsync(id);
+      setDeletingId(null);
+      toast.success('Document deleted.');
+    } catch {
+      toast.error('Failed to delete document.');
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.xlsx,.xls,.docx,.doc,.txt,.md"
+        style={{ display: 'none' }}
+        onChange={handleUpload}
+      />
+
       {/* Info banner */}
       <div
         style={{
@@ -581,8 +644,10 @@ function ReqLibraryTab() {
             type="button"
             className="tb-btn tb-btn-ghost"
             style={{ fontSize: '11px', padding: '4px 10px' }}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadDoc.isPending}
           >
-            + Upload
+            {uploadDoc.isPending ? 'Uploading…' : '+ Upload'}
           </button>
         </div>
         <table className="data-table">
@@ -623,6 +688,7 @@ function ReqLibraryTab() {
                     </td>
                     <td>
                       <div
+                        onClick={() => void handleToggle(doc.id, doc.isActive)}
                         style={{
                           width: '36px',
                           height: '20px',
@@ -648,12 +714,29 @@ function ReqLibraryTab() {
                       </div>
                     </td>
                     <td>
-                      <button
-                        className="tb-btn tb-btn-ghost"
-                        style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
-                      >
-                        Delete
-                      </button>
+                      {deletingId === doc.id ? (
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '10px', color: 'var(--fail)' }}>Delete?</span>
+                          <button
+                            className="tb-btn tb-btn-ghost"
+                            style={{ padding: '3px 8px', fontSize: '10px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
+                            onClick={() => void handleDelete(doc.id)}
+                          >Yes</button>
+                          <button
+                            className="tb-btn tb-btn-ghost"
+                            style={{ padding: '3px 8px', fontSize: '10px' }}
+                            onClick={() => setDeletingId(null)}
+                          >No</button>
+                        </div>
+                      ) : (
+                        <button
+                          className="tb-btn tb-btn-ghost"
+                          style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
+                          onClick={() => setDeletingId(doc.id)}
+                        >
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -675,12 +758,12 @@ function DangerZoneTab() {
   const [confirmName, setConfirmName] = useState('');
 
   async function handleDelete() {
-    if (confirmName !== activeProject?.name) {
+    if (confirmName.toLowerCase() !== activeProject?.name?.toLowerCase()) {
       toast.error('Project name does not match.');
       return;
     }
     try {
-      await deleteProject.mutateAsync();
+      await deleteProject.mutateAsync(confirmName);
       toast.success('Project deleted.');
       navigate('/projects', { replace: true });
     } catch {
@@ -816,7 +899,7 @@ function DangerZoneTab() {
                 <button
                   type="button"
                   onClick={handleDelete}
-                  disabled={confirmName !== activeProject?.name || deleteProject.isPending}
+                  disabled={confirmName.toLowerCase() !== activeProject?.name?.toLowerCase() || deleteProject.isPending}
                   style={{
                     padding: '8px 18px',
                     background: 'var(--rose)',
@@ -825,9 +908,9 @@ function DangerZoneTab() {
                     color: '#fff',
                     fontSize: '13px',
                     fontWeight: 700,
-                    cursor: confirmName !== activeProject?.name ? 'not-allowed' : 'pointer',
+                    cursor: confirmName.toLowerCase() !== activeProject?.name?.toLowerCase() ? 'not-allowed' : 'pointer',
                     fontFamily: 'var(--font-ui)',
-                    opacity: confirmName !== activeProject?.name ? 0.4 : 1,
+                    opacity: confirmName.toLowerCase() !== activeProject?.name?.toLowerCase() ? 0.4 : 1,
                   }}
                 >
                   {deleteProject.isPending ? 'Deleting…' : 'Delete Forever'}
@@ -841,12 +924,733 @@ function DangerZoneTab() {
   );
 }
 
+// ── UI Scanner tab ─────────────────────────────────────────────────────────
+function UIScannerTab() {
+  const { activeProject } = useProjectStore();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const projectId = activeProject?.id ?? '';
+  const projectSlug = activeProject?.slug ?? '';
+
+  const { data: envConfigs = [] } = useProjectEnvConfigs(projectId);
+  const { data: scans = [] } = useScans(projectId);
+  const { data: context } = useProjectContext(projectId);
+
+  const latestScan = scans[0] ?? null;
+  const isRunning = latestScan?.status === 'RUNNING' || latestScan?.status === 'PENDING';
+  const isComplete = latestScan?.status === 'COMPLETED';
+  const latestScanId = latestScan?.id;
+
+  // When a scan completes, the project-context query may be stuck in a 404
+  // error state from before the scan ran. Force a refetch so the complete
+  // view gets data without requiring a page reload.
+  useEffect(() => {
+    if (isComplete) {
+      void queryClient.invalidateQueries({ queryKey: ['project-context', projectId] });
+    }
+  }, [isComplete, projectId, queryClient]);
+
+  // Poll the active scan
+  const { data: liveScan } = useScan(projectId, isRunning ? latestScanId : undefined);
+  const activeScan = isRunning && liveScan ? liveScan : latestScan;
+
+  const startScan = useStartScan(projectId);
+  const updateCtx = useUpdateContext(projectId);
+  const updateLogin = useUpdateLoginInstructions(projectId);
+  const deleteScan = useDeleteScan(projectId);
+
+  const [testLoginResult, setTestLoginResult] = useState<{
+    success: boolean;
+    finalUrl?: string;
+    errorMessage?: string;
+    screenshotBase64?: string;
+  } | null>(null);
+  const [testLoginLoading, setTestLoginLoading] = useState(false);
+
+  async function handleTestLogin() {
+    if (!projectId) return;
+    setTestLoginLoading(true);
+    setTestLoginResult(null);
+    try {
+      const { data } = await api.post<{ success: boolean; finalUrl?: string; errorMessage?: string; screenshotBase64?: string }>(
+        `/projects/${projectId}/scans/context/test-login`,
+      );
+      setTestLoginResult(data);
+      if (data.success) toast.success('Login verified successfully');
+      else toast.error('Login failed — check the result below');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Test login failed';
+      toast.error(msg);
+    } finally {
+      setTestLoginLoading(false);
+    }
+  }
+
+  const [selectedEnvId, setSelectedEnvId] = useState<string>('');
+  const [scanDepth, setScanDepth] = useState<'full' | 'top-level' | 'login-only'>('full');
+  const [generateTCs, setGenerateTCs] = useState(true);
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [editingInstructions, setEditingInstructions] = useState(false);
+  const [instructionsDraft, setInstructionsDraft] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Pre-fill the textarea from stored context on first load
+  useEffect(() => {
+    if (context?.customInstructions && !customInstructions) {
+      setCustomInstructions(context.customInstructions);
+    }
+  }, [context?.customInstructions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!selectedEnvId && envConfigs.length > 0) {
+      setSelectedEnvId(envConfigs.find((e) => e.isDefault)?.id ?? envConfigs[0].id);
+    }
+  }, [envConfigs, selectedEnvId]);
+
+  const selectedEnv = envConfigs.find((e) => e.id === selectedEnvId)
+    ?? envConfigs.find((e) => e.isDefault)
+    ?? envConfigs[0];
+
+  async function handleStartScan() {
+    if (!selectedEnvId) { toast.error('Please select an environment'); return; }
+    try {
+      const result = await startScan.mutateAsync({
+        envConfigId: selectedEnvId,
+        scanDepth,
+        generateTCs,
+        customInstructions: customInstructions.trim() || undefined,
+      });
+      toast.success(`Scan started (ID: ${result.scanId.slice(0, 8)}…)`);
+    } catch {
+      toast.error('Failed to start scan.');
+    }
+  }
+
+  async function handleDeleteScan(id: string) {
+    try {
+      await deleteScan.mutateAsync(id);
+      setDeletingId(null);
+      toast.success('Scan deleted.');
+    } catch {
+      toast.error('Failed to delete scan.');
+    }
+  }
+
+  function formatDuration(scan: typeof latestScan) {
+    if (!scan?.startedAt || !scan?.completedAt) return '—';
+    const ms = new Date(scan.completedAt).getTime() - new Date(scan.startedAt).getTime();
+    const secs = Math.floor(ms / 1000);
+    if (secs < 60) return `${secs}s`;
+    return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  }
+
+  function statusDot(status: string) {
+    const colors: Record<string, string> = {
+      COMPLETED: 'var(--pass)',
+      FAILED: 'var(--fail)',
+      RUNNING: 'var(--6d-orange)',
+      PENDING: 'var(--text-dim)',
+    };
+    return (
+      <span
+        style={{
+          display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%',
+          background: colors[status] ?? 'var(--text-dim)', marginRight: '6px', flexShrink: 0,
+        }}
+      />
+    );
+  }
+
+  const useCaseSummary = context?.useCaseSummary ?? [];
+
+  // ── Running state ────────────────────────────────────────────────────────
+  if (isRunning && activeScan) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <ScanProgress scan={activeScan} />
+      </div>
+    );
+  }
+
+  // ── Complete state ───────────────────────────────────────────────────────
+  if (isComplete && !context) {
+    return (
+      <div style={{ textAlign: 'center', padding: '48px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+        Loading scan results…
+      </div>
+    );
+  }
+
+  if (isComplete && context) {
+    const scanDate = context.updatedAt ? new Date(context.updatedAt).toLocaleDateString() : '';
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {/* Success banner */}
+        <div
+          style={{
+            padding: '12px 16px',
+            background: 'var(--emerald-dim)',
+            border: '1px solid rgba(42,157,143,0.2)',
+            borderRadius: 'var(--radius)',
+            display: 'flex', alignItems: 'center', gap: '10px',
+          }}
+        >
+          <span style={{ fontSize: '18px' }}>✓</span>
+          <p style={{ fontSize: '12px', color: 'var(--text-mid)', lineHeight: 1.55 }}>
+            Scan completed in{' '}
+            <strong style={{ color: 'var(--text)' }}>{formatDuration(latestScan)}</strong>.
+            {' '}{latestScan?.pagesScanned ?? 0} pages · {useCaseSummary.length} use cases
+          </p>
+        </div>
+
+        {/* Stat tiles */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
+          {[
+            { label: 'Pages Scanned',     value: latestScan?.pagesScanned ?? 0, color: 'var(--cyan)' },
+            { label: 'Menus Mapped',       value: context.navigationMap?.length ?? 0, color: 'var(--6d-orange)' },
+            { label: 'Locators',           value: Object.keys(context.pageLocators ?? {}).length, color: 'var(--emerald)' },
+            { label: 'Use Cases Found',    value: useCaseSummary.length, color: 'var(--violet)' },
+          ].map((tile) => (
+            <div key={tile.label} className="stat-card" style={{ padding: '14px' }}>
+              <div className="stat-label">{tile.label}</div>
+              <div className="stat-value" style={{ fontSize: '24px', color: tile.color }}>{tile.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Two-column: login + nav map */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <LoginInstructions
+            instructions={context.loginInstructions}
+            onSave={(updated) => { void updateLogin.mutateAsync(updated).then(() => toast.success('Login instructions saved.')).catch(() => toast.error('Failed to save.')); }}
+            isSaving={updateLogin.isPending}
+            scanDate={scanDate}
+            envConfigName={selectedEnv?.name}
+          />
+          <NavigationMap navMap={context.navigationMap} pagesScanned={latestScan?.pagesScanned ?? 0} />
+        </div>
+
+        {/* Test Login verifier */}
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">🔐 Login Verifier</div>
+            <button
+              type="button"
+              onClick={handleTestLogin}
+              disabled={testLoginLoading || !context.loginInstructions}
+              style={{
+                padding: '6px 14px', fontSize: '12px', fontWeight: 700,
+                background: testLoginLoading ? 'var(--surface3)' : 'linear-gradient(135deg, #2563AB, #0A2A57)',
+                border: 'none', borderRadius: '6px', color: '#fff',
+                cursor: testLoginLoading || !context.loginInstructions ? 'not-allowed' : 'pointer',
+                opacity: testLoginLoading || !context.loginInstructions ? 0.6 : 1,
+              }}
+            >
+              {testLoginLoading ? 'Testing…' : '▶ Test Login'}
+            </button>
+          </div>
+          <div className="card-body">
+            {!testLoginResult && !testLoginLoading && (
+              <p style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontStyle: 'italic' }}>
+                Click "Test Login" to verify the login instructions work against{' '}
+                {selectedEnv?.baseUrl ?? 'the configured base URL'}.
+              </p>
+            )}
+            {testLoginLoading && (
+              <p style={{ fontSize: '12px', color: 'var(--amber)', fontFamily: 'var(--font-mono)' }}>
+                Running Playwright login… this may take 15–30 seconds.
+              </p>
+            )}
+            {testLoginResult && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {/* Result banner */}
+                <div style={{
+                  padding: '10px 14px', borderRadius: 'var(--radius)',
+                  background: testLoginResult.success ? 'var(--emerald-dim)' : 'var(--rose-dim)',
+                  border: `1px solid ${testLoginResult.success ? 'rgba(42,157,143,0.25)' : 'rgba(220,38,38,0.25)'}`,
+                  display: 'flex', alignItems: 'flex-start', gap: '10px',
+                }}>
+                  <span style={{ fontSize: '20px' }}>{testLoginResult.success ? '✓' : '✕'}</span>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: testLoginResult.success ? 'var(--emerald)' : 'var(--rose)' }}>
+                      {testLoginResult.success ? 'Login successful' : 'Login failed'}
+                    </div>
+                    {testLoginResult.success && testLoginResult.finalUrl && (
+                      <div style={{ fontSize: '11px', color: 'var(--text-mid)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
+                        Landed at: {testLoginResult.finalUrl}
+                      </div>
+                    )}
+                    {!testLoginResult.success && testLoginResult.errorMessage && (
+                      <div style={{ fontSize: '11px', color: 'var(--rose)', fontFamily: 'var(--font-mono)', marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {testLoginResult.errorMessage.slice(0, 300)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Screenshot */}
+                {testLoginResult.screenshotBase64 && (
+                  <img
+                    src={`data:image/jpeg;base64,${testLoginResult.screenshotBase64}`}
+                    alt="Post-login screenshot"
+                    style={{
+                      width: '100%', maxHeight: '240px', objectFit: 'cover',
+                      borderRadius: 'var(--radius)', border: '1px solid var(--border)',
+                    }}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Custom instructions card */}
+        <div className="card" style={{ position: 'relative', overflow: 'visible' }}>
+          <div
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, height: '4px',
+              background: 'linear-gradient(90deg, #FFB347, #F47B20)',
+              borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+            }}
+          />
+          <div className="card-header" style={{ paddingTop: '18px' }}>
+            <div className="card-title">
+              <ScanLine size={14} color="var(--6d-orange)" />
+              Custom Instructions
+            </div>
+            {!editingInstructions && (
+              <button
+                type="button"
+                className="tb-btn tb-btn-ghost"
+                style={{ fontSize: '11px', padding: '4px 10px' }}
+                onClick={() => { setInstructionsDraft(context.customInstructions ?? ''); setEditingInstructions(true); }}
+              >
+                Edit
+              </button>
+            )}
+          </div>
+          <div className="card-body">
+            {editingInstructions ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <textarea
+                  className="input-field"
+                  value={instructionsDraft}
+                  onChange={(e) => setInstructionsDraft(e.target.value)}
+                  style={{ fontFamily: 'var(--font-ui)', fontSize: '13px', minHeight: '100px', resize: 'vertical', lineHeight: 1.6 }}
+                  placeholder="Describe how to reach the main navigation after login…"
+                />
+                <p style={{ fontSize: '10px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
+                  Used by the scanner on next run to navigate to the correct context, and injected into every AI agent as project knowledge.
+                </p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void updateCtx.mutateAsync({ customInstructions: instructionsDraft.trim() || null })
+                        .then(() => { toast.success('Instructions saved.'); setEditingInstructions(false); setCustomInstructions(instructionsDraft); })
+                        .catch(() => toast.error('Failed to save.'));
+                    }}
+                    disabled={updateCtx.isPending}
+                    style={{
+                      padding: '6px 16px', fontSize: '12px', fontWeight: 700,
+                      background: 'linear-gradient(135deg, #F47B20, #D9601A)',
+                      border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer',
+                      opacity: updateCtx.isPending ? 0.6 : 1,
+                    }}
+                  >
+                    {updateCtx.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    className="tb-btn tb-btn-ghost"
+                    style={{ fontSize: '12px', padding: '6px 14px' }}
+                    onClick={() => setEditingInstructions(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : context.customInstructions ? (
+              <p style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.65, fontFamily: 'var(--font-ui)', whiteSpace: 'pre-wrap' }}>
+                {context.customInstructions}
+              </p>
+            ) : (
+              <p style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontStyle: 'italic' }}>
+                No custom instructions set. Click Edit to add guidance for the scanner and AI agents.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Use cases card */}
+        {useCaseSummary.length > 0 && (
+          <div className="card">
+            <div
+              style={{
+                position: 'absolute', top: 0, left: 0, right: 0, height: '4px',
+                background: 'linear-gradient(90deg, #2563AB, #0A2A57)',
+                borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+              }}
+            />
+            <div className="card-header" style={{ position: 'relative', overflow: 'visible', paddingTop: '18px' }}>
+              <div className="card-title">Use Cases Discovered</div>
+              <button
+                type="button"
+                onClick={() => navigate(`/projects/${projectSlug}/tc-library`)}
+                style={{
+                  padding: '5px 12px', fontSize: '12px', fontWeight: 600,
+                  border: '1px solid var(--border)', borderRadius: '6px',
+                  background: 'transparent', color: 'var(--text-mid)', cursor: 'pointer',
+                }}
+              >
+                View in TC Library →
+              </button>
+            </div>
+            <div className="card-body" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {context?.pendingTCDraft && context.pendingTCDraft.length > 0 && (
+                <div
+                  style={{
+                    width: '100%', marginBottom: '4px',
+                    padding: '8px 12px', borderRadius: '8px', fontSize: '12px',
+                    background: 'var(--violet-dim)', border: '1px solid rgba(37,99,171,0.25)',
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                  }}
+                >
+                  <span>🔍</span>
+                  <span style={{ flex: 1, color: 'var(--text-mid)' }}>
+                    <strong style={{ color: 'var(--cyan)' }}>{context.pendingTCDraft.length} TCs</strong>
+                    {' '}drafted by the writer agent — pending your review.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/projects/${projectSlug}/writer`)}
+                    style={{
+                      padding: '4px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                      border: '1px solid var(--cyan)', borderRadius: '6px',
+                      background: 'transparent', color: 'var(--cyan)',
+                    }}
+                  >
+                    Review in Test Writer →
+                  </button>
+                </div>
+              )}
+              {useCaseSummary.map((uc) => (
+                <div
+                  key={uc.name}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 600,
+                    border: `1px solid ${uc.color}22`,
+                    background: `${uc.color}11`,
+                  }}
+                >
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: uc.color, flexShrink: 0 }} />
+                  <span style={{ color: 'var(--text)' }}>{uc.name}</span>
+                  <span
+                    style={{
+                      padding: '1px 6px', borderRadius: '10px', fontSize: '10px',
+                      background: 'var(--surface2)', color: 'var(--text-dim)',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    {uc.tcCount > 0 ? `${uc.tcCount} TCs` : '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Scan history */}
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Scan History</div>
+            <button
+              type="button"
+              onClick={handleStartScan}
+              disabled={startScan.isPending || !selectedEnv}
+              style={{
+                padding: '6px 14px', fontSize: '12px', fontWeight: 700,
+                background: 'linear-gradient(135deg, #F47B20, #D9601A)',
+                border: 'none', borderRadius: '6px', color: '#fff',
+                cursor: 'pointer', opacity: startScan.isPending ? 0.6 : 1,
+              }}
+            >
+              {startScan.isPending ? 'Starting…' : 'Run New Scan'}
+            </button>
+          </div>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Pages</th>
+                <th>Duration</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scans.map((scan) => (
+                <tr key={scan.id}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      {statusDot(scan.status)}
+                      <span style={{ fontSize: '12px', color: 'var(--text-mid)' }}>{scan.status}</span>
+                    </div>
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                    {new Date(scan.createdAt).toLocaleDateString()}
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                    {scan.pagesScanned}
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                    {formatDuration(scan)}
+                  </td>
+                  <td>
+                    {deletingId === scan.id ? (
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--fail)' }}>Delete?</span>
+                        <button className="tb-btn tb-btn-ghost" style={{ padding: '3px 8px', fontSize: '10px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }} onClick={() => void handleDeleteScan(scan.id)}>Yes</button>
+                        <button className="tb-btn tb-btn-ghost" style={{ padding: '3px 8px', fontSize: '10px' }} onClick={() => setDeletingId(null)}>No</button>
+                      </div>
+                    ) : (
+                      <button
+                        className="tb-btn tb-btn-ghost"
+                        style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
+                        onClick={() => setDeletingId(scan.id)}
+                        disabled={scan.status === 'RUNNING'}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Idle state (no scan yet) ─────────────────────────────────────────────
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Info banner */}
+      <div
+        style={{
+          padding: '12px 16px',
+          background: 'var(--cyan-dim)',
+          border: '1px solid rgba(37,99,171,0.2)',
+          borderRadius: 'var(--radius)',
+          display: 'flex', alignItems: 'flex-start', gap: '10px',
+        }}
+      >
+        <ScanLine size={18} color="var(--cyan)" style={{ marginTop: '1px', flexShrink: 0 }} />
+        <p style={{ fontSize: '12px', color: 'var(--text-mid)', lineHeight: 1.55 }}>
+          No UI scan has been run yet for this project. Running a scan lets QA Infinity learn the real
+          navigation, login flow, and page locators of your application.
+        </p>
+      </div>
+
+      {/* Two-column layout */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', alignItems: 'start' }}>
+        {/* Left: feature bullets card */}
+        <div className="card" style={{ position: 'relative', overflow: 'visible' }}>
+          <div
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, height: '4px',
+              background: 'linear-gradient(90deg, #FFB347, #F47B20)',
+              borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+            }}
+          />
+          <div className="card-header" style={{ paddingTop: '18px' }}>
+            <div className="card-title">
+              <ScanLine size={14} color="var(--6d-orange)" />
+              UI Scanner
+            </div>
+          </div>
+          <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {[
+              { icon: Lock,          label: 'Login Flow Discovery', desc: 'Detects form type, SSO, two-step' },
+              { icon: Map,           label: 'Navigation Map',        desc: 'Walks every menu, records URLs and hierarchy' },
+              { icon: Target,        label: 'Locator Library',       desc: 'Real CSS/ARIA selectors per page' },
+              { icon: ClipboardList, label: 'Auto TC Suggestions',   desc: 'Draft TCs auto-sent to TC Library' },
+            ].map(({ icon: Icon, label, desc }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                <div
+                  style={{
+                    width: '32px', height: '32px', borderRadius: '8px', flexShrink: 0,
+                    background: 'var(--violet-dim)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <Icon size={14} color="var(--6d-orange)" />
+                </div>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>{label}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>{desc}</div>
+                </div>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={handleStartScan}
+              disabled={startScan.isPending || !selectedEnv}
+              style={{
+                marginTop: '4px',
+                padding: '10px 20px', fontSize: '13px', fontWeight: 700,
+                background: selectedEnv ? 'linear-gradient(135deg, #F47B20, #D9601A)' : 'var(--surface3)',
+                border: 'none', borderRadius: '8px',
+                color: selectedEnv ? '#fff' : 'var(--text-dim)',
+                cursor: selectedEnv && !startScan.isPending ? 'pointer' : 'not-allowed',
+                width: '100%',
+                opacity: startScan.isPending ? 0.6 : 1,
+              }}
+            >
+              {startScan.isPending ? 'Starting Scan…' : 'Start UI Scan'}
+            </button>
+          </div>
+        </div>
+
+        {/* Right column: config + history */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {/* Scan configuration */}
+          <div className="card" style={{ position: 'relative', overflow: 'visible' }}>
+            <div
+              style={{
+                position: 'absolute', top: 0, left: 0, right: 0, height: '4px',
+                background: 'linear-gradient(90deg, #2563AB, #0A2A57)',
+                borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+              }}
+            />
+            <div className="card-header" style={{ paddingTop: '18px' }}>
+              <div className="card-title">Scan Configuration</div>
+            </div>
+            <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={LABEL_STYLE}>Environment</label>
+                <select
+                  className="input-field"
+                  value={selectedEnvId}
+                  onChange={(e) => setSelectedEnvId(e.target.value)}
+                  style={{ fontFamily: 'var(--font-ui)', fontSize: '13px' }}
+                >
+                  {envConfigs.length === 0 && (
+                    <option value="">No environments configured</option>
+                  )}
+                  {envConfigs.map((env) => (
+                    <option key={env.id} value={env.id}>
+                      {env.name}{env.isDefault ? ' ★' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Environment preview */}
+              {selectedEnv && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    background: 'var(--surface2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)',
+                    display: 'flex', flexDirection: 'column', gap: '5px',
+                  }}
+                >
+                  {[
+                    { label: 'Base URL',  value: selectedEnv.baseUrl, mono: true, color: 'var(--cyan)' },
+                    { label: 'Username',  value: selectedEnv.username ?? '—', mono: true, color: 'var(--text)' },
+                    { label: 'Password',  value: selectedEnv.username ? '••••••••••' : '—', mono: true, color: 'var(--text-dim)' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+                        {label}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <label style={LABEL_STYLE}>Scan Depth</label>
+                <select
+                  className="input-field"
+                  value={scanDepth}
+                  onChange={(e) => setScanDepth(e.target.value as typeof scanDepth)}
+                  style={{ fontFamily: 'var(--font-ui)', fontSize: '13px' }}
+                >
+                  <option value="full">Full — all pages</option>
+                  <option value="top-level">Top-level menus only</option>
+                  <option value="login-only">Login + dashboard only</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={LABEL_STYLE}>Auto-generate Test Cases</label>
+                <select
+                  className="input-field"
+                  value={generateTCs ? 'yes' : 'no'}
+                  onChange={(e) => setGenerateTCs(e.target.value === 'yes')}
+                  style={{ fontFamily: 'var(--font-ui)', fontSize: '13px' }}
+                >
+                  <option value="yes">Yes — send to TC Library</option>
+                  <option value="no">No — context only</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={LABEL_STYLE}>
+                  Custom Instructions
+                  <span style={{ color: 'var(--text-dim)', fontWeight: 400, letterSpacing: 0, marginLeft: '4px' }}>(optional)</span>
+                </label>
+                <textarea
+                  className="input-field"
+                  value={customInstructions}
+                  onChange={(e) => setCustomInstructions(e.target.value)}
+                  placeholder={`e.g. After login you land on an "All Projects" page — click the first project to reach the main navigation.`}
+                  style={{ fontFamily: 'var(--font-ui)', fontSize: '12px', minHeight: '80px', resize: 'vertical', lineHeight: 1.5 }}
+                />
+                <p style={{ marginTop: '5px', fontSize: '10px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
+                  The scanner uses these instructions to navigate to the correct app context before capturing pages. Also injected into all AI agents as project knowledge.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Scan history */}
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Scan History</div>
+            </div>
+            <div
+              className="card-body"
+              style={{
+                textAlign: 'center', padding: '20px',
+                color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: '11px',
+              }}
+            >
+              No scans yet
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 const TABS = [
   { value: 'details',     label: '🏗 Details' },
   { value: 'environments',label: '🌐 Environments' },
   { value: 'members',     label: '👥 Members' },
   { value: 'req-library', label: '📁 Req Library' },
+  { value: 'scanner',     label: '🔍 UI Scanner' },
   { value: 'danger',      label: '⚠ Danger Zone' },
 ];
 
@@ -926,6 +1730,9 @@ export default function ProjectSettings() {
           </Tabs.Content>
           <Tabs.Content value="req-library">
             <ReqLibraryTab />
+          </Tabs.Content>
+          <Tabs.Content value="scanner">
+            <UIScannerTab />
           </Tabs.Content>
           <Tabs.Content value="danger">
             <DangerZoneTab />

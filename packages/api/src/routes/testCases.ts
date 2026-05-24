@@ -168,7 +168,44 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       }),
     );
 
-    const projectLibraryContext = await getLibraryContext(req.project.id);
+    const [projectLibraryContext, existingTagRows, existingTCRows, projectCtx] = await Promise.all([
+      getLibraryContext(req.project.id),
+      prisma.testCase.findMany({
+        where: { projectId: req.project.id, useCaseTag: { not: null } },
+        select: { useCaseTag: true },
+        distinct: ['useCaseTag'],
+        orderBy: { useCaseTag: 'asc' },
+      }),
+      prisma.testCase.findMany({
+        where: { projectId: req.project.id },
+        select: { title: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.projectContext.findUnique({ where: { projectId: req.project.id } }),
+    ]);
+
+    const existingUseCaseTags = existingTagRows
+      .map((r) => r.useCaseTag)
+      .filter(Boolean) as string[];
+
+    const existingTestCaseTitles = existingTCRows.map((r) => r.title);
+
+    // Build a compact context summary from the project's UI scan
+    let projectContextSummary: string | undefined;
+    if (projectCtx) {
+      const navMap = projectCtx.navigationMap ? JSON.parse(projectCtx.navigationMap) as Array<{ label: string; url: string }> : [];
+      const useCases = projectCtx.useCaseSummary ? JSON.parse(projectCtx.useCaseSummary) as Array<{ name: string }> : [];
+      const scanDate = projectCtx.updatedAt.toISOString().split('T')[0];
+      const navLines = navMap.slice(0, 20).map((n) => `  - ${n.label}: ${n.url}`).join('\n');
+      const useCaseLines = useCases.map((u) => `  - ${u.name}`).join('\n');
+      projectContextSummary = [
+        `Scan date: ${scanDate}`,
+        `Navigation (${navMap.length} pages):`,
+        navLines || '  (none)',
+        `Known use cases:`,
+        useCaseLines || '  (none)',
+      ].join('\n');
+    }
 
     const result = await runWriterAgent({
       inputs: resolvedInputs,
@@ -177,6 +214,9 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       projectName: req.project.name,
       testTypes,
       additionalContext,
+      existingUseCaseTags,
+      existingTestCaseTitles,
+      projectContextSummary,
     });
 
     res.json(result);
@@ -533,6 +573,28 @@ router.delete('/:tcId', async (req: Request, res: Response, next: NextFunction) 
 
     await prisma.testCase.delete({ where: { id: existing.id } });
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PATCH /:tcId/hints — save generation hints for a test case ───────────────
+
+router.patch('/:tcId/hints', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hints } = req.body as { hints?: string };
+    const existing = await prisma.testCase.findFirst({
+      where: { tcId: req.params['tcId'], projectId: req.project.id },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Test case not found' });
+      return;
+    }
+    const updated = await prisma.testCase.update({
+      where: { id: existing.id },
+      data: { generationHints: hints?.trim() || null },
+    });
+    res.json({ id: updated.id, generationHints: updated.generationHints });
   } catch (err) {
     next(err);
   }

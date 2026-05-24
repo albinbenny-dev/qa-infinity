@@ -87,6 +87,11 @@ export function useRunSocket(): UseRunSocketReturn {
       setStats((prev) => ({ ...prev, passed, failed, skipped, running: 0 }));
     });
 
+    socket.on('run:cancelled', () => {
+      setStatus('cancelled');
+      setStats((prev) => ({ ...prev, running: 0 }));
+    });
+
     socket.on('run:error', (msg: string) => {
       setStatus('error');
       setLogs((prev) => [...prev, {

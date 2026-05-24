@@ -1,16 +1,17 @@
-FROM mcr.microsoft.com/playwright:v1.45.0-jammy
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
 # Install Node 20
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
   && apt-get install -y nodejs \
-  && npm install -g pnpm
+  && corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
 # Copy workspace files for dependency resolution
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/runner/package.json ./packages/runner/
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Copy runner HTTP server source
 COPY packages/runner/src ./packages/runner/src
