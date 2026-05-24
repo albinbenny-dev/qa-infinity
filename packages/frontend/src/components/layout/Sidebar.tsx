@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useProjectStore } from '../../stores/projectStore';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
+import { useHealStats } from '../../hooks/useHeals';
 import type { NavSection } from '../../types';
 
 interface SidebarProps {
@@ -11,6 +12,8 @@ export default function Sidebar({ slug }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { activeProject, projects, currentUser } = useProjectStore();
+  const projectId = activeProject?.id ?? '';
+  const { data: healStats } = useHealStats(projectId || undefined);
 
   const navSections: NavSection[] = slug
     ? [
@@ -27,7 +30,7 @@ export default function Sidebar({ slug }: SidebarProps) {
             { label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', badge: 'AI', badgeVariant: 'blue' },
             { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨' },
             { label: 'Execution', path: `/projects/${slug}/execution`, icon: '▶' },
-            { label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳' },
+            { label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' },
           ],
         },
         {

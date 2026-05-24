@@ -8,6 +8,7 @@ import TestWriter from './pages/TestWriter';
 import TCLibrary from './pages/TCLibrary';
 import Scripts from './pages/Scripts';
 import Execution from './pages/Execution';
+import HealingAgent from './pages/HealingAgent';
 import { isAuthenticated } from './lib/auth';
 
 // ── Protected route ────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ export default function App() {
         <Route path="/projects/:slug/tc-library"   element={<TCLibrary />} />
         <Route path="/projects/:slug/scripts"      element={<Scripts />} />
         <Route path="/projects/:slug/execution"    element={<Execution />} />
-        <Route path="/projects/:slug/healing"      element={<PlaceholderScreen title="Healing Agent" />} />
+        <Route path="/projects/:slug/healing"      element={<HealingAgent />} />
         <Route path="/projects/:slug/reports"      element={<PlaceholderScreen title="Reports" />} />
         <Route path="/projects/:slug/chat"         element={<PlaceholderScreen title="Chat Agent" />} />
         <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />

@@ -136,6 +136,24 @@ export interface HealProposal {
   patchedCode: string;
   confidence: number;
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'AUTO_APPLIED';
+  createdAt: string;
+  updatedAt: string;
+  runResult?: {
+    id: string;
+    status: string;
+    errorMessage?: string | null;
+    testCase: { id: string; tcId: string; title: string };
+    run: { id: string; name: string; environment: string };
+    script?: { id: string; filename: string; content?: string } | null;
+  };
+}
+
+export interface HealStats {
+  pending: number;
+  approved: number;
+  rejected: number;
+  autoApplied: number;
+  total: number;
 }
 
 export type NavItem = {
