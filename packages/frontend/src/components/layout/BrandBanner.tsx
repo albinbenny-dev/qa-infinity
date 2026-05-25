@@ -34,6 +34,8 @@ export default function BrandBanner() {
       <div className="bb-right">
         <button
           className="theme-toggle"
+          data-testid="theme-toggle"
+          aria-label={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
           onClick={toggleTheme}
           title={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
           type="button"

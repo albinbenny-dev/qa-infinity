@@ -1,9 +1,10 @@
-import { useMemo, useReducer, useCallback } from 'react';
+import { useMemo, useReducer, useCallback, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import UseCaseGroup from '../components/tc-library/UseCaseGroup';
 import SelectionBar from '../components/tc-library/SelectionBar';
+import EditTCModal from '../components/tc-library/EditTCModal';
 import { useProject } from '../hooks/useProjects';
 import {
   useTestCases,
@@ -11,36 +12,22 @@ import {
   useTCLibraryStats,
   useBulkUpdateUseCase,
   useDeleteTestCase,
+  useUpdateTestCase,
   useBulkDelete,
   useBulkAddTag,
 } from '../hooks/useTestCases';
 import { useExecutionStore } from '../stores/executionStore';
 import { useScripts } from '../hooks/useScripts';
+import { useCreateRun } from '../hooks/useRuns';
+import { useProjectStore } from '../stores/projectStore';
 import { api } from '../lib/api';
 import type { TestCase } from '../types';
 
-// ── Airtel Ventas group config ──────────────────────────────────────────────
-const AIRTEL_USE_CASES = [
-  'Primary Sales',
-  'Stock Management',
-  'Dealer Onboarding & KYC',
-  'Sales API',
-  'Secondary Sales',
-  'Distributor API',
-];
-
-const UC_COLOR: Record<string, string> = {
-  'Primary Sales':           '--violet',
-  'Stock Management':        '--amber',
-  'Dealer Onboarding & KYC': '--emerald',
-  'Sales API':               '--cyan',
-  'Secondary Sales':         '--rose',
-  'Distributor API':         '--sky',
-};
+// ── UseCase colour cycling ──────────────────────────────────────────────────
 const UC_COLOR_FALLBACKS = ['--violet', '--cyan', '--emerald', '--amber', '--rose', '--sky'];
 
-function getUcColor(name: string, index: number): string {
-  return UC_COLOR[name] ?? UC_COLOR_FALLBACKS[index % UC_COLOR_FALLBACKS.length];
+function getUcColor(_name: string, index: number): string {
+  return UC_COLOR_FALLBACKS[index % UC_COLOR_FALLBACKS.length];
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -161,8 +148,15 @@ export default function TCLibrary() {
 
   const bulkUpdateMutation = useBulkUpdateUseCase(projectId ?? '');
   const deleteTcMutation = useDeleteTestCase(projectId ?? '');
+  const updateTcMutation = useUpdateTestCase(projectId ?? '');
   const bulkDeleteMutation = useBulkDelete(projectId ?? '');
   const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
+  const createRun = useCreateRun(projectId ?? '');
+  const { activeProject } = useProjectStore();
+  const envConfigs = activeProject?.envConfigs ?? [];
+  const defaultEnv = envConfigs.find(e => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
+
+  const [editingTc, setEditingTc] = useState<TestCase | null>(null);
 
   const allTCs: TestCase[] = tcData?.testCases ?? [];
 
@@ -186,10 +180,7 @@ export default function TCLibrary() {
   // ── Group TCs by useCaseTag ───────────────────────────────────────────────
   const groups = useMemo(() => {
     const map = new Map<string, TestCase[]>();
-    AIRTEL_USE_CASES.forEach((uc) => map.set(uc, []));
-    useCases
-      .filter((uc) => !AIRTEL_USE_CASES.includes(uc))
-      .forEach((uc) => map.set(uc, []));
+    useCases.forEach((uc) => map.set(uc, []));
     for (const tc of filteredTCs) {
       const key = tc.useCaseTag ?? 'Uncategorised';
       if (!map.has(key)) map.set(key, []);
@@ -237,13 +228,25 @@ export default function TCLibrary() {
   }
 
   // ── Run handlers ─────────────────────────────────────────────────────────
-  function handleRunGroup(ids: string[]) {
-    setSelected(ids);
-    navigate(`/projects/${slug}/execution`);
+  async function handleRunGroup(ids: string[]) {
+    if (!projectId || ids.length === 0) return;
+    try {
+      await createRun.mutateAsync({ testCaseIds: ids, environment: defaultEnv, name: `Quick Run — ${defaultEnv}` });
+      toast.success('Run queued! Check Execution for live logs.');
+      navigate(`/projects/${slug}/execution`);
+    } catch {
+      toast.error('Failed to start run.');
+    }
   }
-  function handleRunIndividual(tc: TestCase) {
-    setSelected([tc.id]);
-    navigate(`/projects/${slug}/execution`);
+  async function handleRunIndividual(tc: TestCase) {
+    if (!projectId) return;
+    try {
+      await createRun.mutateAsync({ testCaseIds: [tc.id], environment: defaultEnv, name: `Quick Run — ${defaultEnv}` });
+      toast.success('Run queued! Check Execution for live logs.');
+      navigate(`/projects/${slug}/execution`);
+    } catch {
+      toast.error('Failed to start run.');
+    }
   }
   function handleSendToExecution() {
     setSelected(Array.from(selectedIds));
@@ -281,6 +284,17 @@ export default function TCLibrary() {
       toast.success(`Deleted ${group.tcs.length} TCs from "${name}"`);
     } catch {
       toast.error('Delete failed');
+    }
+  }
+
+  // ── Edit handler ─────────────────────────────────────────────────────────
+  async function handleSaveEdit(tcId: string, patch: Partial<TestCase>) {
+    try {
+      await updateTcMutation.mutateAsync({ tcId, data: patch });
+      setEditingTc(null);
+      toast.success('Test case updated');
+    } catch {
+      toast.error('Update failed');
     }
   }
 
@@ -487,12 +501,21 @@ export default function TCLibrary() {
                   onRunIndividual={handleRunIndividual}
                   onDeleteTc={handleDeleteTc}
                   onDeleteGroup={handleDeleteGroup}
+                  onEditTc={setEditingTc}
                 />
               );
             })}
           </div>
         )}
       </div>
+
+      {editingTc && (
+        <EditTCModal
+          tc={editingTc}
+          onSave={handleSaveEdit}
+          onClose={() => setEditingTc(null)}
+        />
+      )}
     </div>
   );
 }

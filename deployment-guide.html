@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QA Infinity — RHEL Deployment Guide</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface-2: #22263a;
+      --border: #2e3347;
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --code-bg: #0d1117;
+      --code-border: #30363d;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 48px 0 40px;
+      text-align: center;
+    }
+
+    .logo-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-light);
+      margin-bottom: 20px;
+    }
+
+    .logo-chip span { font-size: 14px; }
+
+    h1 {
+      font-size: clamp(26px, 4vw, 38px);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+
+    h1 em {
+      font-style: normal;
+      background: linear-gradient(90deg, var(--accent-light), #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      margin-top: 10px;
+      font-size: 15px;
+    }
+
+    .badges {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .badge.green { color: var(--green); border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.07); }
+    .badge.purple { color: var(--accent-light); border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.07); }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prereq banner ── */
+    .prereq-banner {
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 40px;
+    }
+
+    .prereq-banner h2 {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-light);
+      margin-bottom: 12px;
+    }
+
+    .prereq-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px;
+    }
+
+    .prereq-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .prereq-list li::before {
+      content: "✓";
+      color: var(--accent-light);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    /* ── Steps ── */
+    .step {
+      margin-bottom: 48px;
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .step h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .step p, .step ul, .step ol {
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+
+    .step ul, .step ol {
+      padding-left: 20px;
+    }
+
+    .step li {
+      margin-bottom: 6px;
+    }
+
+    /* ── Code blocks ── */
+    .code-block {
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 14px 0;
+    }
+
+    .code-block-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: #161b22;
+      border-bottom: 1px solid var(--code-border);
+    }
+
+    .code-block-header span {
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b949e;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .copy-btn {
+      background: none;
+      border: 1px solid #30363d;
+      border-radius: 5px;
+      color: #8b949e;
+      font-size: 11px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .copy-btn:hover {
+      background: #30363d;
+      color: #e6edf3;
+    }
+
+    pre {
+      padding: 18px 20px;
+      overflow-x: auto;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #e6edf3;
+    }
+
+    pre .comment { color: #8b949e; }
+    pre .cmd { color: #79c0ff; }
+
+    code {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 13px;
+      color: #a5d6ff;
+    }
+
+    /* ── Callout boxes ── */
+    .callout {
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin: 14px 0;
+      font-size: 14px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .callout-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+    .callout.info {
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.25);
+      color: #a5b4fc;
+    }
+
+    .callout.warning {
+      background: rgba(234,179,8,0.08);
+      border: 1px solid rgba(234,179,8,0.25);
+      color: #fde047;
+    }
+
+    .callout.danger {
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.25);
+      color: #fca5a5;
+    }
+
+    .callout.success {
+      background: rgba(34,197,94,0.08);
+      border: 1px solid rgba(34,197,94,0.25);
+      color: #86efac;
+    }
+
+    /* ── Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      margin: 14px 0;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead tr {
+      background: var(--surface-2);
+    }
+
+    thead th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    tbody tr {
+      border-top: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+
+    tbody tr:hover { background: var(--surface-2); }
+
+    td {
+      padding: 12px 16px;
+      font-size: 14px;
+      vertical-align: top;
+    }
+
+    td:first-child { color: #a5d6ff; font-family: monospace; }
+    td:last-child { color: var(--text-muted); }
+
+    /* ── Services status ── */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .service-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+
+    .service-card .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+      margin-right: 6px;
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    .service-card .name {
+      font-weight: 600;
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .service-card .desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .service-card .port {
+      font-size: 11px;
+      color: var(--accent-light);
+      font-family: monospace;
+      margin-top: 6px;
+    }
+
+    /* ── Day-to-day ops ── */
+    .ops-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin: 16px 0;
+    }
+
+    .op-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .op-card h3 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    .op-card pre {
+      padding: 10px 12px;
+      background: var(--code-bg);
+      border-radius: 7px;
+      font-size: 12px;
+      color: #79c0ff;
+    }
+
+    /* ── Troubleshooting ── */
+    .trouble-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 10px;
+    }
+
+    .trouble-item .problem {
+      font-weight: 600;
+      color: #fca5a5;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .trouble-item .fix {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ── Tabs ── */
+    .tab-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .tab-btn:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      background: rgba(99,102,241,0.15);
+      border-color: rgba(99,102,241,0.4);
+      color: var(--accent-light);
+    }
+
+    .tab-panel { margin-top: 0; }
+
+    .tab-panel ol, .tab-panel ul {
+      padding-left: 20px;
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+
+    .tab-panel li { margin-bottom: 6px; }
+
+    .tab-panel p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .tab-panel strong { color: var(--text); }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 24px;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    footer strong { color: var(--accent-light); }
+
+    /* ── Divider ── */
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 40px 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════ HEADER -->
+<header>
+  <div class="logo-chip"><span>⚡</span> QA Infinity</div>
+  <h1>Deploy to <em>RHEL Server</em></h1>
+  <p class="subtitle">Step-by-step guide for deploying QA Infinity on a Red Hat Enterprise Linux server</p>
+  <div class="badges">
+    <span class="badge green">Docker Compose</span>
+    <span class="badge purple">RHEL 8 / 9</span>
+    <span class="badge">4 Services</span>
+    <span class="badge">Non-developer friendly</span>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════ BODY -->
+<div class="container">
+
+  <!-- Prerequisites -->
+  <div class="prereq-banner">
+    <h2>Before You Start — What You Need</h2>
+    <ul class="prereq-list">
+      <li>SSH access to the RHEL server (IP address + username + password)</li>
+      <li>Server must have internet access to download Docker images</li>
+      <li>The <code>qa-infinity</code> project folder on your Windows computer</li>
+      <li>WinSCP installed on your Windows computer (free download — see Step 4)</li>
+      <li>Production API keys (OpenRouter, SMTP email credentials)</li>
+    </ul>
+  </div>
+
+  <!-- ── Step 1 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">1</div>
+      <h2>Connect to the Server</h2>
+    </div>
+    <p>Open a terminal on your computer and connect to the RHEL server using SSH. You will be asked for your password — the cursor won't move while you type, that is normal.</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Terminal</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># Replace with your actual username and server IP address</span>
+ssh your-username@&lt;SERVER-IP-ADDRESS&gt;
+
+<span class="comment"># Example:</span>
+ssh albin@192.168.10.50</pre>
+    </div>
+  </div>
+
+  <!-- ── Step 2 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">2</div>
+      <h2>Install Docker (one-time setup)</h2>
+    </div>
+    <p>Run these commands to install Docker on the server. You only need to do this once. Each line installs a different part of Docker.</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Shell — Install Docker</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># Update the system's package list</span>
+sudo dnf update -y
+
+<span class="comment"># Add Docker's official repository for RHEL</span>
+sudo dnf install -y dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+
+<span class="comment"># Install Docker</span>
+sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+<span class="comment"># Start Docker and make it auto-start on server reboot</span>
+sudo systemctl start docker
+sudo systemctl enable docker
+
+<span class="comment"># Allow your user to run Docker without "sudo" every time</span>
+sudo usermod -aG docker $USER
+
+<span class="comment"># Apply the group change immediately</span>
+newgrp docker</pre>
+    </div>
+    <p>Verify Docker installed correctly — you should see version numbers printed:</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Verify</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre>docker --version
+docker compose version</pre>
+    </div>
+  </div>
+
+  <!-- ── Step 3 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">3</div>
+      <h2>Open the Firewall Ports</h2>
+    </div>
+    <p>The app runs on two ports. The server's built-in firewall must be told to allow traffic through them, otherwise browsers on the network won't be able to reach the app.</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Shell — Firewall Rules</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># Port 3000 = the web UI (what users open in their browser)</span>
+sudo firewall-cmd --permanent --add-port=3000/tcp
+
+<span class="comment"># Port 4000 = the backend API</span>
+sudo firewall-cmd --permanent --add-port=4000/tcp
+
+<span class="comment"># Apply the changes</span>
+sudo firewall-cmd --reload</pre>
+    </div>
+  </div>
+
+  <!-- ── Step 4 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">4</div>
+      <h2>Copy the Project Files to the Server</h2>
+    </div>
+    <p>Since we are not using Git, copy the project folder directly from your Windows computer to the server. Choose <strong>one</strong> of the two methods below — <strong>Option A (WinSCP) is recommended</strong> for non-developers as it uses a visual interface.</p>
+
+    <!-- Method tabs -->
+    <div style="display:flex; gap:8px; margin: 16px 0 0;">
+      <button class="tab-btn active" onclick="showTab('winscp', this)">Option A — WinSCP (GUI)</button>
+      <button class="tab-btn" onclick="showTab('scp', this)">Option B — Command Line (SCP)</button>
+    </div>
+
+    <!-- WinSCP Tab -->
+    <div id="tab-winscp" class="tab-panel">
+      <div class="callout info" style="margin-top:16px;">
+        <span class="callout-icon">💡</span>
+        <span>WinSCP is a free drag-and-drop file transfer app for Windows. It works like Windows Explorer but connects to Linux servers.</span>
+      </div>
+
+      <p style="margin-top:14px;"><strong>4a. Download and install WinSCP</strong></p>
+      <p>Go to <strong>winscp.net</strong> and download the free installer. Run it and accept the defaults.</p>
+
+      <p style="margin-top:14px;"><strong>4b. Connect to the server</strong></p>
+      <ol>
+        <li>Open WinSCP.</li>
+        <li>In the login window, set <strong>File protocol</strong> to <code>SFTP</code>.</li>
+        <li>Fill in <strong>Host name</strong> → your server IP (e.g. <code>192.168.10.50</code>)</li>
+        <li>Fill in <strong>User name</strong> and <strong>Password</strong> for the server.</li>
+        <li>Click <strong>Login</strong>. Accept the server fingerprint warning if it appears.</li>
+      </ol>
+
+      <p style="margin-top:14px;"><strong>4c. Navigate to the home folder on the server</strong></p>
+      <p>The right panel shows the server. Navigate to <code>/home/your-username/</code> (WinSCP usually opens here automatically).</p>
+
+      <p style="margin-top:14px;"><strong>4d. First — prepare the project folder on Windows</strong></p>
+      <p>Before copying, <strong>delete these two folders</strong> from the project on your Windows machine (they are very large and not needed on the server — the server will regenerate them):</p>
+      <ul>
+        <li><code>node_modules</code> (inside the root and inside each package folder)</li>
+        <li><code>local_artifacts</code></li>
+        <li><code>.git</code> (hidden folder — enable "Show hidden files" in Windows Explorer to see it)</li>
+      </ul>
+      <div class="callout warning">
+        <span class="callout-icon">⚠️</span>
+        <span>Do NOT delete these from your original working copy. Make a <strong>copy of the folder first</strong>, then delete from the copy before uploading.</span>
+      </div>
+
+      <p style="margin-top:14px;"><strong>4e. Drag and drop to upload</strong></p>
+      <ol>
+        <li>On the <strong>left panel</strong> (your Windows machine), navigate to the <code>qa-infinity</code> project folder.</li>
+        <li>Select the entire <code>qa-infinity</code> folder.</li>
+        <li>Drag it to the <strong>right panel</strong> (the server) and drop it.</li>
+        <li>WinSCP will show a progress bar. Wait for it to complete.</li>
+      </ol>
+      <div class="callout success">
+        <span class="callout-icon">✅</span>
+        <span>When done, the <code>qa-infinity</code> folder will appear in the right panel under <code>/home/your-username/</code>.</span>
+      </div>
+    </div>
+
+    <!-- SCP Tab -->
+    <div id="tab-scp" class="tab-panel" style="display:none;">
+      <div class="callout info" style="margin-top:16px;">
+        <span class="callout-icon">💡</span>
+        <span>SCP uses the same SSH connection as Step 1 but copies files. Run these commands in <strong>PowerShell on your Windows computer</strong> (not on the server).</span>
+      </div>
+
+      <p style="margin-top:14px;"><strong>4a. Open PowerShell on your Windows machine</strong></p>
+      <p>Press <strong>Win + X</strong> → click <strong>Terminal</strong> or <strong>PowerShell</strong>. Make sure you are NOT already connected to the server via SSH for this step.</p>
+
+      <p style="margin-top:14px;"><strong>4b. Copy the project to the server</strong></p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span>Windows PowerShell</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><span class="comment"># Replace the path, username, and server IP with your actual values</span>
+scp -r "C:\Users\albin\Sixdee telecom solutions pvt. ltd\AirtelAfrica-Ventas - Documents\Delivery\Automation\QA Infinity\qa-infinity" your-username@&lt;SERVER-IP&gt;:~/qa-infinity
+
+<span class="comment"># Example:</span>
+scp -r "C:\...\qa-infinity" albin@192.168.10.50:~/qa-infinity</pre>
+      </div>
+      <div class="callout warning">
+        <span class="callout-icon">⚠️</span>
+        <span>The <code>node_modules</code> folders are very large and will slow the transfer significantly. If possible, delete them from a copy of the folder before running this command, then let the server install them fresh in Step 6.</span>
+      </div>
+    </div>
+
+    <!-- After upload — both methods -->
+    <p style="margin-top:20px;"><strong>4f. (Both methods) — Verify the files arrived on the server</strong></p>
+    <p>Go back to your SSH session (Step 1) and confirm the folder is there:</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Server — SSH Terminal</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># List the home directory — you should see qa-infinity listed</span>
+ls ~
+
+<span class="comment"># Enter the project folder</span>
+cd ~/qa-infinity
+
+<span class="comment"># Confirm the files are there</span>
+ls</pre>
+    </div>
+    <p>You should see files like <code>docker-compose.yml</code>, <code>package.json</code>, and the <code>packages/</code> folder.</p>
+  </div>
+
+  <!-- ── Step 5 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">5</div>
+      <h2>Create the Environment File</h2>
+    </div>
+    <p>The <code>.env</code> file was copied along with the project in Step 4. It currently contains <strong>development values</strong>. You must update it with the correct production settings before starting the app.</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Shell</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># Make sure you are inside the project folder</span>
+cd ~/qa-infinity
+
+<span class="comment"># Open the .env file in the text editor</span>
+nano .env</pre>
+    </div>
+    <p>A text editor will open. Update these values — use the arrow keys to navigate, type to edit:</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Setting</th>
+            <th>What to change it to</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>NODE_ENV=development</td>
+            <td>Change to <code>NODE_ENV=production</code></td>
+          </tr>
+          <tr>
+            <td>CORS_ORIGIN=http://localhost:3000</td>
+            <td>Change to <code>http://&lt;SERVER-IP&gt;:3000</code></td>
+          </tr>
+          <tr>
+            <td>APP_URL=http://localhost:3000</td>
+            <td>Change to <code>http://&lt;SERVER-IP&gt;:3000</code></td>
+          </tr>
+          <tr>
+            <td>JWT_SECRET=...</td>
+            <td>Replace with a long random string (see below)</td>
+          </tr>
+          <tr>
+            <td>OPENROUTER_API_KEY=...</td>
+            <td>Paste the real production OpenRouter API key</td>
+          </tr>
+          <tr>
+            <td>SMTP_USER=</td>
+            <td>Add the email address for sending reports</td>
+          </tr>
+          <tr>
+            <td>SMTP_PASS=</td>
+            <td>Add the email app password</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>To generate a strong <code>JWT_SECRET</code>, run this in a separate terminal and paste the output:</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Generate Secret</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre>openssl rand -hex 64</pre>
+    </div>
+    <div class="callout warning">
+      <span class="callout-icon">💾</span>
+      <span>Save and exit nano: press <strong>Ctrl + X</strong>, then <strong>Y</strong>, then <strong>Enter</strong>.</span>
+    </div>
+  </div>
+
+  <!-- ── Step 6 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">6</div>
+      <h2>Build and Start the App</h2>
+    </div>
+    <p>This single command builds all 4 services and starts them in the background. <strong>The first run takes 5–15 minutes</strong> — Docker is downloading base images and compiling code. A lot of text will scroll by; that is normal.</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Shell</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre>docker compose up --build -d</pre>
+    </div>
+    <div class="callout info">
+      <span class="callout-icon">ℹ️</span>
+      <span><code>--build</code> compiles the app from source (required on first run and after any code update). <code>-d</code> runs everything in the background so the app keeps running after you close the terminal.</span>
+    </div>
+  </div>
+
+  <!-- ── Step 7 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">7</div>
+      <h2>Verify Everything is Running</h2>
+    </div>
+    <p>Check that all 4 containers are healthy:</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Shell</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre>docker compose ps</pre>
+    </div>
+    <p>You should see all four services with a green <strong>Up</strong> or <strong>running</strong> status:</p>
+
+    <div class="services-grid">
+      <div class="service-card">
+        <div><span class="dot"></span><span class="name">qa-redis</span></div>
+        <div class="desc">In-memory task queue</div>
+        <div class="port">:6379</div>
+      </div>
+      <div class="service-card">
+        <div><span class="dot"></span><span class="name">qa-api</span></div>
+        <div class="desc">Backend API server</div>
+        <div class="port">:4000</div>
+      </div>
+      <div class="service-card">
+        <div><span class="dot"></span><span class="name">qa-runner</span></div>
+        <div class="desc">Playwright test runner</div>
+        <div class="port">internal</div>
+      </div>
+      <div class="service-card">
+        <div><span class="dot"></span><span class="name">qa-ui</span></div>
+        <div class="desc">Web interface (Nginx)</div>
+        <div class="port">:3000</div>
+      </div>
+    </div>
+
+    <div class="callout warning">
+      <span class="callout-icon">⚠️</span>
+      <span>If any container shows <strong>Exited</strong> or <strong>Error</strong>, check its logs with: <code>docker compose logs qa-api</code></span>
+    </div>
+  </div>
+
+  <!-- ── Step 8 ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">8</div>
+      <h2>Access the App</h2>
+    </div>
+    <p>Open a browser on any computer on the same network and navigate to:</p>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span>Browser URL</span>
+      </div>
+      <pre>http://&lt;SERVER-IP-ADDRESS&gt;:3000
+
+<span class="comment"># Example:</span>
+http://192.168.10.50:3000</pre>
+    </div>
+    <div class="callout success">
+      <span class="callout-icon">✅</span>
+      <span>You should see the QA Infinity login page. Deployment is complete!</span>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- ── Day-to-day ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number" style="background: linear-gradient(135deg, #0f766e, #0d9488);">⚙</div>
+      <h2>Day-to-Day Operations</h2>
+    </div>
+    <div class="ops-grid">
+      <div class="op-card">
+        <h3>Stop the app</h3>
+        <pre>docker compose down</pre>
+      </div>
+      <div class="op-card">
+        <h3>Start the app</h3>
+        <pre>docker compose up -d</pre>
+      </div>
+      <div class="op-card">
+        <h3>Update after a code change</h3>
+        <pre><span class="comment"># Re-upload files via WinSCP, then:</span>
+docker compose up --build -d</pre>
+      </div>
+      <div class="op-card">
+        <h3>Watch live logs</h3>
+        <pre>docker compose logs -f qa-api</pre>
+      </div>
+      <div class="op-card">
+        <h3>Check disk usage</h3>
+        <pre>docker system df</pre>
+      </div>
+      <div class="op-card">
+        <h3>Free up disk space</h3>
+        <pre>docker system prune -f</pre>
+      </div>
+    </div>
+    <div class="callout info">
+      <span class="callout-icon">ℹ️</span>
+      <span>To stop watching live logs, press <strong>Ctrl + C</strong>.</span>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- ── Troubleshooting ── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number" style="background: linear-gradient(135deg, #b45309, #d97706);">?</div>
+      <h2>Troubleshooting</h2>
+    </div>
+
+    <div class="trouble-item">
+      <div class="problem">❌ "Permission denied" when running Docker commands</div>
+      <div class="fix">Run <code>newgrp docker</code> in the terminal, or log out of the server and log back in.</div>
+    </div>
+    <div class="trouble-item">
+      <div class="problem">❌ Browser shows "This site can't be reached"</div>
+      <div class="fix">Confirm firewall ports are open (Step 3). Double-check the server IP address is correct. Make sure you ran <code>docker compose up -d</code>.</div>
+    </div>
+    <div class="trouble-item">
+      <div class="problem">❌ <code>qa-api</code> container keeps restarting</div>
+      <div class="fix">Run <code>docker compose logs qa-api</code> to read the error. Most commonly a missing or misspelled value in the <code>.env</code> file.</div>
+    </div>
+    <div class="trouble-item">
+      <div class="problem">❌ App loads but AI features don't work</div>
+      <div class="fix">Verify <code>OPENROUTER_API_KEY</code> is correctly set in the <code>.env</code> file and that the key has not expired or run out of credits.</div>
+    </div>
+    <div class="trouble-item">
+      <div class="problem">❌ "No space left on device" error</div>
+      <div class="fix">Run <code>docker system prune -f</code> to remove unused images and containers and free up disk space.</div>
+    </div>
+    <div class="trouble-item">
+      <div class="problem">❌ Email reports are not being sent</div>
+      <div class="fix">Check that <code>SMTP_USER</code> and <code>SMTP_PASS</code> are filled in the <code>.env</code> file. For Gmail, use an App Password, not your regular account password.</div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Security reminder -->
+  <div class="callout danger">
+    <span class="callout-icon">🔒</span>
+    <div>
+      <strong>Security reminder:</strong> The <code>.env</code> file contains API keys and secrets.
+      Never share it, email it, or commit it to Git. Treat it the same as a password.
+      If you suspect a key has been leaked, rotate it immediately from the provider's dashboard.
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ════════════════════════════════════════════════════ FOOTER -->
+<footer>
+  Generated for <strong>QA Infinity</strong> &mdash; 6D Technologies &times; Airtel Africa &nbsp;|&nbsp; RHEL Deployment Guide &nbsp;|&nbsp; 2026
+</footer>
+
+<script>
+  function copyCode(btn) {
+    const pre = btn.closest('.code-block').querySelector('pre');
+    const text = pre.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+  }
+
+  function showTab(name, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).style.display = 'block';
+    btn.classList.add('active');
+  }
+</script>
+
+</body>
+</html>

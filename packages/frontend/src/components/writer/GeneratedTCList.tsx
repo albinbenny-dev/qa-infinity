@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { TestCase } from '../../types';
 
 interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'> {
@@ -8,7 +8,6 @@ interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'stat
 
 interface GeneratedTCListProps {
   testCases: GeneratedTC[];
-  savedTestCases: TestCase[];
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onSelectAll: () => void;
@@ -16,6 +15,8 @@ interface GeneratedTCListProps {
   onEdit: (tempId: string, patch: Partial<GeneratedTC>) => void;
   onSave: (tcs: GeneratedTC[]) => void;
   onDelete: (tempId: string) => void;
+  onDeleteSelected: () => void;
+  onApprove: (tc: GeneratedTC) => void;
   isSaving: boolean;
 }
 
@@ -45,6 +46,7 @@ function TCCard({
   onToggleSelect,
   onEdit,
   onDelete,
+  onApprove,
 }: {
   tc: GeneratedTC;
   isSaved: boolean;
@@ -52,10 +54,20 @@ function TCCard({
   onToggleSelect: () => void;
   onEdit: (patch: Partial<GeneratedTC>) => void;
   onDelete: () => void;
+  onApprove: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [newStep, setNewStep] = useState('');
+  const [focusInsertIdx, setFocusInsertIdx] = useState<number | null>(null);
+  const stepRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    if (focusInsertIdx !== null && stepRefs.current[focusInsertIdx]) {
+      stepRefs.current[focusInsertIdx]?.focus();
+      setFocusInsertIdx(null);
+    }
+  }, [tc.steps.length, focusInsertIdx]);
 
   const typeStyle = TYPE_COLORS[tc.type] ?? TYPE_COLORS['UI'];
   const priStyle  = PRIORITY_COLORS[tc.priority] ?? PRIORITY_COLORS['MEDIUM'];
@@ -194,7 +206,7 @@ function TCCard({
           {/* Steps */}
           <div>
             <div style={LABEL}>Steps</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {tc.steps.map((step, si) => (
                 <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
                   <span style={{
@@ -204,6 +216,7 @@ function TCCard({
                     fontSize: '9px', fontWeight: 700, color: 'var(--cyan)', fontFamily: 'var(--font-mono)',
                   }}>{si + 1}</span>
                   <input
+                    ref={(el) => { stepRefs.current[si] = el; }}
                     className="input-field"
                     style={{ flex: 1, fontSize: '12px', padding: '5px 8px' }}
                     value={step}
@@ -212,9 +225,36 @@ function TCCard({
                       updated[si] = e.target.value;
                       onEdit({ steps: updated });
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        const updated = [...tc.steps];
+                        updated.splice(si + 1, 0, '');
+                        onEdit({ steps: updated });
+                        setFocusInsertIdx(si + 1);
+                      }
+                    }}
                   />
+                  {/* Insert step below */}
+                  <button
+                    onClick={() => {
+                      const updated = [...tc.steps];
+                      updated.splice(si + 1, 0, '');
+                      onEdit({ steps: updated });
+                      setFocusInsertIdx(si + 1);
+                    }}
+                    title="Insert step below"
+                    style={{
+                      marginTop: '4px', flexShrink: 0, width: '22px', height: '22px', borderRadius: '4px',
+                      background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.2)',
+                      color: 'var(--cyan)', cursor: 'pointer', fontSize: '13px', fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >+</button>
+                  {/* Delete step */}
                   <button
                     onClick={() => onEdit({ steps: tc.steps.filter((_, idx) => idx !== si) })}
+                    title="Remove step"
                     style={{
                       marginTop: '4px', flexShrink: 0, width: '22px', height: '22px', borderRadius: '4px',
                       background: 'var(--rose-dim)', border: '1px solid rgba(220,38,38,0.2)',
@@ -224,7 +264,7 @@ function TCCard({
                   >✕</button>
                 </div>
               ))}
-              {/* Add step */}
+              {/* Append step at end */}
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <span style={{ width: '18px', flexShrink: 0 }} />
                 <input
@@ -341,6 +381,24 @@ function TCCard({
               </div>
             </div>
           )}
+
+          {/* Approve action */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '4px' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); onApprove(); }}
+              style={{
+                padding: '7px 18px', borderRadius: 'var(--radius)', fontSize: '12px', fontWeight: 700,
+                background: 'linear-gradient(135deg, var(--6d-orange), #D9601A)',
+                color: '#fff', border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '6px',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              ✓ Approve &amp; Go to Library
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -349,7 +407,6 @@ function TCCard({
 
 export default function GeneratedTCList({
   testCases,
-  savedTestCases,
   selectedIds,
   onToggleSelect,
   onSelectAll,
@@ -357,22 +414,20 @@ export default function GeneratedTCList({
   onEdit,
   onSave,
   onDelete,
+  onDeleteSelected,
+  onApprove,
   isSaving,
 }: GeneratedTCListProps) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'UI' | 'API' | 'SIT'>('ALL');
 
-  const savedWithTempId = savedTestCases.map((tc) => ({ ...tc, _tempId: tc.id }));
-  const allTcs = [...testCases, ...savedWithTempId];
-
-  const filtered = allTcs.filter((tc) => {
+  const filtered = testCases.filter((tc) => {
     if (typeFilter !== 'ALL' && tc.type !== typeFilter) return false;
     if (search && !tc.title.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
-  const pendingTcs = testCases; // only unsaved ones can be selected for save
-  const selectedPending = pendingTcs.filter((tc) => selectedIds.has(tc._tempId));
+  const selectedPending = testCases.filter((tc) => selectedIds.has(tc._tempId));
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
@@ -383,11 +438,6 @@ export default function GeneratedTCList({
         <div className="card-title">
           📋 Generated Test Cases
           <span className="badge badge-cyan" style={{ marginLeft: '6px' }}>{testCases.length}</span>
-          {savedTestCases.length > 0 && (
-            <span className="badge badge-violet" style={{ marginLeft: '4px', fontSize: '9px' }}>
-              +{savedTestCases.length} saved
-            </span>
-          )}
         </div>
         <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
@@ -429,25 +479,23 @@ export default function GeneratedTCList({
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
           <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '13px', lineHeight: 1.6 }}>
-            {allTcs.length === 0
+            {testCases.length === 0
               ? <>No test cases generated yet.<br />Add inputs on the left and click Generate.</>
               : 'No test cases match the current filter.'}
           </div>
         ) : (
-          filtered.map((tc) => {
-            const isSaved = savedTestCases.some((s) => s.id === tc._tempId);
-            return (
-              <TCCard
-                key={tc._tempId}
-                tc={tc}
-                isSaved={isSaved}
-                isSelected={selectedIds.has(tc._tempId)}
-                onToggleSelect={() => !isSaved && onToggleSelect(tc._tempId)}
-                onEdit={(patch) => onEdit(tc._tempId, patch)}
-                onDelete={() => onDelete(tc._tempId)}
-              />
-            );
-          })
+          filtered.map((tc) => (
+            <TCCard
+              key={tc._tempId}
+              tc={tc}
+              isSaved={false}
+              isSelected={selectedIds.has(tc._tempId)}
+              onToggleSelect={() => onToggleSelect(tc._tempId)}
+              onEdit={(patch) => onEdit(tc._tempId, patch)}
+              onDelete={() => onDelete(tc._tempId)}
+              onApprove={() => onApprove(tc)}
+            />
+          ))
         )}
       </div>
 
@@ -459,11 +507,11 @@ export default function GeneratedTCList({
         <span style={{ fontSize: '12px', color: 'var(--text-mid)', fontFamily: 'var(--font-mono)' }}>
           {selectedIds.size > 0
             ? `${selectedIds.size} selected`
-            : `${testCases.length} pending · ${savedTestCases.length} in library`}
+            : `${testCases.length} pending`}
         </span>
 
         {testCases.length > 0 && (
-          selectedIds.size < pendingTcs.length ? (
+          selectedIds.size < testCases.length ? (
             <button
               onClick={() => onSelectAll()}
               style={{ fontSize: '11px', color: 'var(--cyan)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}
@@ -476,7 +524,27 @@ export default function GeneratedTCList({
           )
         )}
 
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete ${selectedIds.size} selected test case${selectedIds.size !== 1 ? 's' : ''}?`)) {
+                  onDeleteSelected();
+                }
+              }}
+              style={{
+                padding: '7px 14px', borderRadius: 'var(--radius)', fontSize: '12px', fontWeight: 700,
+                background: 'var(--rose-dim)', color: 'var(--rose)',
+                border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 5,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(220,38,38,0.18)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--rose-dim)'; }}
+            >
+              🗑 Delete {selectedIds.size}
+            </button>
+          )}
           <button
             onClick={() => { if (selectedPending.length > 0) onSave(selectedPending); }}
             disabled={selectedPending.length === 0 || isSaving}

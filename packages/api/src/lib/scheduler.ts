@@ -51,9 +51,22 @@ export function registerSchedule(schedule: ScheduleRow): void {
         select: { filename: true, testCaseId: true },
       });
 
+      const scriptedIds = new Set(scripts.map((s) => s.testCaseId).filter(Boolean) as string[]);
+      const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
+      const scriptedTcIds = testCaseIds.filter((id) => scriptedIds.has(id));
+
+      const envConfig = await prisma.envConfig.findFirst({
+        where: { projectId: schedule.projectId, name: schedule.environment },
+        select: { baseUrl: true, username: true, password: true },
+      });
+
+      const seqAgg = await prisma.run.aggregate({ _max: { runSeq: true } });
+      const runSeq = (seqAgg._max.runSeq ?? 0) + 1;
+
       const run = await prisma.run.create({
         data: {
           projectId: schedule.projectId,
+          runSeq,
           name: `Scheduled: ${schedule.name}`,
           environment: schedule.environment,
           status: 'PENDING',
@@ -63,11 +76,18 @@ export function registerSchedule(schedule: ScheduleRow): void {
 
       await addRunJob({
         runId: run.id,
+        runSeq,
         projectId: schedule.projectId,
-        testCaseIds,
-        scriptPaths: scripts.map((s) => `/scripts/${schedule.projectId}/${s.filename}`),
+        testCaseIds: scriptedTcIds,
+        scriptPaths: scriptedTcIds.map((id) => {
+          const s = scripts.find((sc) => sc.testCaseId === id);
+          return `/scripts/${schedule.projectId}/${s!.filename}`;
+        }),
+        skippedTcIds,
         environment: schedule.environment,
-        envBaseUrl: schedule.project?.baseUrl ?? '',
+        envBaseUrl: envConfig?.baseUrl ?? schedule.project?.baseUrl ?? '',
+        envUsername: envConfig?.username ?? '',
+        envPassword: envConfig?.password ?? '',
         parallelWorkers: 2,
         headless: true,
         browser: 'chromium',

@@ -1,14 +1,17 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
-RUN npm install -g pnpm@9
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
+# Copy manifests only so source changes don't bust the install layer
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-COPY packages ./packages
-RUN pnpm install --frozen-lockfile
+COPY packages/frontend/package.json ./packages/frontend/
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
+COPY packages/frontend ./packages/frontend
 RUN pnpm --filter @qa-infinity/frontend build
 
 # ── Stage 2: Serve ─────────────────────────────────────────────────────────

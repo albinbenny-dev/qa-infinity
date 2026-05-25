@@ -1,13 +1,15 @@
-import { useReducer, useCallback, useMemo } from 'react';
+import { useReducer, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useProject, useRequirementDocs, useProjectEnvConfigs } from '../hooks/useProjects';
 import {
   useGenerateTestCases,
   useSaveTestCases,
   useUploadFile,
-  useTestCases,
+  useParseSeedFile,
 } from '../hooks/useTestCases';
-import InputQueue, { type InputQueueState } from '../components/writer/InputQueue';
+import { useProjectContext, useUpdateContext } from '../hooks/useScans';
+import { useAgentConfig, useOpenRouterUsage } from '../hooks/useUsage';
+import InputQueue, { type InputQueueState, type SeedTC } from '../components/writer/InputQueue';
 import GeneratedTCList from '../components/writer/GeneratedTCList';
 import DocsReference from '../components/writer/DocsReference';
 import { api } from '../lib/api';
@@ -23,6 +25,7 @@ type WriterAction =
   | { type: 'SET_GENERATED'; tcs: GeneratedTC[] }
   | { type: 'APPEND_GENERATED'; tcs: GeneratedTC[] }
   | { type: 'DELETE_GENERATED'; tempId: string }
+  | { type: 'DELETE_SELECTED' }
   | { type: 'EDIT_GENERATED'; tempId: string; patch: Partial<GeneratedTC> }
   | { type: 'TOGGLE_SELECT'; id: string }
   | { type: 'SELECT_ALL'; ids: string[] }
@@ -47,6 +50,12 @@ function reducer(state: WriterState, action: WriterAction): WriterState {
         ...state,
         generatedTCs: state.generatedTCs.filter((tc) => tc._tempId !== action.tempId),
         selectedIds: (() => { const s = new Set(state.selectedIds); s.delete(action.tempId); return s; })(),
+      };
+    case 'DELETE_SELECTED':
+      return {
+        ...state,
+        generatedTCs: state.generatedTCs.filter((tc) => !state.selectedIds.has(tc._tempId)),
+        selectedIds: new Set(),
       };
     case 'EDIT_GENERATED':
       return {
@@ -75,6 +84,8 @@ const initialInputState: InputQueueState = {
   jiraInput: '',
   refTCs: [],
   refTCInput: '',
+  refMode: 'style',
+  seedTCs: [],
   uploadedDocs: [],
   additionalContext: '',
   testTypes: { UI: true, API: true, SIT: false },
@@ -88,12 +99,20 @@ export default function TestWriter() {
   const { data: project } = useProject(slug);
   const { data: docs = [] } = useRequirementDocs(project?.id);
   const { data: envConfigs = [] } = useProjectEnvConfigs(project?.id);
-  const { data: savedData } = useTestCases(project?.id, { limit: 200 });
-  const savedTCs = savedData?.testCases ?? [];
-
+  const { data: context } = useProjectContext(project?.id);
+  const updateCtx = useUpdateContext(project?.id ?? '');
+  const { data: agentConfigs } = useAgentConfig();
+  const { data: usageData } = useOpenRouterUsage();
+  // Standard Mode: ui-context-agent disabled → only seed TC input works
+  const isStandardMode = agentConfigs
+    ? agentConfigs.find((a) => a.agentName === 'ui-context-agent')?.enabled === false
+    : false;
+  // Credits available when no usage data yet, limit is null (unlimited), or remaining > 0
+  const creditsAvailable = !usageData || usageData.remaining === null || usageData.remaining > 0;
   const generateMutation = useGenerateTestCases(project?.id ?? '');
   const saveMutation = useSaveTestCases(project?.id ?? '');
   const uploadMutation = useUploadFile();
+  const parseSeedFileMutation = useParseSeedFile(project?.id ?? '');
 
   const [state, dispatch] = useReducer(reducer, {
     inputState: initialInputState,
@@ -101,15 +120,53 @@ export default function TestWriter() {
     selectedIds: new Set<string>(),
   });
 
+  // Track whether we have loaded the scan draft into state
+  const draftLoadedRef = useRef(false);
+
+  // Load pending scan draft into writer state on first availability
+  useEffect(() => {
+    if (draftLoadedRef.current) return;
+    if (!context?.pendingTCDraft?.length) return;
+
+    draftLoadedRef.current = true;
+    const draftTCs: GeneratedTC[] = context.pendingTCDraft.map((tc, i) => ({
+      title: tc.title,
+      description: tc.description,
+      steps: Array.isArray(tc.steps) ? tc.steps : [],
+      expectedResult: tc.expectedResult,
+      type: tc.type,
+      tags: Array.isArray(tc.tags) ? tc.tags : [],
+      useCaseTag: tc.useCaseTag,
+      priority: tc.priority ?? 'MEDIUM',
+      sourceRef: tc.sourceRef,
+      lastRun: undefined,
+      _tempId: `scan-${Date.now()}-${i}`,
+    }));
+
+    dispatch({ type: 'APPEND_GENERATED', tcs: draftTCs });
+  }, [context?.pendingTCDraft]);
+
+  // Once all scan-sourced TCs have been handled (saved/deleted), clear the DB draft
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+    if (!context?.pendingTCDraft?.length) return;
+    const hasScanTCs = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
+    if (!hasScanTCs) {
+      void updateCtx.mutateAsync({ pendingTCDraft: null }).catch(() => {});
+    }
+  }, [state.generatedTCs, context?.pendingTCDraft]);
+
+  const hasScanDraft = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
+
   const inputCount = useMemo(() => {
-    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls } = state.inputState;
-    return jiraStories.length + refTCs.length + uploadedDocs.length + uiScreenUrls.length;
+    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, seedTCs } = state.inputState;
+    return jiraStories.length + refTCs.length + uploadedDocs.length + uiScreenUrls.length + seedTCs.length;
   }, [state.inputState]);
 
   const handleGenerate = useCallback(async () => {
     if (!project) return;
 
-    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes } = state.inputState;
+    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes, seedTCs } = state.inputState;
 
     const inputs: { type: string; content: string; label: string }[] = [];
 
@@ -132,8 +189,8 @@ export default function TestWriter() {
       });
     }
 
-    if (!inputs.length) {
-      alert('Add at least one input source before generating.');
+    if (!inputs.length && !seedTCs.length) {
+      alert('Add at least one input source or seed test case before generating.');
       return;
     }
 
@@ -146,11 +203,18 @@ export default function TestWriter() {
       return;
     }
 
+    const seedTestCasesPayload = seedTCs.length > 0
+      ? seedTCs.map(({ title, steps, expectedResult, useCaseTag, description, priority, type, preConditions, testData, notes }) => ({
+          title, steps, expectedResult, useCaseTag, description, priority, type, preConditions, testData, notes,
+        }))
+      : undefined;
+
     try {
       const result = await generateMutation.mutateAsync({
         inputs,
         testTypes: activeTypes,
         additionalContext: additionalContext || undefined,
+        seedTestCases: seedTestCasesPayload,
       });
 
       const newTCs: GeneratedTC[] = result.testCases.map((tc, i) => ({
@@ -172,7 +236,7 @@ export default function TestWriter() {
       if (!project) return;
       try {
         await saveMutation.mutateAsync(
-          tcs.map(({ _tempId: _, ...tc }) => ({ ...tc, status: 'DRAFT' as const })),
+          tcs.map(({ _tempId: _, ...tc }) => ({ ...tc, status: 'APPROVED' as const })),
         );
         const savedTempIds = new Set(tcs.map((t) => t._tempId));
         dispatch({
@@ -185,6 +249,21 @@ export default function TestWriter() {
       }
     },
     [project, saveMutation, state.generatedTCs],
+  );
+
+  const handleApprove = useCallback(
+    async (tc: GeneratedTC) => {
+      if (!project) return;
+      try {
+        const { _tempId: _, ...rest } = tc;
+        await saveMutation.mutateAsync([{ ...rest, status: 'APPROVED' as const }]);
+        dispatch({ type: 'DELETE_GENERATED', tempId: tc._tempId });
+        navigate(`/projects/${slug}/tc-library`);
+      } catch (err) {
+        console.error('[TestWriter] Approve failed:', err);
+      }
+    },
+    [project, saveMutation, slug, navigate],
   );
 
   const handleToggleDoc = useCallback(
@@ -204,6 +283,42 @@ export default function TestWriter() {
       return uploadMutation.mutateAsync(file);
     },
     [uploadMutation],
+  );
+
+  const handleParseSeedFile = useCallback(
+    async (filePath: string) => {
+      return parseSeedFileMutation.mutateAsync(filePath);
+    },
+    [parseSeedFileMutation],
+  );
+
+  // Converts seeds → GeneratedTC items and pushes them into the review panel (no AI)
+  const handleSaveDirectly = useCallback(
+    (seeds: SeedTC[]) => {
+      if (!seeds.length) return;
+      const newTCs: GeneratedTC[] = seeds.map((seed, i) => ({
+        title: seed.title,
+        description: seed.description ?? '',
+        steps: seed.steps.length ? seed.steps : ['(No steps specified)'],
+        expectedResult: seed.expectedResult?.trim() ?? '',
+        type: seed.type ?? 'UI' as const,
+        tags: [] as string[],
+        useCaseTag: seed.useCaseTag,
+        priority: seed.priority ?? 'MEDIUM' as const,
+        sourceRef: 'direct',
+        generationHints: undefined,
+        lastRun: undefined,
+        _tempId: `direct-${Date.now()}-${i}`,
+      }));
+      dispatch({ type: 'APPEND_GENERATED', tcs: newTCs });
+      // Remove these seeds from the input queue
+      const sentTempIds = new Set(seeds.map((s) => s.tempId));
+      dispatch({
+        type: 'SET_INPUT_STATE',
+        patch: { seedTCs: state.inputState.seedTCs.filter((s) => !sentTempIds.has(s.tempId)) },
+      });
+    },
+    [state.inputState.seedTCs],
   );
 
   const allFilteredIds = state.generatedTCs.map((t) => t._tempId);
@@ -272,6 +387,56 @@ export default function TestWriter() {
         </div>
       )}
 
+      {/* Seed TCs banner */}
+      {state.inputState.refMode === 'seed' && state.inputState.seedTCs.length > 0 && (
+        <div style={{
+          margin: '0 24px',
+          padding: '10px 16px',
+          background: 'rgba(245,158,11,0.08)',
+          border: '1px solid rgba(245,158,11,0.25)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12px',
+          color: 'var(--text-mid)',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: '16px' }}>🔒</span>
+          <span style={{ flex: 1 }}>
+            <strong style={{ color: '#f59e0b' }}>
+              {state.inputState.seedTCs.length} seed test case{state.inputState.seedTCs.length !== 1 ? 's' : ''}
+            </strong>
+            {' '}will be preserved verbatim. Agent adds gap coverage on top. Review and approve below.
+          </span>
+        </div>
+      )}
+
+      {/* Scan draft banner */}
+      {hasScanDraft && (
+        <div style={{
+          margin: '0 24px',
+          padding: '10px 16px',
+          background: 'var(--violet-dim)',
+          border: '1px solid rgba(37,99,171,0.3)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12px',
+          color: 'var(--text-mid)',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: '16px' }}>🔍</span>
+          <span style={{ flex: 1 }}>
+            <strong style={{ color: 'var(--cyan)' }}>
+              {state.generatedTCs.filter((tc) => tc._tempId.startsWith('scan-')).length} test cases
+            </strong>
+            {' '}auto-generated from the latest UI scan. Review, edit, then approve or save to TC Library.
+          </span>
+        </div>
+      )}
+
       {/* 3-column grid */}
       <div
         style={{
@@ -288,16 +453,20 @@ export default function TestWriter() {
           state={state.inputState}
           onChange={(patch) => dispatch({ type: 'SET_INPUT_STATE', patch })}
           onUploadFile={handleUploadFile}
+          onParseSeedFile={handleParseSeedFile}
           onGenerate={handleGenerate}
           isGenerating={generateMutation.isPending}
           inputCount={inputCount}
           envConfigs={envConfigs}
+          projectId={project?.id}
+          isStandardMode={isStandardMode}
+          onSaveDirectly={handleSaveDirectly}
+          creditsAvailable={creditsAvailable}
         />
 
         {/* MIDDLE */}
         <GeneratedTCList
           testCases={state.generatedTCs}
-          savedTestCases={savedTCs}
           selectedIds={state.selectedIds}
           onToggleSelect={(id) => dispatch({ type: 'TOGGLE_SELECT', id })}
           onSelectAll={() => dispatch({ type: 'SELECT_ALL', ids: allFilteredIds })}
@@ -305,6 +474,8 @@ export default function TestWriter() {
           onEdit={(tempId, patch) => dispatch({ type: 'EDIT_GENERATED', tempId, patch })}
           onSave={handleSave}
           onDelete={(tempId) => dispatch({ type: 'DELETE_GENERATED', tempId })}
+          onDeleteSelected={() => dispatch({ type: 'DELETE_SELECTED' })}
+          onApprove={handleApprove}
           isSaving={saveMutation.isPending}
         />
 

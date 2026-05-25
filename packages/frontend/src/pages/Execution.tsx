@@ -8,67 +8,12 @@ import { useProject } from '../hooks/useProjects';
 import { useProjectEnvConfigs } from '../hooks/useProjects';
 import { useTestCases, useUseCases } from '../hooks/useTestCases';
 import { useScripts } from '../hooks/useScripts';
-import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCancelRun } from '../hooks/useRuns';
+import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCancelRun, type RunListItem } from '../hooks/useRuns';
+import { useTriggerHeal } from '../hooks/useHeals';
 import { useRunSocket } from '../hooks/useRunSocket';
 import { useExecutionStore } from '../stores/executionStore';
 import type { TestCase } from '../types';
 
-// ── Cron readable text ─────────────────────────────────────────────────────
-
-function cronToText(expr: string): string {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length < 5) return expr;
-  const [min, hour, dom, , dow] = parts;
-  const pad = (n: string) => n.padStart(2, '0');
-  const hrs = parseInt(hour, 10);
-  const mins = parseInt(min, 10);
-  const timeStr = isNaN(hrs) || isNaN(mins) ? `${hour}:${min}` : `${hrs}:${pad(String(mins))} ${hrs < 12 ? 'AM' : 'PM'}`;
-  if (dom === '*' && dow === '*') return `Every day at ${timeStr}`;
-  if (dom === '*') {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const d = parseInt(dow, 10);
-    return `Every ${isNaN(d) ? dow : days[d] ?? dow} at ${timeStr}`;
-  }
-  return expr;
-}
-
-// ── Suite data (Airtel Ventas) ─────────────────────────────────────────────
-
-const SUITES = [
-  { id: 'smoke',      emoji: '🔥', label: 'Smoke Suite',      desc: '28 tests · ~5 min' },
-  { id: 'regression', emoji: '🔄', label: 'Full Regression',  desc: '284 tests · ~45 min' },
-  { id: 'api',        emoji: '🔌', label: 'API Contracts',    desc: '47 tests · ~8 min' },
-  { id: 'sit',        emoji: '🔗', label: 'SIT Chains',       desc: '12 tests · ~15 min' },
-];
-
-
-// ── Toggle switch ──────────────────────────────────────────────────────────
-function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <div
-      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
-      onClick={() => onChange(!on)}
-    >
-      <div
-        style={{
-          width: 34, height: 18, borderRadius: 9, position: 'relative',
-          background: on ? 'var(--cyan)' : 'var(--surface3)',
-          border: `1px solid ${on ? 'rgba(34,211,238,0.4)' : 'var(--border)'}`,
-          transition: 'all 0.2s', flexShrink: 0,
-        }}
-      >
-        <div style={{
-          position: 'absolute', top: 2, borderRadius: '50%',
-          width: 12, height: 12,
-          background: on ? 'white' : 'rgba(255,255,255,0.4)',
-          left: on ? 18 : 2,
-          transition: 'left 0.2s, background 0.2s',
-        }} />
-      </div>
-      <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500 }}>{label}</span>
-    </div>
-  );
-}
 
 // ── Stepper ────────────────────────────────────────────────────────────────
 function Stepper({ value, onChange, min = 1, max = 8 }: {
@@ -136,6 +81,138 @@ function RunProgressBar({ passed, failed, total }: { passed: number; failed: num
   );
 }
 
+// ── Trigger type badge meta ────────────────────────────────────────────────
+
+const TRIGGER_META: Record<string, { label: string; color: string; bg: string }> = {
+  SCHEDULED:  { label: 'Scheduled',  color: 'var(--cyan)',  bg: 'rgba(37,99,171,0.12)' },
+  MANUAL:     { label: 'Manual',     color: 'var(--pass)',  bg: 'rgba(42,157,143,0.10)' },
+  GROUP:      { label: 'Group',      color: '#8b5cf6',      bg: 'rgba(139,92,246,0.10)' },
+  INDIVIDUAL: { label: 'Individual', color: 'var(--amber)', bg: 'rgba(251,191,36,0.10)' },
+  HEAL_RERUN: { label: 'Heal',       color: 'var(--fail)',  bg: 'rgba(220,38,38,0.10)'  },
+};
+
+// ── Job queue panel (shown above live log when runs are active) ────────────
+
+function JobQueuePanel({ runs, watchedRunId, onSelect }: {
+  runs: RunListItem[];
+  watchedRunId: string | null;
+  onSelect: (runId: string) => void;
+}) {
+  return (
+    <div style={{
+      background: '#04183a',
+      borderBottom: '1px solid rgba(255,255,255,0.07)',
+      flexShrink: 0,
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 12px 5px',
+      }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--cyan)', display: 'inline-block', flexShrink: 0 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(226,232,240,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Running Jobs
+        </span>
+        <span style={{
+          fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 100,
+          background: 'rgba(37,99,171,0.2)', color: 'var(--cyan)',
+        }}>{runs.length}</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 9, color: 'rgba(226,232,240,0.3)', fontStyle: 'italic' }}>auto-attached to latest · click another to switch</span>
+      </div>
+
+      {/* Horizontally scrollable cards */}
+      <div style={{
+        display: 'flex', gap: 8, overflowX: 'auto', padding: '0 12px 10px',
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(37,99,171,0.4) transparent',
+      }}>
+        {runs.map(run => {
+          const watched = watchedRunId === run.id;
+          const trigMeta = TRIGGER_META[run.triggerType] ?? TRIGGER_META.MANUAL;
+          const passed  = run.results.filter(r => r.status === 'PASSED').length;
+          const failed  = run.results.filter(r => r.status === 'FAILED').length;
+          const skipped = run.results.filter(r => r.status === 'SKIPPED').length;
+          const total   = run._count.results;
+          const done    = passed + failed + skipped;
+          const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+
+          return (
+            <div
+              key={run.id}
+              onClick={() => onSelect(run.id)}
+              title={`${run.name} · ${run.environment}`}
+              style={{
+                flexShrink: 0, width: 220, padding: '9px 11px',
+                borderRadius: 8, cursor: 'pointer',
+                background: watched ? 'rgba(37,99,171,0.14)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${watched ? 'rgba(37,99,171,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                boxShadow: watched ? '0 0 0 1px rgba(37,99,171,0.3)' : 'none',
+                transition: 'all 0.15s',
+                display: 'flex', flexDirection: 'column', gap: 5,
+              }}
+            >
+              {/* Name + badges */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+                {watched && (
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--cyan)', flexShrink: 0, display: 'inline-block' }} />
+                )}
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: watched ? 'rgba(226,232,240,0.95)' : 'rgba(226,232,240,0.65)',
+                  flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{run.name}</span>
+              </div>
+
+              {/* Badges row */}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase',
+                  background: trigMeta.bg, color: trigMeta.color,
+                }}>{trigMeta.label}</span>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase',
+                  background: 'rgba(255,255,255,0.06)', color: 'rgba(226,232,240,0.45)',
+                }}>{run.environment}</span>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase',
+                  background: run.status === 'RUNNING' ? 'rgba(37,99,171,0.12)' : 'rgba(255,179,71,0.1)',
+                  color: run.status === 'RUNNING' ? 'var(--cyan)' : 'rgba(255,179,71,0.8)',
+                }}>{run.status === 'RUNNING' ? '● Running' : '⏳ Pending'}</span>
+              </div>
+
+              {/* Progress bar + counts */}
+              {total > 0 ? (
+                <div>
+                  <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 2,
+                      width: `${pct}%`,
+                      background: failed > 0 ? 'linear-gradient(90deg,#2A9D8F,#DC2626)' : '#2A9D8F',
+                      transition: 'width 0.4s ease',
+                    }} />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, fontFamily: 'var(--font-mono)' }}>
+                    <span style={{ color: 'rgba(226,232,240,0.35)' }}>{done}/{total}</span>
+                    <span>
+                      {passed > 0 && <span style={{ color: '#2A9D8F', marginRight: 5 }}>✓{passed}</span>}
+                      {failed > 0 && <span style={{ color: '#DC2626' }}>✗{failed}</span>}
+                      {skipped > 0 && <span style={{ color: 'rgba(226,232,240,0.3)', marginLeft: 4 }}>⊙{skipped}</span>}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 9, color: 'rgba(226,232,240,0.3)', fontFamily: 'var(--font-mono)' }}>waiting to start…</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function Execution() {
@@ -149,27 +226,33 @@ export default function Execution() {
   const { data: tcData } = useTestCases(projectId, { limit: 500 });
   const { data: useCaseTags = [] } = useUseCases(projectId);
   const { data: scripts = [] } = useScripts(projectId);
-  useRuns(projectId);
+  const { data: runsData } = useRuns(projectId);
+  const activeRuns: RunListItem[] = (runsData?.runs ?? []).filter(
+    r => r.status === 'PENDING' || r.status === 'RUNNING',
+  );
 
   const createRun = useCreateRun(projectId ?? '');
   const createGroupRun = useCreateGroupRun(projectId ?? '');
   const createIndividualRun = useCreateIndividualRun(projectId ?? '');
   const cancelRun = useCancelRun(projectId ?? '');
+  const triggerHeal = useTriggerHeal(projectId ?? '');
 
-  const { logs, stats, status: socketStatus, clearLogs, joinRun } = useRunSocket();
+  const { logs, stats, status: socketStatus, clearLogs, joinRun, leaveRun } = useRunSocket();
 
   const { selectedTestCaseIds, clearSelected } = useExecutionStore();
 
   // ── Run config state ──────────────────────────────────────────────────────
   const [environment, setEnvironment] = useState('');
-  const [selectedSuites, setSelectedSuites] = useState<Set<string>>(new Set());
-  const [parallelWorkers, setParallelWorkers] = useState(2);
-  const [browser, setBrowser] = useState<'chromium' | 'firefox' | 'webkit'>('chromium');
-  const [headless, setHeadless] = useState(true);
-  const [autoHeal, setAutoHeal] = useState(true);
-  const [useAIAgents, setUseAIAgents] = useState(true);
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [cronParts, setCronParts] = useState(['0', '2', '*', '*', '*']);
+  const [parallelWorkers, setParallelWorkers] = useState<number>(() => {
+    const saved = localStorage.getItem('qa:parallelWorkers');
+    const n = saved ? parseInt(saved, 10) : 2;
+    return Number.isFinite(n) && n >= 1 && n <= 16 ? n : 2;
+  });
+
+  const updateWorkers = useCallback((n: number) => {
+    setParallelWorkers(n);
+    localStorage.setItem('qa:parallelWorkers', String(n));
+  }, []);
 
   // ── TC selection ──────────────────────────────────────────────────────────
   const [selectedTcIds, setSelectedTcIds] = useState<Set<string>>(
@@ -178,17 +261,20 @@ export default function Execution() {
 
   // ── Active run tracking ───────────────────────────────────────────────────
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [watchedRunId, setWatchedRunId] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
+  const [healTriggered, setHealTriggered] = useState(false);
+  const hasTriggeredHealRef = useRef(false);
   const [runningTcIds, setRunningTcIds] = useState<Set<string>>(new Set());
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
 
   // ── Resizable log panel ───────────────────────────────────────────────────
-  const [logPanelWidth, setLogPanelWidth] = useState(380);
+  const [logPanelWidth, setLogPanelWidth] = useState(() => Math.round(window.innerWidth / 3));
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
-  const dragStartWidthRef = useRef(380);
-  const logPanelWidthRef = useRef(380);
+  const dragStartWidthRef = useRef(Math.round(window.innerWidth / 3));
+  const logPanelWidthRef = useRef(Math.round(window.innerWidth / 3));
 
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -248,8 +334,6 @@ export default function Execution() {
     });
   }, [envConfigs]);
 
-  const cronText = cronToText(cronParts.join(' '));
-
   // ── Sync store → local selection on mount ─────────────────────────────────
   useEffect(() => {
     if (selectedTestCaseIds.length > 0) {
@@ -272,10 +356,24 @@ export default function Execution() {
 
   // ── Socket progress → runningTcIds ────────────────────────────────────────
   useEffect(() => {
-    if (socketStatus === 'complete' || socketStatus === 'error') {
+    if (socketStatus === 'complete' || socketStatus === 'error' || socketStatus === 'cancelled') {
       setRunningTcIds(new Set());
     }
   }, [socketStatus]);
+
+  // Auto-heal is handled server-side by runWorker — no frontend trigger needed.
+
+  // ── Auto-attach: join the latest active run when the page opens with no watched run ──
+  // Fires when navigated from TC Library (run already queued but watchedRunId is null).
+  useEffect(() => {
+    if (watchedRunId !== null || activeRuns.length === 0) return;
+    const latest = activeRuns[0]; // API returns newest-first
+    setActiveRunId(latest.id);
+    setWatchedRunId(latest.id);
+    clearLogs();
+    joinRun(latest.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRuns, watchedRunId]);
 
   // ── TC selection handlers ─────────────────────────────────────────────────
   const handleToggleTc = useCallback((id: string) => {
@@ -304,6 +402,15 @@ export default function Execution() {
     setSelectedTcIds(new Set());
   }, []);
 
+  // ── Switch watched run (job queue selector) ───────────────────────────────
+  const switchToRun = useCallback((runId: string) => {
+    if (watchedRunId && watchedRunId !== runId) leaveRun(watchedRunId);
+    clearLogs();
+    setWatchedRunId(runId);
+    joinRun(runId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedRunId]);
+
   // ── Run handlers ──────────────────────────────────────────────────────────
   async function handleRunNow() {
     if (!projectId) return;
@@ -314,6 +421,8 @@ export default function Execution() {
     }
 
     clearLogs();
+    hasTriggeredHealRef.current = false;
+    setHealTriggered(false);
     setRunningTcIds(new Set(tcIds));
 
     try {
@@ -321,10 +430,11 @@ export default function Execution() {
         testCaseIds: tcIds,
         environment,
         parallelWorkers,
-        headless,
-        browser,
+        headless: false,
+        browser: 'chromium',
       });
       setActiveRunId(run.id);
+      setWatchedRunId(run.id);
       joinRun(run.id);
       toast.success(`Run started · ${tcIds.length} test${tcIds.length !== 1 ? 's' : ''}`);
     } catch (err) {
@@ -337,16 +447,19 @@ export default function Execution() {
   async function handleRunGroup(useCaseTag: string) {
     if (!projectId) return;
     clearLogs();
+    hasTriggeredHealRef.current = false;
+    setHealTriggered(false);
 
     try {
       const run = await createGroupRun.mutateAsync({
         useCaseTag,
         environment,
         parallelWorkers,
-        headless,
-        browser,
+        headless: false,
+        browser: 'chromium',
       });
       setActiveRunId(run.id);
+      setWatchedRunId(run.id);
       joinRun(run.id);
       toast.success(`Running group: ${useCaseTag}`);
     } catch (err) {
@@ -357,21 +470,38 @@ export default function Execution() {
   async function handleRunIndividual(tc: TestCase) {
     if (!projectId) return;
     clearLogs();
+    hasTriggeredHealRef.current = false;
+    setHealTriggered(false);
     setRunningTcIds(new Set([tc.id]));
 
     try {
       const run = await createIndividualRun.mutateAsync({
         testCaseId: tc.id,
         environment,
-        browser,
-        headless,
+        browser: 'chromium',
+        headless: false,
       });
       setActiveRunId(run.id);
+      setWatchedRunId(run.id);
       joinRun(run.id);
       toast.success(`Running: ${tc.tcId}`);
     } catch (err) {
       toast.error((err as Error)?.message ?? 'Failed to start individual run');
       setRunningTcIds(new Set());
+    }
+  }
+
+  async function handleHeal() {
+    if (!activeRunId || !projectId || hasTriggeredHealRef.current) return;
+    hasTriggeredHealRef.current = true;
+    setHealTriggered(true);
+    try {
+      const result = await triggerHeal.mutateAsync(activeRunId);
+      toast.success(`Heal queued for ${result.count} failed test${result.count !== 1 ? 's' : ''}`);
+    } catch (err) {
+      hasTriggeredHealRef.current = false;
+      setHealTriggered(false);
+      toast.error((err as Error)?.message ?? 'Failed to trigger heal');
     }
   }
 
@@ -390,40 +520,6 @@ export default function Execution() {
 
   function handleViewTc(_tc: TestCase) {
     navigate(`/projects/${slug}/tc-library`);
-  }
-
-  // ── Suite badge filter: select TCs matching suite tags ────────────────────
-  const suiteTcCount = useMemo(() => {
-    return SUITES.reduce<Record<string, number>>((acc, s) => {
-      acc[s.id] = allTCs.filter((tc) => tc.tags.includes(`suite:${s.id}`)).length;
-      return acc;
-    }, {});
-  }, [allTCs]);
-
-  function toggleSuite(suiteId: string) {
-    setSelectedSuites((prev) => {
-      const n = new Set(prev);
-      if (n.has(suiteId)) {
-        n.delete(suiteId);
-        // deselect suite TCs
-        const suiteTcs = allTCs.filter((tc) => tc.tags.includes(`suite:${suiteId}`)).map((tc) => tc.id);
-        setSelectedTcIds((prevTcs) => {
-          const m = new Set(prevTcs);
-          suiteTcs.forEach((id) => m.delete(id));
-          return m;
-        });
-      } else {
-        n.add(suiteId);
-        // select suite TCs
-        const suiteTcs = allTCs.filter((tc) => tc.tags.includes(`suite:${suiteId}`)).map((tc) => tc.id);
-        setSelectedTcIds((prevTcs) => {
-          const m = new Set(prevTcs);
-          suiteTcs.forEach((id) => m.add(id));
-          return m;
-        });
-      }
-      return n;
-    });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -459,287 +555,91 @@ export default function Execution() {
         {/* ── LEFT COLUMN ─────────────────────────────────────────────────── */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-          {/* Config section (scrollable) */}
+          {/* ── Compact config bar ────────────────────────────────────── */}
           <div style={{
-            overflowY: 'auto',
             flexShrink: 0,
             borderRight: '1px solid var(--border)',
-            maxHeight: '52%',
+            background: 'var(--surface2)',
           }}>
-            {/* Cool accent stripe */}
-            <div style={{ height: 4, background: 'linear-gradient(90deg, #2563AB, #0A2A57)', flexShrink: 0 }} />
+            <div style={{ height: 3, background: 'linear-gradient(90deg, #2563AB, #0A2A57)' }} />
 
-            <div style={{ padding: '14px 16px 0' }}>
-
-              {/* ── Environment selector ─────────────────────────────── */}
-              <div className="card" style={{ marginBottom: 10 }}>
-                <div className="card-body" style={{ padding: '10px 14px' }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>
-                    Target Environment
-                  </div>
-                  {envConfigs.length === 0 ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>
-                      No environments configured —{' '}
-                      <span
-                        style={{ color: 'var(--cyan)', cursor: 'pointer', textDecoration: 'underline' }}
-                        onClick={() => navigate(`/projects/${slug}/settings`)}
-                      >
-                        add one in Settings
-                      </span>
-                    </div>
-                  ) : (
-                    <select
-                      value={environment}
-                      onChange={(e) => setEnvironment(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '7px 10px',
-                        borderRadius: 6,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        fontFamily: 'var(--font-ui)',
-                        background: 'var(--surface3)',
-                        border: '1px solid rgba(42,157,143,0.35)',
-                        color: 'var(--text)',
-                        cursor: 'pointer',
-                        outline: 'none',
-                        appearance: 'none',
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: 'right 10px center',
-                        paddingRight: 28,
-                      }}
-                    >
-                      {envConfigs.map((cfg) => (
-                        <option key={cfg.id} value={cfg.name}>
-                          {cfg.name}{cfg.isDefault ? ' (default)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {envBaseUrl && (
-                    <div style={{
-                      marginTop: 6,
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 10,
-                      color: '#2A9D8F',
-                      background: 'rgba(42,157,143,0.06)',
-                      padding: '3px 8px',
-                      borderRadius: 4,
-                      border: '1px solid rgba(42,157,143,0.15)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {envBaseUrl}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── Suite selection ──────────────────────────────────── */}
-              <div className="card" style={{ marginBottom: 10 }}>
-                <div className="card-body" style={{ padding: '10px 14px' }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>
-                    Suite Selection
-                  </div>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 8,
-                  }}>
-                    {SUITES.map((suite) => {
-                      const selected = selectedSuites.has(suite.id);
-                      const count = suiteTcCount[suite.id] ?? 0;
-                      return (
-                        <div
-                          key={suite.id}
-                          onClick={() => toggleSuite(suite.id)}
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            background: selected ? 'var(--cyan-dim)' : 'var(--surface2)',
-                            border: `1px solid ${selected ? 'rgba(37,99,171,0.35)' : 'var(--border)'}`,
-                            transition: 'all 0.15s',
-                            userSelect: 'none',
-                          }}
-                        >
-                          <div style={{ fontSize: 13, marginBottom: 2 }}>{suite.emoji}</div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: selected ? 'var(--cyan)' : 'var(--text)' }}>
-                            {suite.label}
-                          </div>
-                          <div style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                            {count > 0 ? `${count} TCs` : suite.desc}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Run options ──────────────────────────────────────── */}
-              <div className="card" style={{ marginBottom: 10 }}>
-                <div className="card-body" style={{ padding: '10px 14px' }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 10 }}>
-                    Run Options
-                  </div>
-
-                  {/* Workers */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500 }}>Parallel Workers</span>
-                    <Stepper value={parallelWorkers} onChange={setParallelWorkers} />
-                  </div>
-
-                  {/* Browser */}
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6, fontWeight: 600 }}>Browser</div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      {(['chromium', 'firefox', 'webkit'] as const).map((b) => (
-                        <button
-                          key={b}
-                          onClick={() => setBrowser(b)}
-                          style={{
-                            padding: '4px 10px',
-                            borderRadius: 5,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            background: browser === b ? 'var(--cyan-dim)' : 'var(--surface3)',
-                            border: `1px solid ${browser === b ? 'rgba(37,99,171,0.35)' : 'var(--border)'}`,
-                            color: browser === b ? 'var(--cyan)' : 'var(--text-dim)',
-                            textTransform: 'capitalize',
-                            transition: 'all 0.15s',
-                          }}
-                        >
-                          {b.charAt(0).toUpperCase() + b.slice(1)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Toggles */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div>
-                      <Toggle on={!headless} onChange={(v) => setHeadless(!v)} label="Headed Mode" />
-                      {!headless && (
-                        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4, marginLeft: 42, fontStyle: 'italic' }}>
-                          Browser UI active · video recorded
-                        </div>
-                      )}
-                    </div>
-                    <Toggle on={autoHeal} onChange={setAutoHeal} label="Auto-Heal on Failure" />
-                    <Toggle on={useAIAgents} onChange={setUseAIAgents} label="Use AI Agents" />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Schedule ─────────────────────────────────────────── */}
-              <div className="card" style={{ marginBottom: 10 }}>
-                <div className="card-body" style={{ padding: '10px 14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: scheduleEnabled ? 10 : 0 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flex: 1 }}>
-                      Schedule
-                    </div>
-                    <Toggle on={scheduleEnabled} onChange={setScheduleEnabled} label="" />
-                  </div>
-                  {scheduleEnabled && (
-                    <>
-                      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                        {[
-                          { label: 'min', idx: 0, placeholder: '0' },
-                          { label: 'hr',  idx: 1, placeholder: '2' },
-                          { label: 'dom', idx: 2, placeholder: '*' },
-                          { label: 'mon', idx: 3, placeholder: '*' },
-                          { label: 'dow', idx: 4, placeholder: '*' },
-                        ].map(({ label, idx, placeholder }) => (
-                          <div key={label} style={{ flex: 1 }}>
-                            <input
-                              value={cronParts[idx]}
-                              onChange={(e) => {
-                                const next = [...cronParts];
-                                next[idx] = e.target.value;
-                                setCronParts(next);
-                              }}
-                              placeholder={placeholder}
-                              style={{
-                                width: '100%',
-                                padding: '5px 6px',
-                                borderRadius: 4,
-                                background: 'var(--surface2)',
-                                border: '1px solid var(--border)',
-                                color: 'var(--text)',
-                                fontSize: 12,
-                                fontFamily: 'var(--font-mono)',
-                                outline: 'none',
-                                textAlign: 'center',
-                                boxSizing: 'border-box',
-                              }}
-                            />
-                            <div style={{ fontSize: 9, color: 'var(--text-dim)', textAlign: 'center', marginTop: 2 }}>
-                              {label}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{
-                        fontSize: 11,
-                        color: '#2A9D8F',
-                        fontFamily: 'var(--font-mono)',
-                        background: 'rgba(42,157,143,0.06)',
-                        padding: '4px 8px',
-                        borderRadius: 4,
-                        border: '1px solid rgba(42,157,143,0.15)',
-                      }}>
-                        {cronText}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* ── Run Now button ────────────────────────────────────── */}
-              <div style={{ paddingBottom: 14 }}>
-                <button
-                  onClick={handleRunNow}
-                  disabled={isRunning || createRun.isPending || selectedTcIds.size === 0}
+            {/* Config row: Env · URL · Workers · Run */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 10px',
+              overflow: 'hidden',
+            }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>
+                Env
+              </span>
+              {envConfigs.length === 0 ? (
+                <span
+                  style={{ fontSize: 10, color: 'var(--cyan)', cursor: 'pointer', textDecoration: 'underline', flexShrink: 0 }}
+                  onClick={() => navigate(`/projects/${slug}/settings`)}
+                >
+                  Add env in Settings
+                </span>
+              ) : (
+                <select
+                  value={environment}
+                  onChange={(e) => setEnvironment(e.target.value)}
                   style={{
-                    width: '100%',
-                    padding: '11px 16px',
-                    borderRadius: 7,
-                    background: (isRunning || createRun.isPending)
-                      ? 'rgba(42,157,143,0.3)'
-                      : selectedTcIds.size === 0
-                      ? 'rgba(42,157,143,0.15)'
-                      : 'linear-gradient(135deg, #2A9D8F, #22d3ee)',
-                    border: 'none',
-                    color: selectedTcIds.size === 0 ? 'rgba(255,255,255,0.4)' : 'white',
-                    fontSize: 13,
-                    fontWeight: 800,
-                    cursor: (isRunning || createRun.isPending || selectedTcIds.size === 0) ? 'not-allowed' : 'pointer',
+                    width: 110, flexShrink: 0,
+                    padding: '4px 20px 4px 7px',
+                    borderRadius: 5, fontSize: 11, fontWeight: 600,
                     fontFamily: 'var(--font-ui)',
-                    transition: 'all 0.2s',
-                    letterSpacing: '0.3px',
+                    background: 'var(--surface3)',
+                    border: '1px solid rgba(42,157,143,0.35)',
+                    color: 'var(--text)', cursor: 'pointer', outline: 'none', appearance: 'none',
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
                   }}
                 >
-                  {isRunning
-                    ? '⏳ Running…'
-                    : createRun.isPending
-                    ? '⏳ Starting…'
-                    : `▶ Run ${selectedTcIds.size} Selected Test${selectedTcIds.size !== 1 ? 's' : ''}`}
-                </button>
-
-                {/* Progress bar during run */}
-                {isRunning && (
-                  <RunProgressBar
-                    passed={stats.passed}
-                    failed={stats.failed}
-                    total={stats.total}
-                  />
-                )}
-              </div>
+                  {envConfigs.map((cfg) => (
+                    <option key={cfg.id} value={cfg.name}>{cfg.name}{cfg.isDefault ? ' ★' : ''}</option>
+                  ))}
+                </select>
+              )}
+              {envBaseUrl && (
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 9, color: '#2A9D8F',
+                  background: 'rgba(42,157,143,0.06)', padding: '2px 6px', borderRadius: 3,
+                  border: '1px solid rgba(42,157,143,0.15)',
+                  flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {envBaseUrl}
+                </span>
+              )}
+              <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>W</span>
+              <Stepper value={parallelWorkers} onChange={updateWorkers} max={16} />
+              <button
+                onClick={handleRunNow}
+                disabled={isRunning || createRun.isPending || selectedTcIds.size === 0}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, flexShrink: 0,
+                  background: (isRunning || createRun.isPending)
+                    ? 'rgba(42,157,143,0.3)'
+                    : selectedTcIds.size === 0
+                    ? 'rgba(42,157,143,0.15)'
+                    : 'linear-gradient(135deg, #2A9D8F, #22d3ee)',
+                  border: 'none',
+                  color: selectedTcIds.size === 0 ? 'rgba(255,255,255,0.4)' : 'white',
+                  fontSize: 11, fontWeight: 800,
+                  cursor: (isRunning || createRun.isPending || selectedTcIds.size === 0) ? 'not-allowed' : 'pointer',
+                  fontFamily: 'var(--font-ui)', whiteSpace: 'nowrap', transition: 'all 0.2s',
+                }}
+              >
+                {isRunning ? '⏳ Running…' : createRun.isPending ? '⏳ Starting…' : `▶ Run ${selectedTcIds.size}`}
+              </button>
             </div>
+
+            {/* Progress bar while running */}
+            {isRunning && (
+              <div style={{ padding: '0 10px 5px' }}>
+                <RunProgressBar passed={stats.passed} failed={stats.failed} total={stats.total} />
+              </div>
+            )}
           </div>
 
           {/* TC List Panel */}
@@ -789,8 +689,16 @@ export default function Execution() {
           </div>
         </div>
 
-        {/* ── RIGHT COLUMN — Live Log ──────────────────────────────────────── */}
+        {/* ── RIGHT COLUMN — Job Queue + Live Log ─────────────────────────── */}
         <div id="qa-log-panel" style={{ width: logPanelWidth, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Job queue panel — shown whenever there are active runs */}
+          {activeRuns.length > 0 && (
+            <JobQueuePanel
+              runs={activeRuns}
+              watchedRunId={watchedRunId}
+              onSelect={switchToRun}
+            />
+          )}
           <LiveLog
             logs={logs}
             stats={stats}
@@ -798,6 +706,9 @@ export default function Execution() {
             elapsedMs={elapsedMs}
             onStop={handleStopRun}
             isStopping={isStopping}
+            onHeal={handleHeal}
+            isHealing={triggerHeal.isPending}
+            healTriggered={healTriggered}
           />
         </div>
       </div>

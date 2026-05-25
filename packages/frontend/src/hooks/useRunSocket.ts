@@ -26,6 +26,7 @@ export interface UseRunSocketReturn {
   status: RunSocketStatus;
   clearLogs: () => void;
   joinRun: (runId: string) => void;
+  leaveRun: (runId: string) => void;
 }
 
 const SOCKET_URL = typeof window !== 'undefined'
@@ -87,6 +88,11 @@ export function useRunSocket(): UseRunSocketReturn {
       setStats((prev) => ({ ...prev, passed, failed, skipped, running: 0 }));
     });
 
+    socket.on('run:cancelled', () => {
+      setStatus('cancelled');
+      setStats((prev) => ({ ...prev, running: 0 }));
+    });
+
     socket.on('run:error', (msg: string) => {
       setStatus('error');
       setLogs((prev) => [...prev, {
@@ -106,11 +112,17 @@ export function useRunSocket(): UseRunSocketReturn {
     }
   }, []);
 
+  const leaveRun = useCallback((runId: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('leaveRun', { runId });
+    }
+  }, []);
+
   const clearLogs = useCallback(() => {
     setLogs([]);
     setStats({ total: 0, passed: 0, failed: 0, running: 0, skipped: 0 });
     setStatus('idle');
   }, []);
 
-  return { logs, stats, status, clearLogs, joinRun };
+  return { logs, stats, status, clearLogs, joinRun, leaveRun };
 }

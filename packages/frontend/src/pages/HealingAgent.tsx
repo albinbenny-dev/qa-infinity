@@ -22,6 +22,7 @@ const STATUS_META: Record<HealProposal['status'], { label: string; color: string
   APPROVED:     { label: 'Approved',     color: '#2A9D8F' },
   REJECTED:     { label: 'Rejected',     color: '#DC2626' },
   AUTO_APPLIED: { label: 'Auto-Applied', color: '#2563AB' },
+  EXHAUSTED:    { label: 'Exhausted',    color: '#6B7280' },
 };
 
 // ── Sub-components ─────────────────────────────────────────────────────────

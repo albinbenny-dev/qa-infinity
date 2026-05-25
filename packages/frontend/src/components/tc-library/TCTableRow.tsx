@@ -1,3 +1,5 @@
+import React from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import type { TestCase } from '../../types';
 
 interface TCTableRowProps {
@@ -7,6 +9,7 @@ interface TCTableRowProps {
   onToggle: (id: string) => void;
   onRunIndividual: (tc: TestCase) => void;
   onDelete: (tc: TestCase) => void;
+  onEdit?: (tc: TestCase) => void;
   isRunning?: boolean;
   isExpanded?: boolean;
   onExpand?: (id: string | null) => void;
@@ -25,23 +28,84 @@ const PRIORITY_COLOR: Record<string, string> = {
   CRITICAL: 'var(--fail)',
 };
 
-function LastRunBadge({ status }: { status?: string }) {
-  if (!status) {
+const RUN_COLOR: Record<string, string> = {
+  PASSED:    '#2A9D8F',
+  FAILED:    '#DC2626',
+  SKIPPED:   '#F59E0B',
+  CANCELLED: '#64748b',
+};
+
+type RunEntry = { status: string; runId: string };
+
+/** 5 mini coloured blocks — oldest left, newest right.
+ *  Each filled block is clickable and navigates to the report for that run. */
+function RunHistorySparkline({ statuses }: { statuses?: RunEntry[] }) {
+  const navigate = useNavigate();
+  const { slug } = useParams<{ slug: string }>();
+  const filled = statuses ?? [];
+
+  if (filled.length === 0) {
     return (
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
         —
       </span>
     );
   }
-  const cls =
-    status === 'PASSED' ? 'badge-pass'
-    : status === 'FAILED' ? 'badge-fail'
-    : 'badge-skip';
-  const label =
-    status === 'PASSED' ? 'Passed'
-    : status === 'FAILED' ? 'Failed'
-    : status;
-  return <span className={`badge ${cls}`} style={{ fontSize: '9px' }}>{label}</span>;
+
+  // Right-align: pad empty slots on the LEFT so newest run is always at the right edge.
+  const slots: (RunEntry | null)[] = [
+    ...Array<null>(Math.max(0, 5 - filled.length)).fill(null),
+    ...filled,
+  ];
+
+  function handleBlockClick(e: React.MouseEvent, entry: RunEntry) {
+    e.stopPropagation(); // don't expand the TC row
+    navigate(`/projects/${slug}/reports?run=${entry.runId}`);
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      {slots.map((entry, i) => {
+        const color = entry ? RUN_COLOR[entry.status] ?? '#64748b' : null;
+        const clickable = entry?.status === 'PASSED' || entry?.status === 'FAILED';
+        return (
+          <div
+            key={i}
+            title={
+              clickable
+                ? `${entry!.status} — click to open report`
+                : entry
+                ? entry.status
+                : 'No run yet'
+            }
+            onClick={clickable ? (e) => handleBlockClick(e, entry!) : undefined}
+            style={{
+              width: 8,
+              height: 16,
+              borderRadius: 2,
+              flexShrink: 0,
+              background: color ?? 'transparent',
+              border: color ? `1px solid ${color}55` : '1px solid var(--border)',
+              opacity: entry ? 1 : 0.3,
+              cursor: clickable ? 'pointer' : 'default',
+              transition: 'transform 0.1s, box-shadow 0.1s',
+            }}
+            onMouseEnter={(e) => {
+              if (!clickable) return;
+              const el = e.currentTarget as HTMLDivElement;
+              el.style.transform = 'scaleY(1.25)';
+              el.style.boxShadow = `0 0 5px ${color}99`;
+            }}
+            onMouseLeave={(e) => {
+              const el = e.currentTarget as HTMLDivElement;
+              el.style.transform = 'scaleY(1)';
+              el.style.boxShadow = 'none';
+            }}
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 export default function TCTableRow({
@@ -51,6 +115,7 @@ export default function TCTableRow({
   onToggle,
   onRunIndividual,
   onDelete,
+  onEdit,
   isRunning = false,
   isExpanded = false,
   onExpand,
@@ -69,7 +134,7 @@ export default function TCTableRow({
         className={`tc-item${selected ? ' selected' : ''}`}
         style={{
           display: 'grid',
-          gridTemplateColumns: '28px 1fr 60px 110px 80px 52px',
+          gridTemplateColumns: '28px 1fr 60px 110px 96px 52px',
           gap: '8px',
           padding: '9px 14px',
           alignItems: 'center',
@@ -126,6 +191,25 @@ export default function TCTableRow({
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-dim)' }}>
               {tc.tcId}
             </span>
+            {tc.prerequisiteTcId && tc.prerequisiteTc && (
+              <span
+                title={`Prerequisite: ${tc.prerequisiteTc.tcId} — ${tc.prerequisiteTc.title}`}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '8px',
+                  color: 'var(--cyan)',
+                  background: 'var(--cyan-dim)',
+                  border: '1px solid rgba(37,99,171,0.25)',
+                  borderRadius: '3px',
+                  padding: '1px 4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '2px',
+                }}
+              >
+                ⛓ {tc.prerequisiteTc.tcId}
+              </span>
+            )}
             {regularTags.slice(0, 2).map((tag) => (
               <span key={tag} className="tag" style={{ fontSize: '8px' }}>{tag}</span>
             ))}
@@ -164,9 +248,9 @@ export default function TCTableRow({
           )}
         </div>
 
-        {/* Last run result */}
-        <div>
-          <LastRunBadge status={tc.lastRun?.status?.toUpperCase()} />
+        {/* Run history sparkline — last 5 runs, oldest→newest, right = latest */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <RunHistorySparkline statuses={tc.recentRunStatuses} />
         </div>
 
         {/* Action buttons */}
@@ -305,6 +389,24 @@ export default function TCTableRow({
 
           {/* Action row */}
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+            {onEdit && (
+              <button
+                onClick={() => onEdit(tc)}
+                style={{
+                  padding: '5px 14px',
+                  background: 'var(--cyan-dim)',
+                  border: '1px solid rgba(37,99,171,0.3)',
+                  borderRadius: '5px',
+                  color: 'var(--cyan)',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  marginLeft: 'auto',
+                }}
+              >
+                ✏ Edit TC
+              </button>
+            )}
             <button
               onClick={() => onDelete(tc)}
               style={{
@@ -316,7 +418,7 @@ export default function TCTableRow({
                 fontSize: '11px',
                 fontWeight: 700,
                 cursor: 'pointer',
-                marginLeft: 'auto',
+                ...(onEdit ? {} : { marginLeft: 'auto' }),
               }}
             >
               🗑 Delete TC

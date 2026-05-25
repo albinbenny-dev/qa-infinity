@@ -18,24 +18,16 @@ export const CreateProjectSchema = z.object({
   name: z.string().min(2).max(100),
   slug: slug.optional(),
   description: z.string().max(500).optional(),
-  baseUrl: z
-    .string()
-    .url('Must be a valid URL')
-    .optional()
-    .or(z.literal('')),
-  color: hexColor.optional().default('#22d3ee'),
+  baseUrl: z.string().max(500).optional().or(z.literal('')),
+  color: z.string().min(1).max(200).optional().default('#22d3ee'),
   reqLibraryPath: z.string().max(500).optional(),
 });
 
 export const UpdateProjectSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   description: z.string().max(500).optional(),
-  baseUrl: z
-    .string()
-    .url('Must be a valid URL')
-    .optional()
-    .or(z.literal('')),
-  color: hexColor.optional(),
+  baseUrl: z.string().max(500).optional().or(z.literal('')),
+  color: z.string().min(1).max(200).optional(),
   reqLibraryPath: z.string().max(500).optional().nullable(),
 });
 
