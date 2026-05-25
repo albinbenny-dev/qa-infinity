@@ -66,9 +66,10 @@ export function useDeleteScript(projectId: string) {
 export function useUploadScript(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, testCaseId }: { file: File; testCaseId?: string }) => {
       const formData = new FormData();
       formData.append('file', file);
+      if (testCaseId) formData.append('testCaseId', testCaseId);
       const res = await api.post<Script>(
         `/projects/${projectId}/scripts/upload`,
         formData,

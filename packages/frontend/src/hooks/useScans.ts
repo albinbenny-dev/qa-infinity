@@ -94,6 +94,32 @@ export function useUpdateLoginInstructions(projectId: string) {
   });
 }
 
+export interface QuickLoginTestResult {
+  success: boolean;
+  finalUrl?: string;
+  errorMessage?: string;
+  screenshotBase64?: string;
+}
+
+export function useQuickLoginTest(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (envConfigId: string) =>
+      api
+        .post<QuickLoginTestResult>(
+          `/projects/${projectId}/scans/quick-login-test`,
+          { envConfigId },
+          { timeout: 90000 },
+        )
+        .then((r) => r.data),
+    onSuccess: (data) => {
+      if (data.success) {
+        void qc.invalidateQueries({ queryKey: ['project-context', projectId] });
+      }
+    },
+  });
+}
+
 export function useDeleteScan(projectId: string) {
   const qc = useQueryClient();
   return useMutation({

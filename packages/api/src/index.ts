@@ -34,6 +34,11 @@ runsNamespace.on('connection', (socket) => {
   if (runId) {
     void socket.join(`run:${runId}`);
   }
+  socket.on('leaveRun', ({ runId: rid }: { runId: string }) => {
+    if (!rid) return;
+    void socket.leave(`run:${rid}`);
+  });
+
   socket.on('joinRun', async ({ runId: rid }: { runId: string }) => {
     if (!rid) return;
     void socket.join(`run:${rid}`);

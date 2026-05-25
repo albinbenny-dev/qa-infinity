@@ -2,7 +2,7 @@ FROM node:20-alpine
 
 # Install pnpm, curl, and Chromium for UI screenshot capture
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate && \
-    apk add --no-cache curl openssl openssl-dev \
+    apk add --no-cache curl openssl openssl-dev tzdata \
       chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 # Tell playwright-core where to find the system Chromium
@@ -30,4 +30,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-CMD sh -c "cd packages/api && npx prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"
+CMD sh -c "cd packages/api && npx prisma migrate resolve --rolled-back 20260525065033_add_prerequisite_tc 2>/dev/null || true && npx prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"

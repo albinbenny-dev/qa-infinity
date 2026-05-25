@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import { z } from 'zod';
-import * as XLSX from 'xlsx';
+import XLSXStyle from 'xlsx-js-style';
+import fs from 'fs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
@@ -128,6 +129,9 @@ router.post('/runs/:runId/generate', async (req: Request, res: Response, next: N
 });
 
 // ── GET /runs/:runId/export ────────────────────────────────────────────────
+// Produces a formatted two-sheet workbook matching the reference format:
+//   Sheet 1 "Dashboard"  — colour-coded execution summary + TC breakdown table
+//   Sheet 2 "Test Cases" — full per-TC detail (steps, actual result, script ref …)
 
 router.get('/runs/:runId/export', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -136,99 +140,376 @@ router.get('/runs/:runId/export', async (req: Request, res: Response, next: Next
       include: {
         results: {
           include: {
-            testCase: { select: { id: true, tcId: true, title: true, type: true, useCaseTag: true } },
+            testCase: {
+              select: {
+                id: true, tcId: true, title: true, description: true,
+                steps: true, expectedResult: true, type: true,
+                useCaseTag: true, priority: true, createdAt: true,
+              },
+            },
+            script: { select: { filename: true } },
           },
           orderBy: { createdAt: 'asc' },
         },
-        report: true,
         project: { select: { name: true } },
       },
     });
     if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
 
-    type ExportResult = { status: string; duration: number | null; errorMessage: string | null; testCase: { tcId: string; title: string; type: string; useCaseTag: string | null } };
-    const exportResults = run.results as ExportResult[];
-    const passed = exportResults.filter((r) => r.status === 'PASSED').length;
-    const failed = exportResults.filter((r) => r.status === 'FAILED').length;
-    const total = exportResults.length;
-    const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
-    const duration =
-      run.startedAt && run.completedAt
-        ? Math.round(
-            (new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()) / 1000,
-          )
-        : 0;
+    // ── Stats ────────────────────────────────────────────────────────────────
+    const results = run.results;
+    const total   = results.length;
+    const passed  = results.filter((r) => r.status === 'PASSED').length;
+    const failed  = results.filter((r) => r.status === 'FAILED').length;
+    const flaky   = results.filter((r) => r.status === 'FLAKY').length;
+    const notRun  = results.filter(
+      (r) => r.status === 'SKIPPED' || r.status === 'PENDING' || r.status === 'CANCELLED',
+    ).length;
+    const passRate = total > 0 ? `${((passed / total) * 100).toFixed(1)}%` : '0.0%';
 
-    // Sheet 1: Summary
-    const summaryData = [
-      ['QA Infinity — Run Report'],
-      [],
-      ['Project', run.project.name],
-      ['Run Name', run.name],
-      ['Environment', run.environment],
-      ['Status', run.status],
-      ['Trigger', run.triggerType],
-      ['Started', run.startedAt?.toISOString() ?? ''],
-      ['Completed', run.completedAt?.toISOString() ?? ''],
-      ['Duration (s)', duration],
-      [],
-      ['Total Tests', total],
-      ['Passed', passed],
-      ['Failed', failed],
-      ['Pass Rate', `${passRate}%`],
-    ];
+    const useCaseTags = [...new Set(results.map((r) => r.testCase.useCaseTag).filter(Boolean))];
+    const featureLabel = useCaseTags.length === 1
+      ? useCaseTags[0]!
+      : useCaseTags.length > 1
+        ? useCaseTags.slice(0, 3).join(', ')
+        : run.name;
 
-    if (run.report) {
-      try {
-        const analysis = JSON.parse(run.report.aiAnalysis) as {
-          summary?: string;
-          severity?: string;
-          rootCauses?: string[];
-          recommendations?: string[];
-        };
-        summaryData.push(
-          [],
-          ['AI Analysis'],
-          ['Summary', analysis.summary ?? ''],
-          ['Severity', analysis.severity ?? ''],
-          [],
-          ['Root Causes'],
-          ...(analysis.rootCauses ?? []).map((c: string) => ['', c]),
-          [],
-          ['Recommendations'],
-          ...(analysis.recommendations ?? []).map((r: string) => ['', r]),
-        );
-      } catch { /* ignore parse errors */ }
+    const runDateStr = (run.startedAt ?? run.createdAt).toLocaleString('en-GB', {
+      day: 'numeric', month: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+
+    // ── Style helpers (xlsx-js-style uses rgb without 'FF' alpha prefix for fill) ──
+    // fills: { fgColor: { rgb: '1F4E79' } }   fonts: { color: { rgb: 'FFFFFF' } }
+    const bgSolid = (rgb: string) => ({ fill: { fgColor: { rgb } } });
+    const fontWhiteBold = { font: { color: { rgb: 'FFFFFF' }, bold: true } };
+    const fontBold      = { font: { bold: true } };
+    const alignCtr      = { alignment: { horizontal: 'center', vertical: 'center' } };
+    const alignLeft     = { alignment: { horizontal: 'left', vertical: 'center' } };
+    const alignWrap     = { alignment: { horizontal: 'left', vertical: 'top', wrapText: true } };
+    const alignHdrWrap  = { alignment: { horizontal: 'center', vertical: 'center', wrapText: true } };
+
+    type CellStyle = {
+      fill?: { fgColor: { rgb: string } };
+      font?: { color?: { rgb: string }; bold?: boolean; sz?: number };
+      alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean };
+    };
+
+    function cell(
+      value: string | number,
+      style: CellStyle = {},
+    ): { v: string | number; t: string; s: CellStyle } {
+      return { v: value, t: typeof value === 'number' ? 'n' : 's', s: style };
     }
 
-    // Sheet 2: Test Results
-    const resultHeaders = [
-      'TC ID', 'Title', 'Use Case', 'Type', 'Status', 'Duration (ms)', 'Error Message',
+    // ── Colour constants (6-hex, no alpha) ───────────────────────────────────
+    const COL = {
+      navyDark:  '1F4E79',
+      navyMid:   '2E75B6',
+      steelBlue: '4472C4',
+      lightBlue: 'D6E4F0',
+      white:     'FFFFFF',
+      green:     '00B050',
+      orange:    'FF8C00',
+      red:       'FF0000',
+      yellow:    'FFD966',
+      grey:      'D9D9D9',
+    };
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SHEET 1: Dashboard
+    // ════════════════════════════════════════════════════════════════════════
+    type WsCell = { v: string | number; t: string; s: CellStyle };
+    const ws1: Record<string, WsCell | object> = {};
+
+    // Helper: write to a cell address
+    function w1(addr: string, value: string | number, style: CellStyle) {
+      ws1[addr] = cell(value, style);
+    }
+
+    // Merge helper (stored in !merges array)
+    const merges1: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+    function merge1(r1: number, c1: number, r2: number, c2: number) {
+      merges1.push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
+    }
+
+    // Row 1 — Title (A1:F1)
+    const titleStyle: CellStyle = {
+      ...bgSolid(COL.navyDark),
+      ...fontWhiteBold,
+      ...alignCtr,
+      font: { color: { rgb: COL.white }, bold: true, sz: 14 },
+    };
+    w1('A1', `EXECUTION DASHBOARD — ${featureLabel.toUpperCase()}`, titleStyle);
+    merge1(0, 0, 0, 5);
+
+    // Row 2 — spacer (empty)
+
+    // Rows 3-5 — metadata
+    const metaRows: [string, string][] = [
+      ['Run ID',   run.id],
+      ['Run Date', runDateStr],
+      ['Feature',  featureLabel],
     ];
-    const resultRows = exportResults.map((r) => [
-      r.testCase.tcId,
-      r.testCase.title,
-      r.testCase.useCaseTag ?? '',
-      r.testCase.type,
-      r.status,
-      r.duration ?? '',
-      r.errorMessage ?? '',
-    ]);
+    metaRows.forEach(([label, value], i) => {
+      const r = 2 + i; // 0-indexed row
+      w1(`A${r + 1}`, label,  { ...bgSolid(COL.lightBlue), ...fontBold, ...alignLeft });
+      w1(`C${r + 1}`, value,  { ...bgSolid(COL.white),    ...alignLeft });
+      merge1(r, 0, r, 1);
+      merge1(r, 2, r, 5);
+    });
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.aoa_to_sheet([resultHeaders, ...resultRows]),
-      'Test Results',
-    );
+    // Row 7 — SUMMARY heading (A7:F7)
+    w1('A7', 'SUMMARY', { ...bgSolid(COL.navyMid), ...fontWhiteBold, ...alignLeft });
+    merge1(6, 0, 6, 5);
 
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
-    const filename = `run-report-${run.id.slice(0, 8)}.xlsx`;
+    // Row 8 — stat headers
+    const statHdrs = ['TOTAL', 'PASSED', 'FLAKY', 'FAILED', 'NOT RUN', 'PASS RATE'];
+    statHdrs.forEach((h, idx) => {
+      const addr = `${String.fromCharCode(65 + idx)}8`;
+      w1(addr, h, { ...bgSolid(COL.steelBlue), ...fontWhiteBold, ...alignCtr });
+    });
+
+    // Row 9 — stat values (colour-coded)
+    const statData: [number | string, string][] = [
+      [total,    COL.grey],
+      [passed,   COL.green],
+      [flaky,    COL.orange],
+      [failed,   COL.red],
+      [notRun,   COL.yellow],
+      [passRate, passed === total && total > 0 ? COL.green : failed > 0 ? COL.red : COL.orange],
+    ];
+    statData.forEach(([val, color], idx) => {
+      const addr = `${String.fromCharCode(65 + idx)}9`;
+      w1(addr, val, { ...bgSolid(color), ...fontBold, ...alignCtr });
+    });
+
+    // Row 11 — breakdown heading (A11:F11)
+    w1('A11', 'TEST CASE BREAKDOWN', { ...bgSolid(COL.navyMid), ...fontWhiteBold, ...alignLeft });
+    merge1(10, 0, 10, 5);
+
+    // Row 12 — breakdown headers
+    const bdHdrs = ['#', 'Test Case ID', 'Title', 'Priority', 'Type', 'Status'];
+    bdHdrs.forEach((h, idx) => {
+      const addr = `${String.fromCharCode(65 + idx)}12`;
+      w1(addr, h, { ...bgSolid(COL.navyDark), ...fontWhiteBold, ...alignCtr });
+    });
+
+    // Rows 13+ — TC data
+    const lastDataRow1 = 12 + results.length;
+    results.forEach((r, idx) => {
+      const rowNum = 13 + idx;
+      const rowFill = idx % 2 === 0 ? COL.lightBlue : COL.white;
+      const rowVals: Array<string | number> = [
+        idx + 1,
+        r.testCase.tcId,
+        r.testCase.title,
+        r.testCase.priority ?? 'Medium',
+        r.testCase.type,
+        r.status,
+      ];
+      rowVals.forEach((val, ci) => {
+        const addr = `${String.fromCharCode(65 + ci)}${rowNum}`;
+        const baseStyle: CellStyle = { ...bgSolid(rowFill), ...alignLeft };
+        w1(addr, val, ci === 5 ? { ...baseStyle, ...fontBold } : baseStyle);
+      });
+    });
+
+    // Sheet dimensions
+    const maxRow1 = Math.max(15, lastDataRow1);
+    ws1['!ref'] = `A1:F${maxRow1}`;
+    ws1['!merges'] = merges1;
+    ws1['!cols'] = [
+      { wch: 4 }, { wch: 20 }, { wch: 46 }, { wch: 12 }, { wch: 15 }, { wch: 12 },
+    ];
+    ws1['!rows'] = [
+      { hpt: 36 }, { hpt: 8 },
+      { hpt: 22 }, { hpt: 22 }, { hpt: 22 },
+      { hpt: 8 }, { hpt: 22 }, { hpt: 20 }, { hpt: 32 }, { hpt: 8 },
+      { hpt: 22 }, { hpt: 20 },
+      ...results.map(() => ({ hpt: 18 })),
+    ];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SHEET 2: Test Cases
+    // ════════════════════════════════════════════════════════════════════════
+    const ws2: Record<string, WsCell | object> = {};
+
+    function w2(addr: string, value: string | number, style: CellStyle) {
+      ws2[addr] = cell(value, style);
+    }
+
+    // Header row
+    const tcHeaders = [
+      'Test Case ID', 'Module / Feature', 'Test Case Title', 'Objective',
+      'Test Steps', 'Test Data', 'Expected Result', 'Actual Result',
+      'Status', 'Automation Script Ref', 'Priority', 'Test Type', 'Created Date',
+    ];
+    tcHeaders.forEach((h, idx) => {
+      const addr = `${xlsxCol(idx + 1)}1`;
+      w2(addr, h, { ...bgSolid(COL.navyDark), ...fontWhiteBold, ...alignHdrWrap });
+    });
+
+    // Data rows
+    const tcRowHeights: { hpt: number }[] = [{ hpt: 26 }];
+    results.forEach((r, idx) => {
+      const rowNum  = 2 + idx;
+      const rowFill = idx % 2 === 0 ? COL.lightBlue : COL.white;
+
+      let stepsText = '';
+      try {
+        const arr: string[] = JSON.parse(r.testCase.steps ?? '[]');
+        stepsText = arr.map((s, si) => `${si + 1}. ${s}`).join('\n');
+      } catch {
+        stepsText = r.testCase.steps ?? '';
+      }
+
+      let actualResult = '';
+      if (r.status === 'PASSED') {
+        actualResult = `Test passed successfully.${r.duration ? ` Duration: ${r.duration}ms.` : ''}`;
+      } else if (r.status === 'FAILED') {
+        actualResult = r.errorMessage
+          ? `Test failed. ${r.errorMessage}${r.duration ? ` Duration: ${r.duration}ms.` : ''}`
+          : `Test failed.${r.duration ? ` Duration: ${r.duration}ms.` : ''}`;
+      } else {
+        actualResult = r.status;
+      }
+
+      const rowData: Array<string | number> = [
+        r.testCase.tcId,
+        r.testCase.useCaseTag ?? run.project.name,
+        r.testCase.title,
+        r.testCase.description ?? '',
+        stepsText,
+        '',  // Test Data — not stored; left blank
+        r.testCase.expectedResult,
+        actualResult,
+        r.status,
+        r.script?.filename ?? '',
+        r.testCase.priority ?? 'Medium',
+        r.testCase.type,
+        r.testCase.createdAt.toISOString().split('T')[0],
+      ];
+
+      rowData.forEach((val, ci) => {
+        const addr = `${xlsxCol(ci + 1)}${rowNum}`;
+        const baseStyle: CellStyle = { ...bgSolid(rowFill), ...alignWrap };
+        // Status (col I = index 8) and Priority (col K = index 10) are bold
+        w2(addr, val, (ci === 8 || ci === 10) ? { ...baseStyle, ...fontBold } : baseStyle);
+      });
+
+      const stepCount = stepsText.split('\n').length;
+      tcRowHeights.push({ hpt: Math.max(42, Math.min(150, stepCount * 15 + 10)) });
+    });
+
+    ws2['!ref'] = `A1:M${1 + results.length}`;
+    ws2['!cols'] = [
+      { wch: 15 }, { wch: 19 }, { wch: 42 }, { wch: 55 }, { wch: 45 },
+      { wch: 38 }, { wch: 55 }, { wch: 55 }, { wch: 10 }, { wch: 40 },
+      { wch: 11 }, { wch: 13 }, { wch: 15 },
+    ];
+    ws2['!rows'] = tcRowHeights;
+
+    // ── Build workbook and send ───────────────────────────────────────────────
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws1 as XLSXStyle.WorkSheet, 'Dashboard');
+    XLSXStyle.utils.book_append_sheet(wb, ws2 as XLSXStyle.WorkSheet, 'Test Cases');
+
+    const buf = XLSXStyle.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    const runLabel = run.runSeq ? `RUN-${String(run.runSeq).padStart(4, '0')}` : run.id.slice(0, 8).toUpperCase();
+    const safeFeature = featureLabel.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+    const filename = `${safeFeature}_${runLabel}.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buf);
+  } catch (err) { next(err); }
+});
+
+/** Convert 1-based column index to Excel column letter(s): 1→A, 26→Z, 27→AA … */
+function xlsxCol(n: number): string {
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+// ── GET /runs/:runId/results/:resultId/screenshot ──────────────────────────
+
+router.get('/runs/:runId/results/:resultId/screenshot', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await prisma.runResult.findFirst({
+      where: {
+        id: req.params['resultId'],
+        runId: req.params['runId'],
+        run: { projectId: req.project.id },
+      },
+      select: {
+        screenshotPath: true,
+        run: { select: { runSeq: true } },
+        testCase: { select: { tcId: true } },
+      },
+    });
+    if (!result?.screenshotPath) { res.status(404).json({ error: 'Screenshot not found' }); return; }
+    if (!fs.existsSync(result.screenshotPath)) { res.status(404).json({ error: 'Screenshot file missing on disk' }); return; }
+    const runLabelSc = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `attachment; filename="screenshot-${runLabelSc}_${result.testCase.tcId}.png"`);
+    fs.createReadStream(result.screenshotPath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ── GET /runs/:runId/results/:resultId/trace ───────────────────────────────
+
+router.get('/runs/:runId/results/:resultId/trace', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await prisma.runResult.findFirst({
+      where: {
+        id: req.params['resultId'],
+        runId: req.params['runId'],
+        run: { projectId: req.project.id },
+      },
+      select: {
+        tracePath: true,
+        run: { select: { runSeq: true } },
+        testCase: { select: { tcId: true } },
+      },
+    });
+    if (!result?.tracePath) { res.status(404).json({ error: 'Trace not found' }); return; }
+    if (!fs.existsSync(result.tracePath)) { res.status(404).json({ error: 'Trace file missing on disk' }); return; }
+    const runLabelTr = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="trace-${runLabelTr}_${result.testCase.tcId}.zip"`);
+    fs.createReadStream(result.tracePath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ── GET /runs/:runId/results/:resultId/video ───────────────────────────────
+
+router.get('/runs/:runId/results/:resultId/video', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await prisma.runResult.findFirst({
+      where: {
+        id: req.params['resultId'],
+        runId: req.params['runId'],
+        run: { projectId: req.project.id },
+      },
+      select: {
+        videoPath: true,
+        run: { select: { runSeq: true } },
+        testCase: { select: { tcId: true } },
+      },
+    });
+    if (!result?.videoPath) { res.status(404).json({ error: 'Video not found' }); return; }
+    if (!fs.existsSync(result.videoPath)) { res.status(404).json({ error: 'Video file missing on disk' }); return; }
+    const runLabelVid = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
+    res.setHeader('Content-Type', 'video/webm');
+    res.setHeader('Content-Disposition', `attachment; filename="video-${runLabelVid}_${result.testCase.tcId}.webm"`);
+    fs.createReadStream(result.videoPath).pipe(res);
   } catch (err) { next(err); }
 });
 

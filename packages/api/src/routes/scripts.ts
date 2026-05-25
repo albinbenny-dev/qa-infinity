@@ -12,6 +12,7 @@ import {
   getScriptFileMeta,
   exportZip,
 } from '../services/scriptFileService.js';
+import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 
 const router = Router({ mergeParams: true });
 
@@ -445,13 +446,28 @@ router.post(
       const content = req.file.buffer.toString('utf-8');
       const filename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
       const projectId = req.project.id;
+      const testCaseId = (req.body?.testCaseId as string | undefined) || null;
+
+      if (testCaseId) {
+        const tc = await prisma.testCase.findFirst({ where: { id: testCaseId, projectId } });
+        if (!tc) {
+          res.status(400).json({ error: 'Test case not found in this project' });
+          return;
+        }
+        // Replace any existing script for this test case
+        const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
+        if (existing) {
+          await prisma.script.delete({ where: { id: existing.id } });
+          deleteScript(projectId, existing.filename);
+        }
+      }
 
       saveScript(projectId, filename, content);
 
       const script = await prisma.script.create({
         data: {
           projectId,
-          testCaseId: null,
+          testCaseId,
           filename,
           content,
           isCustomUpload: true,
@@ -461,6 +477,7 @@ router.post(
       res.status(201).json({
         id: script.id,
         filename: script.filename,
+        testCaseId: script.testCaseId,
         isCustomUpload: true,
         createdAt: script.createdAt,
       });
@@ -470,6 +487,14 @@ router.post(
     }
   },
 );
+
+// ── GET /prompt-guide — download the external LLM prompt guide ────────────────
+
+router.get('/prompt-guide', (_req: Request, res: Response) => {
+  res.setHeader('Content-Disposition', 'attachment; filename="qa-infinity-script-prompt-guide.md"');
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.send(PROMPT_GUIDE_CONTENT);
+});
 
 // ── GET /export/zip ────────────────────────────────────────────────────────
 

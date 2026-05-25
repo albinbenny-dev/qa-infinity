@@ -9,6 +9,7 @@ import healsRouter from './heals.js';
 import reportsRouter from './reports.js';
 import chatRouter from './chat.js';
 import scansRouter from './scans.js';
+import suitesRouter from './suites.js';
 import adminRouter from './admin.js';
 
 const router = Router();
@@ -38,6 +39,9 @@ router.use('/projects/:projectId/chat', chatRouter);
 
 // ── UI Scanner ────────────────────────────────────────────────────────────
 router.use('/projects/:projectId/scans', scansRouter);
+
+// ── Suites ────────────────────────────────────────────────────────────────
+router.use('/projects/:projectId/suites', suitesRouter);
 
 // ── Admin / platform-level ────────────────────────────────────────────────
 router.use('/admin', adminRouter);

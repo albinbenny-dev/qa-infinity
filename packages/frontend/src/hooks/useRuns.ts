@@ -52,7 +52,11 @@ export function useRuns(projectId: string | undefined, page = 1) {
       return res.data;
     },
     enabled: !!projectId,
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const runs = query.state.data?.runs ?? [];
+      const hasActive = runs.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
+      return hasActive ? 1500 : 5000;
+    },
   });
 }
 

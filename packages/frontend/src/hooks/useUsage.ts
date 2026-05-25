@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
 export interface OpenRouterUsage {
@@ -62,5 +62,45 @@ export function useUsageTrend(days = 14) {
       return res.data.trend;
     },
     staleTime: 30_000,
+  });
+}
+
+export interface AgentConfigRow {
+  agentName: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+}
+
+export function useAgentConfig() {
+  return useQuery({
+    queryKey: ['agent-config'],
+    queryFn: async () => {
+      const res = await api.get<{ agents: AgentConfigRow[] }>('/admin/agents');
+      return res.data.agents;
+    },
+    staleTime: 10_000,
+  });
+}
+
+export function useToggleAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ agentName, enabled }: { agentName: string; enabled: boolean }) => {
+      const res = await api.patch<AgentConfigRow>(`/admin/agents/${agentName}`, { enabled });
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-config'] }),
+  });
+}
+
+export function useStandardMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (enable: boolean) => {
+      const res = await api.post<{ ok: boolean; standardMode: boolean }>('/admin/agents/standard-mode', { enable });
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-config'] }),
   });
 }

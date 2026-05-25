@@ -62,6 +62,11 @@ async function resolveScriptPaths(
     }));
 }
 
+async function nextRunSeq(): Promise<number> {
+  const agg = await prisma.run.aggregate({ _max: { runSeq: true } });
+  return (agg._max.runSeq ?? 0) + 1;
+}
+
 async function getEnvConfig(projectId: string, envName: string): Promise<{ baseUrl: string; username: string; password: string }> {
   const env = await prisma.envConfig.findFirst({
     where: { projectId, name: envName },
@@ -182,16 +187,16 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
     }
 
     const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
-    if (resolved.length === 0) {
-      res.status(400).json({ error: 'No scripts found for scheduled test cases. Generate scripts first.' });
-      return;
-    }
+    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, schedule.environment);
+    const runSeqSch = await nextRunSeq();
 
     const run = await prisma.run.create({
       data: {
         projectId: req.project.id,
+        runSeq: runSeqSch,
         name: `Scheduled (now): ${schedule.name}`,
         environment: schedule.environment,
         status: 'PENDING',
@@ -201,9 +206,11 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
 
     await addRunJob({
       runId: run.id,
+      runSeq: runSeqSch,
       projectId: req.project.id,
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
+      skippedTcIds,
       environment: schedule.environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
@@ -245,16 +252,16 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     const { testCaseIds, environment, parallelWorkers, headless, browser, name } = parsed.data;
 
     const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
-    if (resolved.length === 0) {
-      res.status(400).json({ error: 'No scripts found for the selected test cases. Generate scripts first.' });
-      return;
-    }
+    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, environment);
+    const runSeq = await nextRunSeq();
 
     const run = await prisma.run.create({
       data: {
         projectId: req.project.id,
+        runSeq,
         name: name ?? `Manual run — ${new Date().toLocaleString()}`,
         environment,
         status: 'PENDING',
@@ -264,9 +271,11 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 
     await addRunJob({
       runId: run.id,
+      runSeq,
       projectId: req.project.id,
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
+      skippedTcIds,
       environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
@@ -302,10 +311,12 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
     }
 
     const envConfig = await getEnvConfig(req.project.id, environment);
+    const runSeqInd = await nextRunSeq();
 
     const run = await prisma.run.create({
       data: {
         projectId: req.project.id,
+        runSeq: runSeqInd,
         name: `Individual: ${tc.tcId} — ${tc.title}`,
         environment,
         status: 'PENDING',
@@ -315,6 +326,7 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
 
     await addRunJob({
       runId: run.id,
+      runSeq: runSeqInd,
       projectId: req.project.id,
       testCaseIds: [testCaseId],
       scriptPaths: [resolved[0].scriptPath],
@@ -353,16 +365,16 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
 
     const testCaseIds = tcs.map((t) => t.id);
     const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
-    if (resolved.length === 0) {
-      res.status(400).json({ error: 'No scripts found for this group. Generate scripts first.' });
-      return;
-    }
+    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, environment);
+    const runSeqGrp = await nextRunSeq();
 
     const run = await prisma.run.create({
       data: {
         projectId: req.project.id,
+        runSeq: runSeqGrp,
         name: `Group: ${useCaseTag}`,
         environment,
         status: 'PENDING',
@@ -372,9 +384,11 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
 
     await addRunJob({
       runId: run.id,
+      runSeq: runSeqGrp,
       projectId: req.project.id,
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
+      skippedTcIds,
       environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { TestCase } from '../../types';
 
 interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'> {
@@ -15,6 +15,7 @@ interface GeneratedTCListProps {
   onEdit: (tempId: string, patch: Partial<GeneratedTC>) => void;
   onSave: (tcs: GeneratedTC[]) => void;
   onDelete: (tempId: string) => void;
+  onDeleteSelected: () => void;
   onApprove: (tc: GeneratedTC) => void;
   isSaving: boolean;
 }
@@ -58,6 +59,15 @@ function TCCard({
   const [expanded, setExpanded] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [newStep, setNewStep] = useState('');
+  const [focusInsertIdx, setFocusInsertIdx] = useState<number | null>(null);
+  const stepRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    if (focusInsertIdx !== null && stepRefs.current[focusInsertIdx]) {
+      stepRefs.current[focusInsertIdx]?.focus();
+      setFocusInsertIdx(null);
+    }
+  }, [tc.steps.length, focusInsertIdx]);
 
   const typeStyle = TYPE_COLORS[tc.type] ?? TYPE_COLORS['UI'];
   const priStyle  = PRIORITY_COLORS[tc.priority] ?? PRIORITY_COLORS['MEDIUM'];
@@ -196,7 +206,7 @@ function TCCard({
           {/* Steps */}
           <div>
             <div style={LABEL}>Steps</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {tc.steps.map((step, si) => (
                 <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
                   <span style={{
@@ -206,6 +216,7 @@ function TCCard({
                     fontSize: '9px', fontWeight: 700, color: 'var(--cyan)', fontFamily: 'var(--font-mono)',
                   }}>{si + 1}</span>
                   <input
+                    ref={(el) => { stepRefs.current[si] = el; }}
                     className="input-field"
                     style={{ flex: 1, fontSize: '12px', padding: '5px 8px' }}
                     value={step}
@@ -214,9 +225,36 @@ function TCCard({
                       updated[si] = e.target.value;
                       onEdit({ steps: updated });
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        const updated = [...tc.steps];
+                        updated.splice(si + 1, 0, '');
+                        onEdit({ steps: updated });
+                        setFocusInsertIdx(si + 1);
+                      }
+                    }}
                   />
+                  {/* Insert step below */}
+                  <button
+                    onClick={() => {
+                      const updated = [...tc.steps];
+                      updated.splice(si + 1, 0, '');
+                      onEdit({ steps: updated });
+                      setFocusInsertIdx(si + 1);
+                    }}
+                    title="Insert step below"
+                    style={{
+                      marginTop: '4px', flexShrink: 0, width: '22px', height: '22px', borderRadius: '4px',
+                      background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.2)',
+                      color: 'var(--cyan)', cursor: 'pointer', fontSize: '13px', fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >+</button>
+                  {/* Delete step */}
                   <button
                     onClick={() => onEdit({ steps: tc.steps.filter((_, idx) => idx !== si) })}
+                    title="Remove step"
                     style={{
                       marginTop: '4px', flexShrink: 0, width: '22px', height: '22px', borderRadius: '4px',
                       background: 'var(--rose-dim)', border: '1px solid rgba(220,38,38,0.2)',
@@ -226,7 +264,7 @@ function TCCard({
                   >✕</button>
                 </div>
               ))}
-              {/* Add step */}
+              {/* Append step at end */}
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <span style={{ width: '18px', flexShrink: 0 }} />
                 <input
@@ -376,6 +414,7 @@ export default function GeneratedTCList({
   onEdit,
   onSave,
   onDelete,
+  onDeleteSelected,
   onApprove,
   isSaving,
 }: GeneratedTCListProps) {
@@ -485,7 +524,27 @@ export default function GeneratedTCList({
           )
         )}
 
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete ${selectedIds.size} selected test case${selectedIds.size !== 1 ? 's' : ''}?`)) {
+                  onDeleteSelected();
+                }
+              }}
+              style={{
+                padding: '7px 14px', borderRadius: 'var(--radius)', fontSize: '12px', fontWeight: 700,
+                background: 'var(--rose-dim)', color: 'var(--rose)',
+                border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 5,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(220,38,38,0.18)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--rose-dim)'; }}
+            >
+              🗑 Delete {selectedIds.size}
+            </button>
+          )}
           <button
             onClick={() => { if (selectedPending.length > 0) onSave(selectedPending); }}
             disabled={selectedPending.length === 0 || isSaving}

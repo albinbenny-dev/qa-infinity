@@ -8,68 +8,12 @@ import { useProject } from '../hooks/useProjects';
 import { useProjectEnvConfigs } from '../hooks/useProjects';
 import { useTestCases, useUseCases } from '../hooks/useTestCases';
 import { useScripts } from '../hooks/useScripts';
-import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCancelRun } from '../hooks/useRuns';
+import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCancelRun, type RunListItem } from '../hooks/useRuns';
 import { useTriggerHeal } from '../hooks/useHeals';
 import { useRunSocket } from '../hooks/useRunSocket';
 import { useExecutionStore } from '../stores/executionStore';
 import type { TestCase } from '../types';
 
-// ── Cron readable text ─────────────────────────────────────────────────────
-
-function cronToText(expr: string): string {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length < 5) return expr;
-  const [min, hour, dom, , dow] = parts;
-  const pad = (n: string) => n.padStart(2, '0');
-  const hrs = parseInt(hour, 10);
-  const mins = parseInt(min, 10);
-  const timeStr = isNaN(hrs) || isNaN(mins) ? `${hour}:${min}` : `${hrs}:${pad(String(mins))} ${hrs < 12 ? 'AM' : 'PM'}`;
-  if (dom === '*' && dow === '*') return `Every day at ${timeStr}`;
-  if (dom === '*') {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const d = parseInt(dow, 10);
-    return `Every ${isNaN(d) ? dow : days[d] ?? dow} at ${timeStr}`;
-  }
-  return expr;
-}
-
-// ── Suite data (Airtel Ventas) ─────────────────────────────────────────────
-
-const SUITES = [
-  { id: 'smoke',      emoji: '🔥', label: 'Smoke Suite',      desc: '28 tests · ~5 min' },
-  { id: 'regression', emoji: '🔄', label: 'Full Regression',  desc: '284 tests · ~45 min' },
-  { id: 'api',        emoji: '🔌', label: 'API Contracts',    desc: '47 tests · ~8 min' },
-  { id: 'sit',        emoji: '🔗', label: 'SIT Chains',       desc: '12 tests · ~15 min' },
-];
-
-
-// ── Toggle switch ──────────────────────────────────────────────────────────
-function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <div
-      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
-      onClick={() => onChange(!on)}
-    >
-      <div
-        style={{
-          width: 34, height: 18, borderRadius: 9, position: 'relative',
-          background: on ? 'var(--cyan)' : 'var(--surface3)',
-          border: `1px solid ${on ? 'rgba(34,211,238,0.4)' : 'var(--border)'}`,
-          transition: 'all 0.2s', flexShrink: 0,
-        }}
-      >
-        <div style={{
-          position: 'absolute', top: 2, borderRadius: '50%',
-          width: 12, height: 12,
-          background: on ? 'white' : 'rgba(255,255,255,0.4)',
-          left: on ? 18 : 2,
-          transition: 'left 0.2s, background 0.2s',
-        }} />
-      </div>
-      <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500 }}>{label}</span>
-    </div>
-  );
-}
 
 // ── Stepper ────────────────────────────────────────────────────────────────
 function Stepper({ value, onChange, min = 1, max = 8 }: {
@@ -137,6 +81,138 @@ function RunProgressBar({ passed, failed, total }: { passed: number; failed: num
   );
 }
 
+// ── Trigger type badge meta ────────────────────────────────────────────────
+
+const TRIGGER_META: Record<string, { label: string; color: string; bg: string }> = {
+  SCHEDULED:  { label: 'Scheduled',  color: 'var(--cyan)',  bg: 'rgba(37,99,171,0.12)' },
+  MANUAL:     { label: 'Manual',     color: 'var(--pass)',  bg: 'rgba(42,157,143,0.10)' },
+  GROUP:      { label: 'Group',      color: '#8b5cf6',      bg: 'rgba(139,92,246,0.10)' },
+  INDIVIDUAL: { label: 'Individual', color: 'var(--amber)', bg: 'rgba(251,191,36,0.10)' },
+  HEAL_RERUN: { label: 'Heal',       color: 'var(--fail)',  bg: 'rgba(220,38,38,0.10)'  },
+};
+
+// ── Job queue panel (shown above live log when runs are active) ────────────
+
+function JobQueuePanel({ runs, watchedRunId, onSelect }: {
+  runs: RunListItem[];
+  watchedRunId: string | null;
+  onSelect: (runId: string) => void;
+}) {
+  return (
+    <div style={{
+      background: '#04183a',
+      borderBottom: '1px solid rgba(255,255,255,0.07)',
+      flexShrink: 0,
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 12px 5px',
+      }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--cyan)', display: 'inline-block', flexShrink: 0 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(226,232,240,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Running Jobs
+        </span>
+        <span style={{
+          fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 100,
+          background: 'rgba(37,99,171,0.2)', color: 'var(--cyan)',
+        }}>{runs.length}</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 9, color: 'rgba(226,232,240,0.3)', fontStyle: 'italic' }}>auto-attached to latest · click another to switch</span>
+      </div>
+
+      {/* Horizontally scrollable cards */}
+      <div style={{
+        display: 'flex', gap: 8, overflowX: 'auto', padding: '0 12px 10px',
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(37,99,171,0.4) transparent',
+      }}>
+        {runs.map(run => {
+          const watched = watchedRunId === run.id;
+          const trigMeta = TRIGGER_META[run.triggerType] ?? TRIGGER_META.MANUAL;
+          const passed  = run.results.filter(r => r.status === 'PASSED').length;
+          const failed  = run.results.filter(r => r.status === 'FAILED').length;
+          const skipped = run.results.filter(r => r.status === 'SKIPPED').length;
+          const total   = run._count.results;
+          const done    = passed + failed + skipped;
+          const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+
+          return (
+            <div
+              key={run.id}
+              onClick={() => onSelect(run.id)}
+              title={`${run.name} · ${run.environment}`}
+              style={{
+                flexShrink: 0, width: 220, padding: '9px 11px',
+                borderRadius: 8, cursor: 'pointer',
+                background: watched ? 'rgba(37,99,171,0.14)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${watched ? 'rgba(37,99,171,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                boxShadow: watched ? '0 0 0 1px rgba(37,99,171,0.3)' : 'none',
+                transition: 'all 0.15s',
+                display: 'flex', flexDirection: 'column', gap: 5,
+              }}
+            >
+              {/* Name + badges */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+                {watched && (
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--cyan)', flexShrink: 0, display: 'inline-block' }} />
+                )}
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: watched ? 'rgba(226,232,240,0.95)' : 'rgba(226,232,240,0.65)',
+                  flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{run.name}</span>
+              </div>
+
+              {/* Badges row */}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase',
+                  background: trigMeta.bg, color: trigMeta.color,
+                }}>{trigMeta.label}</span>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase',
+                  background: 'rgba(255,255,255,0.06)', color: 'rgba(226,232,240,0.45)',
+                }}>{run.environment}</span>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase',
+                  background: run.status === 'RUNNING' ? 'rgba(37,99,171,0.12)' : 'rgba(255,179,71,0.1)',
+                  color: run.status === 'RUNNING' ? 'var(--cyan)' : 'rgba(255,179,71,0.8)',
+                }}>{run.status === 'RUNNING' ? '● Running' : '⏳ Pending'}</span>
+              </div>
+
+              {/* Progress bar + counts */}
+              {total > 0 ? (
+                <div>
+                  <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 2,
+                      width: `${pct}%`,
+                      background: failed > 0 ? 'linear-gradient(90deg,#2A9D8F,#DC2626)' : '#2A9D8F',
+                      transition: 'width 0.4s ease',
+                    }} />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, fontFamily: 'var(--font-mono)' }}>
+                    <span style={{ color: 'rgba(226,232,240,0.35)' }}>{done}/{total}</span>
+                    <span>
+                      {passed > 0 && <span style={{ color: '#2A9D8F', marginRight: 5 }}>✓{passed}</span>}
+                      {failed > 0 && <span style={{ color: '#DC2626' }}>✗{failed}</span>}
+                      {skipped > 0 && <span style={{ color: 'rgba(226,232,240,0.3)', marginLeft: 4 }}>⊙{skipped}</span>}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 9, color: 'rgba(226,232,240,0.3)', fontFamily: 'var(--font-mono)' }}>waiting to start…</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function Execution() {
@@ -150,7 +226,10 @@ export default function Execution() {
   const { data: tcData } = useTestCases(projectId, { limit: 500 });
   const { data: useCaseTags = [] } = useUseCases(projectId);
   const { data: scripts = [] } = useScripts(projectId);
-  useRuns(projectId);
+  const { data: runsData } = useRuns(projectId);
+  const activeRuns: RunListItem[] = (runsData?.runs ?? []).filter(
+    r => r.status === 'PENDING' || r.status === 'RUNNING',
+  );
 
   const createRun = useCreateRun(projectId ?? '');
   const createGroupRun = useCreateGroupRun(projectId ?? '');
@@ -158,20 +237,22 @@ export default function Execution() {
   const cancelRun = useCancelRun(projectId ?? '');
   const triggerHeal = useTriggerHeal(projectId ?? '');
 
-  const { logs, stats, status: socketStatus, clearLogs, joinRun } = useRunSocket();
+  const { logs, stats, status: socketStatus, clearLogs, joinRun, leaveRun } = useRunSocket();
 
   const { selectedTestCaseIds, clearSelected } = useExecutionStore();
 
   // ── Run config state ──────────────────────────────────────────────────────
   const [environment, setEnvironment] = useState('');
-  const [selectedSuites, setSelectedSuites] = useState<Set<string>>(new Set());
-  const [parallelWorkers, setParallelWorkers] = useState(2);
-  const [browser, setBrowser] = useState<'chromium' | 'firefox' | 'webkit'>('chromium');
-  const [headless, setHeadless] = useState(true);
-  const [autoHeal, setAutoHeal] = useState(true);
-  const [useAIAgents, setUseAIAgents] = useState(true);
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [cronParts, setCronParts] = useState(['0', '2', '*', '*', '*']);
+  const [parallelWorkers, setParallelWorkers] = useState<number>(() => {
+    const saved = localStorage.getItem('qa:parallelWorkers');
+    const n = saved ? parseInt(saved, 10) : 2;
+    return Number.isFinite(n) && n >= 1 && n <= 16 ? n : 2;
+  });
+
+  const updateWorkers = useCallback((n: number) => {
+    setParallelWorkers(n);
+    localStorage.setItem('qa:parallelWorkers', String(n));
+  }, []);
 
   // ── TC selection ──────────────────────────────────────────────────────────
   const [selectedTcIds, setSelectedTcIds] = useState<Set<string>>(
@@ -180,6 +261,7 @@ export default function Execution() {
 
   // ── Active run tracking ───────────────────────────────────────────────────
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [watchedRunId, setWatchedRunId] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
   const [healTriggered, setHealTriggered] = useState(false);
   const hasTriggeredHealRef = useRef(false);
@@ -252,8 +334,6 @@ export default function Execution() {
     });
   }, [envConfigs]);
 
-  const cronText = cronToText(cronParts.join(' '));
-
   // ── Sync store → local selection on mount ─────────────────────────────────
   useEffect(() => {
     if (selectedTestCaseIds.length > 0) {
@@ -283,6 +363,18 @@ export default function Execution() {
 
   // Auto-heal is handled server-side by runWorker — no frontend trigger needed.
 
+  // ── Auto-attach: join the latest active run when the page opens with no watched run ──
+  // Fires when navigated from TC Library (run already queued but watchedRunId is null).
+  useEffect(() => {
+    if (watchedRunId !== null || activeRuns.length === 0) return;
+    const latest = activeRuns[0]; // API returns newest-first
+    setActiveRunId(latest.id);
+    setWatchedRunId(latest.id);
+    clearLogs();
+    joinRun(latest.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRuns, watchedRunId]);
+
   // ── TC selection handlers ─────────────────────────────────────────────────
   const handleToggleTc = useCallback((id: string) => {
     setSelectedTcIds((prev) => {
@@ -310,6 +402,15 @@ export default function Execution() {
     setSelectedTcIds(new Set());
   }, []);
 
+  // ── Switch watched run (job queue selector) ───────────────────────────────
+  const switchToRun = useCallback((runId: string) => {
+    if (watchedRunId && watchedRunId !== runId) leaveRun(watchedRunId);
+    clearLogs();
+    setWatchedRunId(runId);
+    joinRun(runId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedRunId]);
+
   // ── Run handlers ──────────────────────────────────────────────────────────
   async function handleRunNow() {
     if (!projectId) return;
@@ -329,10 +430,11 @@ export default function Execution() {
         testCaseIds: tcIds,
         environment,
         parallelWorkers,
-        headless,
-        browser,
+        headless: false,
+        browser: 'chromium',
       });
       setActiveRunId(run.id);
+      setWatchedRunId(run.id);
       joinRun(run.id);
       toast.success(`Run started · ${tcIds.length} test${tcIds.length !== 1 ? 's' : ''}`);
     } catch (err) {
@@ -353,10 +455,11 @@ export default function Execution() {
         useCaseTag,
         environment,
         parallelWorkers,
-        headless,
-        browser,
+        headless: false,
+        browser: 'chromium',
       });
       setActiveRunId(run.id);
+      setWatchedRunId(run.id);
       joinRun(run.id);
       toast.success(`Running group: ${useCaseTag}`);
     } catch (err) {
@@ -375,10 +478,11 @@ export default function Execution() {
       const run = await createIndividualRun.mutateAsync({
         testCaseId: tc.id,
         environment,
-        browser,
-        headless,
+        browser: 'chromium',
+        headless: false,
       });
       setActiveRunId(run.id);
+      setWatchedRunId(run.id);
       joinRun(run.id);
       toast.success(`Running: ${tc.tcId}`);
     } catch (err) {
@@ -416,40 +520,6 @@ export default function Execution() {
 
   function handleViewTc(_tc: TestCase) {
     navigate(`/projects/${slug}/tc-library`);
-  }
-
-  // ── Suite badge filter: select TCs matching suite tags ────────────────────
-  const suiteTcCount = useMemo(() => {
-    return SUITES.reduce<Record<string, number>>((acc, s) => {
-      acc[s.id] = allTCs.filter((tc) => tc.tags.includes(`suite:${s.id}`)).length;
-      return acc;
-    }, {});
-  }, [allTCs]);
-
-  function toggleSuite(suiteId: string) {
-    setSelectedSuites((prev) => {
-      const n = new Set(prev);
-      if (n.has(suiteId)) {
-        n.delete(suiteId);
-        // deselect suite TCs
-        const suiteTcs = allTCs.filter((tc) => tc.tags.includes(`suite:${suiteId}`)).map((tc) => tc.id);
-        setSelectedTcIds((prevTcs) => {
-          const m = new Set(prevTcs);
-          suiteTcs.forEach((id) => m.delete(id));
-          return m;
-        });
-      } else {
-        n.add(suiteId);
-        // select suite TCs
-        const suiteTcs = allTCs.filter((tc) => tc.tags.includes(`suite:${suiteId}`)).map((tc) => tc.id);
-        setSelectedTcIds((prevTcs) => {
-          const m = new Set(prevTcs);
-          suiteTcs.forEach((id) => m.add(id));
-          return m;
-        });
-      }
-      return n;
-    });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -493,10 +563,10 @@ export default function Execution() {
           }}>
             <div style={{ height: 3, background: 'linear-gradient(90deg, #2563AB, #0A2A57)' }} />
 
-            {/* Row 1: Env select + Run button */}
+            {/* Config row: Env · URL · Workers · Run */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6,
-              padding: '6px 10px', borderBottom: '1px solid var(--border)',
+              padding: '6px 10px',
               overflow: 'hidden',
             }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>
@@ -540,6 +610,9 @@ export default function Execution() {
                   {envBaseUrl}
                 </span>
               )}
+              <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>W</span>
+              <Stepper value={parallelWorkers} onChange={updateWorkers} max={16} />
               <button
                 onClick={handleRunNow}
                 disabled={isRunning || createRun.isPending || selectedTcIds.size === 0}
@@ -560,124 +633,6 @@ export default function Execution() {
                 {isRunning ? '⏳ Running…' : createRun.isPending ? '⏳ Starting…' : `▶ Run ${selectedTcIds.size}`}
               </button>
             </div>
-
-            {/* Row 2: Suite chips */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '5px 10px', borderBottom: '1px solid var(--border)',
-              overflowX: 'auto', overflowY: 'hidden',
-            }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>
-                Suites
-              </span>
-              {SUITES.map((suite) => {
-                const sel = selectedSuites.has(suite.id);
-                const count = suiteTcCount[suite.id] ?? 0;
-                return (
-                  <button
-                    key={suite.id}
-                    onClick={() => toggleSuite(suite.id)}
-                    title={suite.label + (count > 0 ? ` · ${count} TCs` : ` · ${suite.desc}`)}
-                    style={{
-                      padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
-                      cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
-                      background: sel ? 'var(--cyan-dim)' : 'var(--surface3)',
-                      border: `1px solid ${sel ? 'rgba(37,99,171,0.35)' : 'var(--border)'}`,
-                      color: sel ? 'var(--cyan)' : 'var(--text-dim)',
-                      transition: 'all 0.15s', userSelect: 'none',
-                    }}
-                  >
-                    {suite.emoji} {suite.label.split(' ')[0]}{count > 0 ? ` ·${count}` : ''}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Row 3: Workers · Browser · Toggles · Schedule */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '5px 10px', overflowX: 'auto', overflowY: 'hidden',
-            }}>
-              {/* Workers */}
-              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>W</span>
-              <Stepper value={parallelWorkers} onChange={setParallelWorkers} />
-
-              <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
-
-              {/* Browser */}
-              <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                {(['chromium', 'firefox', 'webkit'] as const).map((b) => (
-                  <button
-                    key={b}
-                    onClick={() => setBrowser(b)}
-                    title={b}
-                    style={{
-                      padding: '2px 7px', borderRadius: 3, fontSize: 9, fontWeight: 700,
-                      cursor: 'pointer',
-                      background: browser === b ? 'var(--cyan-dim)' : 'var(--surface3)',
-                      border: `1px solid ${browser === b ? 'rgba(37,99,171,0.35)' : 'var(--border)'}`,
-                      color: browser === b ? 'var(--cyan)' : 'var(--text-dim)',
-                      transition: 'all 0.15s', textTransform: 'capitalize',
-                    }}
-                  >
-                    {b === 'chromium' ? 'CR' : b === 'firefox' ? 'FF' : 'WK'}
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
-
-              {/* Toggles */}
-              <Toggle on={!headless} onChange={(v) => setHeadless(!v)} label="Headed" />
-              <Toggle on={autoHeal} onChange={setAutoHeal} label="Heal" />
-              <Toggle on={useAIAgents} onChange={setUseAIAgents} label="AI" />
-
-              <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
-
-              {/* Schedule */}
-              <Toggle on={scheduleEnabled} onChange={setScheduleEnabled} label="Sched" />
-            </div>
-
-            {/* Row 4 (conditional): Cron inputs when schedule is on */}
-            {scheduleEnabled && (
-              <div style={{
-                display: 'flex', alignItems: 'flex-end', gap: 5,
-                padding: '5px 10px 6px', borderTop: '1px solid var(--border)',
-              }}>
-                {[
-                  { label: 'min', idx: 0, placeholder: '0' },
-                  { label: 'hr',  idx: 1, placeholder: '2' },
-                  { label: 'dom', idx: 2, placeholder: '*' },
-                  { label: 'mon', idx: 3, placeholder: '*' },
-                  { label: 'dow', idx: 4, placeholder: '*' },
-                ].map(({ label, idx, placeholder }) => (
-                  <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <input
-                      value={cronParts[idx]}
-                      onChange={(e) => {
-                        const next = [...cronParts]; next[idx] = e.target.value; setCronParts(next);
-                      }}
-                      placeholder={placeholder}
-                      style={{
-                        width: 30, padding: '2px 4px', borderRadius: 3,
-                        background: 'var(--surface2)', border: '1px solid var(--border)',
-                        color: 'var(--text)', fontSize: 10, fontFamily: 'var(--font-mono)',
-                        outline: 'none', textAlign: 'center', boxSizing: 'border-box',
-                      }}
-                    />
-                    <span style={{ fontSize: 8, color: 'var(--text-dim)', marginTop: 1 }}>{label}</span>
-                  </div>
-                ))}
-                <span style={{
-                  fontSize: 10, color: '#2A9D8F', fontFamily: 'var(--font-mono)',
-                  background: 'rgba(42,157,143,0.06)', padding: '2px 7px', borderRadius: 3,
-                  border: '1px solid rgba(42,157,143,0.15)', whiteSpace: 'nowrap',
-                  marginBottom: 11, marginLeft: 2,
-                }}>
-                  {cronText}
-                </span>
-              </div>
-            )}
 
             {/* Progress bar while running */}
             {isRunning && (
@@ -734,8 +689,16 @@ export default function Execution() {
           </div>
         </div>
 
-        {/* ── RIGHT COLUMN — Live Log ──────────────────────────────────────── */}
+        {/* ── RIGHT COLUMN — Job Queue + Live Log ─────────────────────────── */}
         <div id="qa-log-panel" style={{ width: logPanelWidth, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Job queue panel — shown whenever there are active runs */}
+          {activeRuns.length > 0 && (
+            <JobQueuePanel
+              runs={activeRuns}
+              watchedRunId={watchedRunId}
+              onSelect={switchToRun}
+            />
+          )}
           <LiveLog
             logs={logs}
             stats={stats}

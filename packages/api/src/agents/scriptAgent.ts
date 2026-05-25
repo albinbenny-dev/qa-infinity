@@ -4,6 +4,17 @@ import { prisma } from '../lib/prisma.js';
 import { readScript } from '../services/scriptFileService.js';
 import type { LoginInstructions, NavNode, PageLocators } from '../types/scanner.js';
 
+export interface HealContext {
+  /** SELECTOR | FLOW | API_SCHEMA */
+  type: string;
+  /** Human-readable explanation of what was broken and how it was fixed */
+  summary: string;
+  tcTitle?: string;
+  useCaseTag?: string;
+  confidence: number;
+  timestamp: string;
+}
+
 export interface ScriptAgentInput {
   testCase: {
     id: string;
@@ -23,6 +34,18 @@ export interface ScriptAgentInput {
   };
   existingPOMs: string[]; // filenames of already-generated POM classes
   contextNote?: string;   // ephemeral user-typed context for this run
+  /** Past approved/auto-applied heals for this project — teach the agent what NOT to repeat */
+  recentHeals?: HealContext[];
+  /**
+   * A working, verified Playwright script for a TC that covers the setup steps
+   * (login + navigation) that this TC depends on. The agent should learn the
+   * login/navigation pattern from it and NOT re-generate those steps from scratch.
+   */
+  prerequisiteScript?: {
+    tcId: string;
+    title: string;
+    scriptContent: string;
+  } | null;
 }
 
 export interface ScriptAgentResult {
@@ -61,6 +84,13 @@ BAD:  page.goto('/projects/test/dashboard')  ← 'test' is a hardcoded slug
 GOOD: skip navigation to specific entities, or derive slug/id from a previous step or env var.
 If the test case requires navigating into a specific project/entity, use process.env.TEST_PROJECT_SLUG
 or note in a comment that the value must be replaced — do not invent a placeholder slug.
+
+### Heal History — learn from past failures
+If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
+- SELECTOR heals: the listed selector was unstable. Prefer getByRole/getByLabel/getByTestId over it.
+- FLOW heals: timing or navigation was wrong. Add explicit waits, waitForResponse, or waitForLoadState.
+- API_SCHEMA heals: response shape changed. Validate only stable fields; avoid brittle assertions.
+Absorb these patterns so you do not regenerate scripts that will need the same fix.
 
 ### POM method contract — CRITICAL
 Every method called on a POM instance in the spec (e.g. loginPage.login(), dashboardPage.waitForLoad())
@@ -109,6 +139,13 @@ BAD:  page.goto('/projects/test/dashboard')  ← 'test' is a hardcoded slug
 GOOD: skip navigation to specific entities, or derive slug/id from a previous step or env var.
 If the test case requires navigating into a specific project/entity, use process.env.TEST_PROJECT_SLUG
 or note in a comment that the value must be replaced — do not invent a placeholder slug.
+
+### Heal History — learn from past failures
+If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
+- SELECTOR heals: the listed selector was unstable. Prefer getByRole/getByLabel/getByTestId over it.
+- FLOW heals: timing or navigation was wrong. Add explicit waits, waitForResponse, or waitForLoadState.
+- API_SCHEMA heals: response shape changed. Validate only stable fields; avoid brittle assertions.
+Absorb these patterns so you do not regenerate scripts that will need the same fix.
 
 Output format — use this exact separator:
 ===SPEC===
@@ -246,6 +283,7 @@ function buildLocatorSection(
 async function getGoldenExamples(
   projectId: string,
   useCaseTag?: string | null,
+  selfContained?: boolean,
 ): Promise<string> {
   const goldenScripts = await prisma.script.findMany({
     where: {
@@ -274,7 +312,9 @@ async function getGoldenExamples(
   const lines: string[] = [
     '## Working Examples From This Project',
     'The following scripts have been verified against this application.',
-    'Match their selector style, base URL usage, navigation patterns, and import paths exactly.',
+    selfContained
+      ? 'Match their selector style, base URL usage, and navigation patterns. DO NOT copy any import statements — all page interactions must be written inline in a single file.'
+      : 'Match their selector style, base URL usage, navigation patterns, and import paths exactly.',
     '',
   ];
 
@@ -309,14 +349,15 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   const llm = createLLM({ temperature: 0.1, agentName: 'script-agent', projectId: input.project.id });
 
   const baseUrl = input.project.baseUrl ?? 'http://localhost:3000';
+  const selfContained = input.existingPOMs.length === 0;
   const [platformSection, goldenSection] = await Promise.all([
     getProjectPlatformSection(input.project.id, input.testCase.useCaseTag),
-    getGoldenExamples(input.project.id, input.testCase.useCaseTag),
+    getGoldenExamples(input.project.id, input.testCase.useCaseTag, selfContained),
   ]);
   const fullPlatformContext = goldenSection
     ? `${platformSection}\n\n${goldenSection}`
     : platformSection;
-  const promptTemplate = input.existingPOMs.length === 0
+  const promptTemplate = selfContained
     ? SYSTEM_PROMPT_SELF_CONTAINED
     : SYSTEM_PROMPT_BASE;
   const systemPrompt = promptTemplate
@@ -336,6 +377,45 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   }
   if (input.contextNote?.trim()) {
     contextParts.push(`Additional context provided for this run:\n${input.contextNote.trim()}`);
+  }
+
+  // Build past heals section — teach the agent which patterns to avoid
+  const healLines: string[] = [];
+  if (input.recentHeals && input.recentHeals.length > 0) {
+    healLines.push('', '### PAST HEALS — avoid regenerating these failure patterns');
+    for (const h of input.recentHeals) {
+      const date = h.timestamp.split('T')[0];
+      const tc = h.tcTitle ? ` (${h.tcTitle})` : '';
+      const uc = h.useCaseTag ? ` [${h.useCaseTag}]` : '';
+      healLines.push(`[${h.type}]${tc}${uc} ${date} — ${h.summary}`);
+    }
+  }
+
+  // Build prerequisite script context — teaches the agent the working login/nav pattern
+  const prereqLines: string[] = [];
+  if (input.prerequisiteScript) {
+    const cap = input.prerequisiteScript.scriptContent.slice(0, 4000);
+    const truncated = input.prerequisiteScript.scriptContent.length > 4000;
+    prereqLines.push(
+      '',
+      '### PREREQUISITE SCRIPT — CRITICAL: READ THIS BEFORE GENERATING',
+      `The following Playwright script for ${input.prerequisiteScript.tcId} — "${input.prerequisiteScript.title}"`,
+      'is a VERIFIED, WORKING script that covers the setup steps this test case depends on.',
+      '(login + navigation to the target page / starting state)',
+      '',
+      '```typescript',
+      cap,
+      ...(truncated ? ['// … (truncated)'] : []),
+      '```',
+      '',
+      'INSTRUCTIONS FOR USING THE PREREQUISITE:',
+      '1. Study the login flow and navigation pattern from the script above.',
+      '2. Your generated test MUST start from the same end-state as the prerequisite script.',
+      '3. In a test.beforeAll or at the start of your test, reproduce the login + navigation',
+      '   steps shown above — copy the exact selectors and waits, do NOT invent new ones.',
+      '4. After the setup, write ONLY the new steps specific to this test case.',
+      '5. Do NOT add another login block — the setup from the prerequisite covers it.',
+    );
   }
 
   const userPrompt = [
@@ -359,6 +439,8 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
       '### User Context & Locator Hints — FOLLOW THESE EXACTLY',
       ...contextParts,
     ] : []),
+    ...prereqLines,
+    ...healLines,
   ].join('\n');
 
   const response = await llm.invoke([new SystemMessage(systemPrompt), new HumanMessage(userPrompt)]);

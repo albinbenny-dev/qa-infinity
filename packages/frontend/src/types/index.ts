@@ -75,12 +75,19 @@ export interface TestCase {
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   sourceRef?: string;
   generationHints?: string | null;
+  /** ID of the TC whose script covers the setup steps (login + navigation) for this TC */
+  prerequisiteTcId?: string | null;
+  /** Minimal info about the prerequisite TC for display */
+  prerequisiteTc?: { id: string; tcId: string; title: string } | null;
   lastRun?: RunResult;
+  /** Last ≤5 terminal run results, oldest → newest. Each carries the runId for navigation. */
+  recentRunStatuses?: Array<{ status: 'PASSED' | 'FAILED' | 'SKIPPED' | 'CANCELLED'; runId: string }>;
 }
 
 export interface Run {
   id: string;
   projectId: string;
+  runSeq: number;
   name: string;
   environment: string;
   status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'CANCELLED';
@@ -94,7 +101,7 @@ export interface RunResult {
   id: string;
   runId: string;
   testCaseId: string;
-  status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'CANCELLED';
+  status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'CANCELLED' | 'SKIPPED';
   duration?: number;
   errorMessage?: string;
   screenshotPath?: string;
@@ -110,6 +117,15 @@ export interface Schedule {
   environment: string;
   isActive: boolean;
   emailRecipients: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Suite {
+  id: string;
+  projectId: string;
+  name: string;
+  testCaseIds: string; // JSON string — parse with JSON.parse
   createdAt: string;
   updatedAt: string;
 }
@@ -276,6 +292,7 @@ export interface ReportRecord {
 export interface ReportRun {
   id: string;
   projectId: string;
+  runSeq: number;
   name: string;
   environment: string;
   status: string;
@@ -285,10 +302,12 @@ export interface ReportRun {
   createdAt: string;
   results: Array<{
     id: string;
-    status: string;
+    status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'CANCELLED' | 'SKIPPED';
     duration?: number | null;
     errorMessage?: string | null;
     screenshotPath?: string | null;
+    tracePath?: string | null;
+    videoPath?: string | null;
     testCase: { id: string; tcId: string; title: string; type: string; useCaseTag?: string | null };
   }>;
   _count: { results: number };

@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
+import { KNOWN_AGENTS, STANDARD_MODE_DISABLED } from '../lib/agentConfig.js';
 
 const router = Router();
 router.use(verifyToken as RequestHandler);
@@ -106,6 +107,73 @@ router.get('/usage/trend', async (req: Request, res: Response, next: NextFunctio
 
     const trend = Array.from(byDay.entries()).map(([date, tokens]) => ({ date, tokens }));
     res.json({ trend });
+  } catch (err) { next(err); }
+});
+
+// ── GET /admin/agents ─────────────────────────────────────────────────────
+// Returns every known agent with its enabled flag (defaults to true if not yet set).
+
+router.get('/agents', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rows = await prisma.agentConfig.findMany();
+    const configMap = new Map(rows.map((r) => [r.agentName, r.enabled]));
+
+    const agents = KNOWN_AGENTS.map((a) => ({
+      agentName: a.agentName,
+      label: a.label,
+      description: a.description,
+      enabled: configMap.get(a.agentName) ?? true,
+    }));
+
+    res.json({ agents });
+  } catch (err) { next(err); }
+});
+
+// ── PATCH /admin/agents/:agentName ────────────────────────────────────────
+// Enable or disable a specific agent. Body: { enabled: boolean }
+
+router.patch('/agents/:agentName', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { agentName } = req.params;
+    const { enabled } = req.body as { enabled: boolean };
+
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: '`enabled` must be a boolean' });
+      return;
+    }
+
+    const row = await prisma.agentConfig.upsert({
+      where: { agentName },
+      create: { agentName, enabled },
+      update: { enabled },
+    });
+
+    res.json({ agentName: row.agentName, enabled: row.enabled });
+  } catch (err) { next(err); }
+});
+
+// ── POST /admin/agents/standard-mode ─────────────────────────────────────
+// Standard Mode: disables scan/heal/report agents; Writer + Script Agents stay ON.
+// Full Mode: re-enables all agents.
+
+router.post('/agents/standard-mode', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { enable } = req.body as { enable: boolean }; // true = standard mode, false = full mode
+
+    if (typeof enable !== 'boolean') {
+      res.status(400).json({ error: '`enable` must be a boolean' });
+      return;
+    }
+
+    for (const agentName of STANDARD_MODE_DISABLED) {
+      await prisma.agentConfig.upsert({
+        where: { agentName },
+        create: { agentName, enabled: !enable },
+        update: { enabled: !enable },
+      });
+    }
+
+    res.json({ ok: true, standardMode: enable });
   } catch (err) { next(err); }
 });
 

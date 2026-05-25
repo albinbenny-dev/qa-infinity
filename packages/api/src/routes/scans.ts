@@ -6,6 +6,7 @@ import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { addScanJob } from '../lib/queue.js';
 import type { LoginInstructions } from '../types/scanner.js';
 import { testLoginFlow } from '../services/loginTester.js';
+import { quickLoginTest } from '../services/uiScannerService.js';
 
 const router = Router({ mergeParams: true });
 router.use(verifyToken as RequestHandler);
@@ -162,6 +163,67 @@ router.delete('/:scanId', wrap(async (req, res) => {
   res.json({ message: 'Scan deleted' });
 }));
 
+// ── POST /quick-login-test — detect login + verify credentials (pre-scan) ──
+
+const QuickLoginTestSchema = z.object({
+  envConfigId: z.string().min(1),
+});
+
+router.post('/quick-login-test', wrap(async (req, res) => {
+  const parsed = QuickLoginTestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+    return;
+  }
+
+  const { envConfigId } = parsed.data;
+  const projectId = req.project.id;
+
+  const envConfig = await prisma.envConfig.findFirst({
+    where: { id: envConfigId, projectId },
+  });
+
+  if (!envConfig) {
+    res.status(404).json({ error: 'EnvConfig not found or does not belong to this project' });
+    return;
+  }
+
+  if (!envConfig.baseUrl) {
+    res.status(422).json({ error: 'EnvConfig has no baseUrl configured' });
+    return;
+  }
+
+  const result = await quickLoginTest({
+    baseUrl: envConfig.baseUrl,
+    username: envConfig.username ?? '',
+    password: envConfig.password ?? '',
+  });
+
+  // On success, save the detected loginInstructions to ProjectContext so the
+  // next scan can skip detection and directly use the verified steps.
+  if (result.success && result.loginInstructions) {
+    await prisma.projectContext.upsert({
+      where: { projectId },
+      create: {
+        projectId,
+        loginInstructions: JSON.stringify(result.loginInstructions),
+        navigationMap: '[]',
+        pageLocators: '{}',
+        useCaseSummary: '[]',
+      },
+      update: {
+        loginInstructions: JSON.stringify(result.loginInstructions),
+      },
+    }).catch((err: Error) => {
+      console.error('[quick-login-test] Failed to save login instructions:', err.message);
+    });
+  }
+
+  // Omit loginInstructions from response (internal detail; frontend only needs success/screenshot)
+  const { loginInstructions: _li, ...clientResult } = result;
+  res.json(clientResult);
+}));
+
 // ── POST /context/test-login — verify login instructions work ─────────────
 
 router.post('/context/test-login', wrap(async (req, res) => {
@@ -170,6 +232,18 @@ router.post('/context/test-login', wrap(async (req, res) => {
   const ctx = await prisma.projectContext.findUnique({ where: { projectId } });
   if (!ctx?.loginInstructions) {
     res.status(422).json({ error: 'No login instructions found — run a UI scan first' });
+    return;
+  }
+
+  let login: LoginInstructions;
+  try {
+    login = JSON.parse(ctx.loginInstructions) as LoginInstructions;
+  } catch {
+    res.status(422).json({ error: 'Login instructions are malformed — re-run a UI scan to regenerate them' });
+    return;
+  }
+  if (!login?.steps?.length) {
+    res.status(422).json({ error: 'No login steps found — re-run a UI scan to regenerate login instructions' });
     return;
   }
 
@@ -187,8 +261,6 @@ router.post('/context/test-login', wrap(async (req, res) => {
     res.status(422).json({ error: 'No base URL configured. Add an environment in Project Settings first.' });
     return;
   }
-
-  const login = JSON.parse(ctx.loginInstructions) as LoginInstructions;
   const result = await testLoginFlow({
     baseUrl,
     username: envConfig?.username ?? '',

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../lib/api';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQueryClient } from '@tanstack/react-query';
@@ -29,6 +28,7 @@ import {
   useUpdateContext,
   useUpdateLoginInstructions,
   useDeleteScan,
+  useQuickLoginTest,
 } from '../hooks/useScans';
 import ScanProgress from '../components/scanner/ScanProgress';
 import LoginInstructions from '../components/scanner/LoginInstructions';
@@ -755,15 +755,16 @@ function DangerZoneTab() {
   const navigate = useNavigate();
   const deleteProject = useDeleteProject(activeProject?.id ?? '');
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [confirmName, setConfirmName] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+
+  function handleOpenChange(open: boolean) {
+    setDeleteOpen(open);
+    if (!open) setConfirmed(false);
+  }
 
   async function handleDelete() {
-    if (confirmName.toLowerCase() !== activeProject?.name?.toLowerCase()) {
-      toast.error('Project name does not match.');
-      return;
-    }
     try {
-      await deleteProject.mutateAsync(confirmName);
+      await deleteProject.mutateAsync(activeProject!.name);
       toast.success('Project deleted.');
       navigate('/projects', { replace: true });
     } catch {
@@ -842,7 +843,7 @@ function DangerZoneTab() {
       </div>
 
       {/* Confirm delete dialog */}
-      <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <Dialog.Root open={deleteOpen} onOpenChange={handleOpenChange}>
         <Dialog.Portal>
           <Dialog.Overlay
             style={{
@@ -862,7 +863,7 @@ function DangerZoneTab() {
                 border: '1px solid rgba(220,38,38,0.3)',
                 borderRadius: 'var(--radius-lg)',
                 padding: '28px',
-                width: '440px',
+                width: '400px',
                 maxWidth: '96vw',
                 zIndex: 9999,
                 fontFamily: 'var(--font-ui)',
@@ -873,53 +874,221 @@ function DangerZoneTab() {
               >
                 Delete "{activeProject?.name}"?
               </Dialog.Title>
-              <Dialog.Description
-                style={{ fontSize: '13px', color: 'var(--text-mid)', marginBottom: '20px', lineHeight: 1.55 }}
-              >
-                This will permanently delete all test cases, scripts, run history, heals, and reports. Type the project name to confirm.
-              </Dialog.Description>
 
-              <label style={LABEL_STYLE}>
-                Type <strong style={{ color: 'var(--rose)' }}>{activeProject?.name}</strong> to confirm
-              </label>
-              <input
-                className="input-field"
-                value={confirmName}
-                onChange={(e) => setConfirmName(e.target.value)}
-                placeholder={activeProject?.name}
-                style={{ fontFamily: 'var(--font-ui)', marginBottom: '20px' }}
-              />
-
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <Dialog.Close asChild>
-                  <button type="button" className="tb-btn tb-btn-ghost">
-                    Cancel
-                  </button>
-                </Dialog.Close>
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={confirmName.toLowerCase() !== activeProject?.name?.toLowerCase() || deleteProject.isPending}
-                  style={{
-                    padding: '8px 18px',
-                    background: 'var(--rose)',
-                    border: 'none',
-                    borderRadius: '6px',
-                    color: '#fff',
-                    fontSize: '13px',
-                    fontWeight: 700,
-                    cursor: confirmName.toLowerCase() !== activeProject?.name?.toLowerCase() ? 'not-allowed' : 'pointer',
-                    fontFamily: 'var(--font-ui)',
-                    opacity: confirmName.toLowerCase() !== activeProject?.name?.toLowerCase() ? 0.4 : 1,
-                  }}
-                >
-                  {deleteProject.isPending ? 'Deleting…' : 'Delete Forever'}
-                </button>
-              </div>
+              {!confirmed ? (
+                <>
+                  <Dialog.Description
+                    style={{ fontSize: '13px', color: 'var(--text-mid)', marginBottom: '24px', lineHeight: 1.6 }}
+                  >
+                    This will permanently delete all test cases, scripts, run history, heals, and reports.{' '}
+                    <strong style={{ color: 'var(--rose)' }}>This cannot be undone.</strong>
+                  </Dialog.Description>
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                    <Dialog.Close asChild>
+                      <button type="button" className="tb-btn tb-btn-ghost">No, keep it</button>
+                    </Dialog.Close>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmed(true)}
+                      style={{
+                        padding: '8px 18px', background: 'transparent',
+                        border: '1px solid rgba(220,38,38,0.5)', borderRadius: '6px',
+                        color: 'var(--rose)', fontSize: '13px', fontWeight: 700,
+                        cursor: 'pointer', fontFamily: 'var(--font-ui)',
+                      }}
+                    >
+                      Yes, delete it
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Dialog.Description
+                    style={{ fontSize: '13px', color: 'var(--text-mid)', marginBottom: '24px', lineHeight: 1.6 }}
+                  >
+                    Are you absolutely sure? There is no going back.
+                  </Dialog.Description>
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="tb-btn tb-btn-ghost"
+                      onClick={() => setConfirmed(false)}
+                    >
+                      Go back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      disabled={deleteProject.isPending}
+                      style={{
+                        padding: '8px 18px', background: 'var(--rose)',
+                        border: 'none', borderRadius: '6px',
+                        color: '#fff', fontSize: '13px', fontWeight: 700,
+                        cursor: deleteProject.isPending ? 'not-allowed' : 'pointer',
+                        fontFamily: 'var(--font-ui)',
+                        opacity: deleteProject.isPending ? 0.7 : 1,
+                      }}
+                    >
+                      {deleteProject.isPending ? 'Deleting…' : 'Delete Forever'}
+                    </button>
+                  </div>
+                </>
+              )}
             </Dialog.Content>
           </Dialog.Overlay>
         </Dialog.Portal>
       </Dialog.Root>
+    </div>
+  );
+}
+
+// ── Login Verifier card (shared between idle and complete scanner states) ──
+
+interface LoginVerifierCardProps {
+  selectedEnv: { name?: string; baseUrl?: string } | undefined;
+  testLoginLoading: boolean;
+  loginVerified: boolean;
+  testLoginResult: { success: boolean; finalUrl?: string; errorMessage?: string; screenshotBase64?: string } | null;
+  screenshotExpanded: boolean;
+  onVerify: () => void;
+  onExpandScreenshot: (v: boolean) => void;
+  disabled: boolean;
+}
+
+function LoginVerifierCard({
+  selectedEnv,
+  testLoginLoading,
+  loginVerified,
+  testLoginResult,
+  screenshotExpanded,
+  onVerify,
+  onExpandScreenshot,
+  disabled,
+}: LoginVerifierCardProps) {
+  return (
+    <div className="card" style={{ position: 'relative', overflow: 'visible' }}>
+      <div
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: '4px',
+          background: loginVerified
+            ? 'linear-gradient(90deg, var(--pass), #059669)'
+            : 'linear-gradient(90deg, #2563AB, #0A2A57)',
+          borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+        }}
+      />
+      <div className="card-header" style={{ paddingTop: '18px' }}>
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>🔐</span>
+          <span>Step 1 — Verify Login</span>
+          {loginVerified && (
+            <span style={{
+              fontSize: '10px', fontWeight: 600, color: 'var(--pass)',
+              background: 'var(--emerald-dim)', border: '1px solid rgba(42,157,143,0.3)',
+              padding: '2px 8px', borderRadius: '10px', fontFamily: 'var(--font-mono)',
+            }}>
+              ✓ Verified
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onVerify}
+          disabled={testLoginLoading || disabled}
+          style={{
+            padding: '6px 14px', fontSize: '12px', fontWeight: 700,
+            background: testLoginLoading
+              ? 'var(--surface3)'
+              : loginVerified
+              ? 'linear-gradient(135deg, #059669, #047857)'
+              : 'linear-gradient(135deg, #2563AB, #0A2A57)',
+            border: 'none', borderRadius: '6px', color: '#fff',
+            cursor: testLoginLoading || disabled ? 'not-allowed' : 'pointer',
+            opacity: testLoginLoading || disabled ? 0.6 : 1,
+          }}
+        >
+          {testLoginLoading ? 'Verifying…' : loginVerified ? '↺ Re-verify' : '▶ Verify Login'}
+        </button>
+      </div>
+      <div className="card-body">
+        {!testLoginResult && !testLoginLoading && (
+          <p style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontStyle: 'italic' }}>
+            {selectedEnv
+              ? <>Testing credentials for <strong style={{ color: 'var(--text-mid)' }}>{selectedEnv.name}</strong> ({selectedEnv.baseUrl}). Click "Verify Login" to confirm the login flow works before scanning.</>
+              : 'Select an environment in Scan Configuration, then click Verify Login.'}
+          </p>
+        )}
+        {testLoginLoading && (
+          <p style={{ fontSize: '12px', color: 'var(--amber)', fontFamily: 'var(--font-mono)' }}>
+            Running Playwright login detection… this may take 15–30 seconds.
+          </p>
+        )}
+        {testLoginResult && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{
+              padding: '10px 14px', borderRadius: 'var(--radius)',
+              background: testLoginResult.success ? 'var(--emerald-dim)' : 'var(--rose-dim)',
+              border: `1px solid ${testLoginResult.success ? 'rgba(42,157,143,0.25)' : 'rgba(220,38,38,0.25)'}`,
+              display: 'flex', alignItems: 'flex-start', gap: '10px',
+            }}>
+              <span style={{ fontSize: '20px' }}>{testLoginResult.success ? '✓' : '✕'}</span>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: testLoginResult.success ? 'var(--emerald)' : 'var(--rose)' }}>
+                  {testLoginResult.success ? 'Login successful — instructions saved' : 'Login failed'}
+                </div>
+                {testLoginResult.success && testLoginResult.finalUrl && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-mid)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
+                    Landed at: {testLoginResult.finalUrl}
+                  </div>
+                )}
+                {!testLoginResult.success && testLoginResult.errorMessage && (
+                  <div style={{ fontSize: '11px', color: 'var(--rose)', fontFamily: 'var(--font-mono)', marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {testLoginResult.errorMessage.slice(0, 300)}
+                  </div>
+                )}
+              </div>
+            </div>
+            {testLoginResult.screenshotBase64 && (
+              <>
+                <div style={{ position: 'relative', cursor: 'zoom-in' }} onClick={() => onExpandScreenshot(true)}>
+                  <img
+                    src={`data:image/jpeg;base64,${testLoginResult.screenshotBase64}`}
+                    alt="Post-login screenshot"
+                    style={{
+                      width: '100%', maxHeight: '260px', objectFit: 'contain', objectPosition: 'top',
+                      borderRadius: 'var(--radius)', border: '1px solid var(--border)', display: 'block',
+                    }}
+                  />
+                  <div style={{
+                    position: 'absolute', bottom: 6, right: 8,
+                    fontSize: '10px', fontFamily: 'var(--font-mono)', color: '#fff',
+                    background: 'rgba(0,0,0,0.55)', padding: '2px 6px', borderRadius: 4,
+                  }}>
+                    click to expand
+                  </div>
+                </div>
+                {screenshotExpanded && (
+                  <div
+                    onClick={() => onExpandScreenshot(false)}
+                    style={{
+                      position: 'fixed', inset: 0, zIndex: 9999,
+                      background: 'rgba(0,0,0,0.85)',
+                      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                      overflowY: 'auto', padding: '24px', cursor: 'zoom-out',
+                    }}
+                  >
+                    <img
+                      src={`data:image/jpeg;base64,${testLoginResult.screenshotBase64}`}
+                      alt="Post-login screenshot (full)"
+                      style={{ maxWidth: '100%', borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -958,33 +1127,7 @@ function UIScannerTab() {
   const updateCtx = useUpdateContext(projectId);
   const updateLogin = useUpdateLoginInstructions(projectId);
   const deleteScan = useDeleteScan(projectId);
-
-  const [testLoginResult, setTestLoginResult] = useState<{
-    success: boolean;
-    finalUrl?: string;
-    errorMessage?: string;
-    screenshotBase64?: string;
-  } | null>(null);
-  const [testLoginLoading, setTestLoginLoading] = useState(false);
-
-  async function handleTestLogin() {
-    if (!projectId) return;
-    setTestLoginLoading(true);
-    setTestLoginResult(null);
-    try {
-      const { data } = await api.post<{ success: boolean; finalUrl?: string; errorMessage?: string; screenshotBase64?: string }>(
-        `/projects/${projectId}/scans/context/test-login`,
-      );
-      setTestLoginResult(data);
-      if (data.success) toast.success('Login verified successfully');
-      else toast.error('Login failed — check the result below');
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Test login failed';
-      toast.error(msg);
-    } finally {
-      setTestLoginLoading(false);
-    }
-  }
+  const quickLoginTestMutation = useQuickLoginTest(projectId);
 
   const [selectedEnvId, setSelectedEnvId] = useState<string>('');
   const [scanDepth, setScanDepth] = useState<'full' | 'top-level' | 'login-only'>('full');
@@ -993,6 +1136,43 @@ function UIScannerTab() {
   const [editingInstructions, setEditingInstructions] = useState(false);
   const [instructionsDraft, setInstructionsDraft] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [testLoginResult, setTestLoginResult] = useState<{
+    success: boolean;
+    finalUrl?: string;
+    errorMessage?: string;
+    screenshotBase64?: string;
+  } | null>(null);
+  const [testLoginLoading, setTestLoginLoading] = useState(false);
+  const [loginVerified, setLoginVerified] = useState(false);
+  const [screenshotExpanded, setScreenshotExpanded] = useState(false);
+
+  async function handleTestLogin() {
+    if (!projectId || !selectedEnvId) return;
+    setTestLoginLoading(true);
+    setTestLoginResult(null);
+    try {
+      const data = await quickLoginTestMutation.mutateAsync(selectedEnvId);
+      setTestLoginResult(data);
+      if (data.success) {
+        setLoginVerified(true);
+        toast.success('Login verified — instructions saved. Ready to scan.');
+      } else {
+        setLoginVerified(false);
+        toast.error('Login failed — check the result below');
+      }
+    } catch (err: unknown) {
+      const axiosErr = err as { code?: string; response?: { data?: { error?: string } }; message?: string };
+      const msg = axiosErr.response?.data?.error
+        ?? (axiosErr.code === 'ECONNABORTED' ? 'Request timed out — Playwright took too long. Try again.' : null)
+        ?? axiosErr.message
+        ?? 'Login verification failed';
+      toast.error(msg);
+      setTestLoginResult({ success: false, errorMessage: msg });
+      setLoginVerified(false);
+    } finally {
+      setTestLoginLoading(false);
+    }
+  }
 
   // Pre-fill the textarea from stored context on first load
   useEffect(() => {
@@ -1086,6 +1266,18 @@ function UIScannerTab() {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {/* Login Verifier — Step 1 at top */}
+        <LoginVerifierCard
+          selectedEnv={selectedEnv}
+          testLoginLoading={testLoginLoading}
+          loginVerified={loginVerified}
+          testLoginResult={testLoginResult}
+          screenshotExpanded={screenshotExpanded}
+          onVerify={handleTestLogin}
+          onExpandScreenshot={setScreenshotExpanded}
+          disabled={!selectedEnvId}
+        />
+
         {/* Success banner */}
         <div
           style={{
@@ -1129,79 +1321,6 @@ function UIScannerTab() {
             envConfigName={selectedEnv?.name}
           />
           <NavigationMap navMap={context.navigationMap} pagesScanned={latestScan?.pagesScanned ?? 0} />
-        </div>
-
-        {/* Test Login verifier */}
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">🔐 Login Verifier</div>
-            <button
-              type="button"
-              onClick={handleTestLogin}
-              disabled={testLoginLoading || !context.loginInstructions}
-              style={{
-                padding: '6px 14px', fontSize: '12px', fontWeight: 700,
-                background: testLoginLoading ? 'var(--surface3)' : 'linear-gradient(135deg, #2563AB, #0A2A57)',
-                border: 'none', borderRadius: '6px', color: '#fff',
-                cursor: testLoginLoading || !context.loginInstructions ? 'not-allowed' : 'pointer',
-                opacity: testLoginLoading || !context.loginInstructions ? 0.6 : 1,
-              }}
-            >
-              {testLoginLoading ? 'Testing…' : '▶ Test Login'}
-            </button>
-          </div>
-          <div className="card-body">
-            {!testLoginResult && !testLoginLoading && (
-              <p style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontStyle: 'italic' }}>
-                Click "Test Login" to verify the login instructions work against{' '}
-                {selectedEnv?.baseUrl ?? 'the configured base URL'}.
-              </p>
-            )}
-            {testLoginLoading && (
-              <p style={{ fontSize: '12px', color: 'var(--amber)', fontFamily: 'var(--font-mono)' }}>
-                Running Playwright login… this may take 15–30 seconds.
-              </p>
-            )}
-            {testLoginResult && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {/* Result banner */}
-                <div style={{
-                  padding: '10px 14px', borderRadius: 'var(--radius)',
-                  background: testLoginResult.success ? 'var(--emerald-dim)' : 'var(--rose-dim)',
-                  border: `1px solid ${testLoginResult.success ? 'rgba(42,157,143,0.25)' : 'rgba(220,38,38,0.25)'}`,
-                  display: 'flex', alignItems: 'flex-start', gap: '10px',
-                }}>
-                  <span style={{ fontSize: '20px' }}>{testLoginResult.success ? '✓' : '✕'}</span>
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: testLoginResult.success ? 'var(--emerald)' : 'var(--rose)' }}>
-                      {testLoginResult.success ? 'Login successful' : 'Login failed'}
-                    </div>
-                    {testLoginResult.success && testLoginResult.finalUrl && (
-                      <div style={{ fontSize: '11px', color: 'var(--text-mid)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
-                        Landed at: {testLoginResult.finalUrl}
-                      </div>
-                    )}
-                    {!testLoginResult.success && testLoginResult.errorMessage && (
-                      <div style={{ fontSize: '11px', color: 'var(--rose)', fontFamily: 'var(--font-mono)', marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                        {testLoginResult.errorMessage.slice(0, 300)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {/* Screenshot */}
-                {testLoginResult.screenshotBase64 && (
-                  <img
-                    src={`data:image/jpeg;base64,${testLoginResult.screenshotBase64}`}
-                    alt="Post-login screenshot"
-                    style={{
-                      width: '100%', maxHeight: '240px', objectFit: 'cover',
-                      borderRadius: 'var(--radius)', border: '1px solid var(--border)',
-                    }}
-                  />
-                )}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Custom instructions card */}
@@ -1454,6 +1573,18 @@ function UIScannerTab() {
         </p>
       </div>
 
+      {/* Step 1: Login Verifier */}
+      <LoginVerifierCard
+        selectedEnv={selectedEnv}
+        testLoginLoading={testLoginLoading}
+        loginVerified={loginVerified}
+        testLoginResult={testLoginResult}
+        screenshotExpanded={screenshotExpanded}
+        onVerify={handleTestLogin}
+        onExpandScreenshot={setScreenshotExpanded}
+        disabled={!selectedEnvId}
+      />
+
       {/* Two-column layout */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', alignItems: 'start' }}>
         {/* Left: feature bullets card */}
@@ -1495,6 +1626,11 @@ function UIScannerTab() {
               </div>
             ))}
 
+            {!loginVerified && (
+              <p style={{ fontSize: '11px', color: 'var(--amber)', fontFamily: 'var(--font-mono)', lineHeight: 1.5, marginTop: '4px' }}>
+                Tip: Verify login (Step 1 above) before scanning so the scanner knows your login flow.
+              </p>
+            )}
             <button
               type="button"
               onClick={handleStartScan}
@@ -1503,14 +1639,15 @@ function UIScannerTab() {
                 marginTop: '4px',
                 padding: '10px 20px', fontSize: '13px', fontWeight: 700,
                 background: selectedEnv ? 'linear-gradient(135deg, #F47B20, #D9601A)' : 'var(--surface3)',
-                border: 'none', borderRadius: '8px',
+                border: loginVerified ? '2px solid var(--pass)' : 'none',
+                borderRadius: '8px',
                 color: selectedEnv ? '#fff' : 'var(--text-dim)',
                 cursor: selectedEnv && !startScan.isPending ? 'pointer' : 'not-allowed',
                 width: '100%',
                 opacity: startScan.isPending ? 0.6 : 1,
               }}
             >
-              {startScan.isPending ? 'Starting Scan…' : 'Start UI Scan'}
+              {startScan.isPending ? 'Starting Scan…' : loginVerified ? '✓ Start UI Scan' : 'Start UI Scan'}
             </button>
           </div>
         </div>

@@ -1,12 +1,17 @@
-import { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import type { ReportRun } from '../../types';
 import { useReportRun } from '../../hooks/useReports';
+import { useTriggerHeal } from '../../hooks/useHeals';
+import { api } from '../../lib/api';
 
 interface RunHistoryTableProps {
   projectId: string | undefined;
   runs: ReportRun[];
   onExport?: (runId: string) => void;
   onGenerate?: (runId: string) => void;
+  /** When set, this run card is expanded on mount and scrolled into view (deep-link from TC Library). */
+  initialExpandedRunId?: string;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -15,6 +20,7 @@ const STATUS_COLOR: Record<string, string> = {
   RUNNING: 'var(--cyan)',
   PENDING: 'var(--amber)',
   CANCELLED: 'var(--text-dim)',
+  SKIPPED: 'var(--amber)',
 };
 
 const TRIGGER_LABEL: Record<string, string> = {
@@ -40,6 +46,75 @@ const SEVERITY_COLOR: Record<string, string> = {
   LOW: 'var(--pass)',
 };
 
+// ── Error cell with hover-reveal copy button ───────────────────────────────
+
+function ErrorCell({ errorMessage }: { errorMessage: string | null }) {
+  const [hovered, setHovered] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!errorMessage) return;
+    try {
+      await navigator.clipboard.writeText(errorMessage);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Could not copy to clipboard');
+    }
+  }
+
+  if (!errorMessage) {
+    return (
+      <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+        —
+      </td>
+    );
+  }
+
+  return (
+    <td
+      style={{ padding: '7px 12px', maxWidth: 0 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <span
+          title={errorMessage}
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fail)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+          }}
+        >
+          {errorMessage.slice(0, 120)}
+        </span>
+        <button
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy full error'}
+          style={{
+            flexShrink: 0,
+            opacity: hovered ? 1 : 0,
+            transition: 'opacity 0.15s',
+            padding: '2px 6px',
+            borderRadius: 4,
+            background: copied ? 'rgba(42,157,143,0.15)' : 'rgba(220,38,38,0.12)',
+            color: copied ? 'var(--pass)' : 'var(--fail)',
+            border: `1px solid ${copied ? 'rgba(42,157,143,0.35)' : 'rgba(220,38,38,0.3)'}`,
+            cursor: 'pointer',
+            fontSize: 9,
+            fontWeight: 700,
+            fontFamily: 'var(--font-sans, sans-serif)',
+            lineHeight: 1,
+            pointerEvents: hovered ? 'auto' : 'none',
+          }}
+        >
+          {copied ? '✓ Copied' : '⎘ Copy'}
+        </button>
+      </div>
+    </td>
+  );
+}
+
 // ── Expanded run detail (lazy-fetched) ─────────────────────────────────────
 
 function ExpandedRunDetail({
@@ -47,6 +122,8 @@ function ExpandedRunDetail({
   runId,
   onExport,
   onGenerate,
+  onHeal,
+  isHealing,
   hasReport,
   runStatus,
 }: {
@@ -54,11 +131,43 @@ function ExpandedRunDetail({
   runId: string;
   onExport?: (id: string) => void;
   onGenerate?: (id: string) => void;
+  onHeal?: () => void;
+  isHealing?: boolean;
   hasReport: boolean;
   runStatus: string;
 }) {
   const { data: run, isLoading } = useReportRun(projectId, runId);
   const [query, setQuery] = useState('');
+
+  async function downloadAsset(resultId: string, type: 'screenshot' | 'trace' | 'video', filename: string) {
+    try {
+      const response = await api.get(
+        `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/${type}`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(response.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      const axErr = err as { response?: { data?: unknown; status?: number }; message?: string };
+      let msg = axErr?.message ?? 'Download failed';
+      // When responseType:'blob', the error response body is a Blob — read it to extract the server message
+      if (axErr?.response?.data instanceof Blob) {
+        try {
+          const text = await (axErr.response.data as Blob).text();
+          const json = JSON.parse(text) as { error?: string };
+          if (json.error) msg = json.error;
+        } catch { /* keep default msg */ }
+      }
+      toast.error(`${type} download failed: ${msg}`);
+    }
+  }
 
   if (isLoading || !run) {
     return (
@@ -140,10 +249,19 @@ function ExpandedRunDetail({
 
       {/* Results table */}
       <div style={{ overflow: 'auto', maxHeight: 300 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: 100 }} />  {/* TC ID */}
+            <col style={{ width: '30%' }} />  {/* Title */}
+            <col style={{ width: '15%' }} />  {/* Suite */}
+            <col style={{ width: 90 }} />  {/* Duration */}
+            <col style={{ width: 100 }} />  {/* Status */}
+            <col style={{ width: 160 }} />  {/* Assets */}
+            <col />                          {/* Error — takes remaining space */}
+          </colgroup>
           <thead>
             <tr>
-              {['TC ID', 'Title', 'Suite', 'Duration', 'Status', 'Error'].map((h) => (
+              {['TC ID', 'Title', 'Suite', 'Duration', 'Status', 'Assets', 'Error'].map((h) => (
                 <th key={h} style={{
                   padding: '6px 12px',
                   textAlign: 'left',
@@ -157,6 +275,7 @@ function ExpandedRunDetail({
                   top: 0,
                   background: 'var(--surface)',
                   whiteSpace: 'nowrap',
+                  overflow: 'hidden',
                 }}>
                   {h}
                 </th>
@@ -166,12 +285,12 @@ function ExpandedRunDetail({
           <tbody>
             {visibleResults.length === 0 ? (
               <tr>
-                <td colSpan={6} style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                <td colSpan={7} style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
                   No results found.
                 </td>
               </tr>
             ) : visibleResults.map((r) => (
-              <tr key={r.id} style={{ borderBottom: '1px solid var(--border)', background: r.status === 'FAILED' ? 'rgba(220,38,38,0.04)' : 'transparent' }}>
+              <tr key={r.id} style={{ borderBottom: '1px solid var(--border)', background: r.status === 'FAILED' ? 'rgba(220,38,38,0.04)' : r.status === 'SKIPPED' ? 'rgba(251,191,36,0.04)' : 'transparent' }}>
                 <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                   {r.testCase.tcId}
                 </td>
@@ -188,14 +307,78 @@ function ExpandedRunDetail({
                   <span style={{ fontSize: 10, fontWeight: 700, color: STATUS_COLOR[r.status] ?? 'var(--text-dim)' }}>
                     {r.status}
                   </span>
-                  {r.screenshotPath && (
-                    <span title="Screenshot captured" style={{ marginLeft: 5, fontSize: 12, opacity: 0.7 }}>📷</span>
-                  )}
                 </td>
-                <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fail)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    title={r.errorMessage ?? undefined}>
-                  {r.errorMessage ? r.errorMessage.slice(0, 120) : '—'}
+                <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    {r.screenshotPath && (
+                      <button
+                        onClick={() => downloadAsset(r.id, 'screenshot', `screenshot-${r.testCase.tcId}.png`)}
+                        title="Download screenshot"
+                        style={{
+                          padding: '2px 7px',
+                          borderRadius: 5,
+                          background: 'rgba(37,99,171,0.12)',
+                          color: 'var(--cyan)',
+                          border: '1px solid rgba(37,99,171,0.25)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
+                        📷 PNG
+                      </button>
+                    )}
+                    {r.videoPath && (
+                      <button
+                        onClick={() => downloadAsset(r.id, 'video', `video-${r.testCase.tcId}.webm`)}
+                        title="Download video recording"
+                        style={{
+                          padding: '2px 7px',
+                          borderRadius: 5,
+                          background: 'rgba(42,157,143,0.12)',
+                          color: 'var(--pass)',
+                          border: '1px solid rgba(42,157,143,0.25)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
+                        🎬 Video
+                      </button>
+                    )}
+                    {r.tracePath && (
+                      <button
+                        onClick={() => downloadAsset(r.id, 'trace', `trace-${r.testCase.tcId}.zip`)}
+                        title="Download Playwright trace"
+                        style={{
+                          padding: '2px 7px',
+                          borderRadius: 5,
+                          background: 'rgba(164,123,250,0.12)',
+                          color: 'var(--violet)',
+                          border: '1px solid rgba(164,123,250,0.25)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
+                        🔍 Trace
+                      </button>
+                    )}
+                    {!r.screenshotPath && !r.videoPath && !r.tracePath && (
+                      <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>
+                    )}
+                  </div>
                 </td>
+                <ErrorCell errorMessage={r.errorMessage ?? null} />
               </tr>
             ))}
           </tbody>
@@ -241,8 +424,29 @@ function ExpandedRunDetail({
             🤖 Generate AI Report
           </button>
         )}
+        {onHeal && runStatus === 'FAILED' && (
+          <button
+            onClick={onHeal}
+            disabled={isHealing}
+            style={{
+              padding: '5px 14px',
+              borderRadius: 6,
+              background: isHealing ? 'rgba(244,123,32,0.06)' : 'rgba(244,123,32,0.12)',
+              color: isHealing ? 'rgba(244,123,32,0.5)' : '#F47B20',
+              border: '1px solid rgba(244,123,32,0.25)',
+              cursor: isHealing ? 'not-allowed' : 'pointer',
+              fontSize: 11,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            {isHealing ? '⏳ Sending…' : '🔧 Heal Failed'}
+          </button>
+        )}
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-          Run ID: {runId.slice(0, 12)}…
+          {runId.slice(0, 20)}…
         </span>
       </div>
     </div>
@@ -251,8 +455,36 @@ function ExpandedRunDetail({
 
 // ── Main table ─────────────────────────────────────────────────────────────
 
-export default function RunHistoryTable({ projectId, runs, onExport, onGenerate }: RunHistoryTableProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+export default function RunHistoryTable({ projectId, runs, onExport, onGenerate, initialExpandedRunId }: RunHistoryTableProps) {
+  // Seed the expanded set with the deep-linked run so it opens on mount.
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => initialExpandedRunId ? new Set([initialExpandedRunId]) : new Set(),
+  );
+
+  // Scroll the deep-linked run card into view once the list has rendered.
+  useEffect(() => {
+    if (!initialExpandedRunId) return;
+    const timer = setTimeout(() => {
+      const el = document.getElementById(`run-card-${initialExpandedRunId}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120); // wait one paint so the expanded card has rendered
+    return () => clearTimeout(timer);
+  }, [initialExpandedRunId]);
+
+  const triggerHeal = useTriggerHeal(projectId ?? '', () => {
+    toast('No failed tests found in this run', { icon: '⚠️' });
+  });
+
+  async function handleHeal(runId: string) {
+    try {
+      const result = await triggerHeal.mutateAsync(runId);
+      if (result.count > 0) {
+        toast.success(`${result.count} failed test${result.count !== 1 ? 's' : ''} sent to Healing Agent`);
+      }
+    } catch {
+      toast.error('Failed to trigger heal — check logs');
+    }
+  }
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -277,8 +509,10 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate 
         const isOpen = expanded.has(run.id);
         const passed = run.results.filter((r) => r.status === 'PASSED').length;
         const failed = run.results.filter((r) => r.status === 'FAILED').length;
+        const skipped = run.results.filter((r) => r.status === 'SKIPPED').length;
         const total = run._count.results;
-        const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+        const ran = total - skipped;
+        const passRate = ran > 0 ? Math.round((passed / ran) * 100) : (skipped > 0 ? 100 : 0);
 
         // Parse severity from the list-level report data for the badge on the header row
         let severity: string | undefined;
@@ -290,7 +524,7 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate 
         }
 
         return (
-          <div key={run.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+          <div key={run.id} id={`run-card-${run.id}`} style={{ background: 'var(--surface)', border: `1px solid ${initialExpandedRunId === run.id ? 'rgba(37,99,171,0.5)' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden', boxShadow: initialExpandedRunId === run.id ? '0 0 0 2px rgba(37,99,171,0.18)' : 'none', transition: 'box-shadow 0.3s, border-color 0.3s' }}>
             {/* Header row */}
             <div
               style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', gap: 12, cursor: 'pointer' }}
@@ -301,8 +535,21 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate 
               </span>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[run.status] ?? 'var(--text-dim)', flexShrink: 0, display: 'inline-block' }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {run.name}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{
+                    flexShrink: 0,
+                    fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
+                    padding: '2px 7px', borderRadius: 5,
+                    background: 'rgba(37,99,171,0.12)',
+                    color: 'var(--cyan)',
+                    border: '1px solid rgba(37,99,171,0.25)',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    #{String(run.runSeq).padStart(4, '0')}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {run.name}
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
                   {new Date(run.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -314,6 +561,7 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate 
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--pass)' }}>✓ {passed}</span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fail)' }}>✗ {failed}</span>
+                {skipped > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)' }}>⊙ {skipped}</span>}
                 <span style={{
                   fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
                   background: passRate >= 90 ? 'rgba(42,157,143,0.15)' : passRate >= 70 ? 'rgba(251,191,36,0.15)' : 'rgba(220,38,38,0.15)',
@@ -329,6 +577,23 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate 
               </div>
               {/* Quick action buttons — stop propagation so they don't toggle the row */}
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                {failed > 0 && (run.status === 'FAILED') && (
+                  <button
+                    onClick={() => handleHeal(run.id)}
+                    disabled={triggerHeal.isPending}
+                    title="Send failed tests to Healing Agent"
+                    style={{
+                      padding: '3px 10px', borderRadius: 6,
+                      background: triggerHeal.isPending ? 'rgba(244,123,32,0.06)' : 'rgba(244,123,32,0.12)',
+                      color: triggerHeal.isPending ? 'rgba(244,123,32,0.45)' : '#F47B20',
+                      border: '1px solid rgba(244,123,32,0.25)',
+                      cursor: triggerHeal.isPending ? 'not-allowed' : 'pointer',
+                      fontSize: 11, fontWeight: 600,
+                    }}
+                  >
+                    🔧 Heal
+                  </button>
+                )}
                 {onExport && (
                   <button
                     onClick={() => onExport(run.id)}
@@ -347,6 +612,8 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate 
                 runId={run.id}
                 onExport={onExport}
                 onGenerate={onGenerate}
+                onHeal={() => handleHeal(run.id)}
+                isHealing={triggerHeal.isPending}
                 hasReport={!!run.report}
                 runStatus={run.status}
               />

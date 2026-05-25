@@ -6,6 +6,7 @@ import { runUIContextAgent } from '../agents/uiContextAgent.js';
 import { runWriterAgent } from '../agents/writerAgent.js';
 import { getLibraryContext } from '../services/reqLibraryLoader.js';
 import type { ScanJobPayload } from '../lib/queue.js';
+import { isAgentEnabled } from '../lib/agentConfig.js';
 
 function parseRedisUrl(url: string): { host: string; port: number; password?: string; db: number } {
   try {
@@ -69,7 +70,18 @@ export function startScanWorker(): void {
       const libraryContext = await getLibraryContext(projectId);
 
       // 4. Run the context AI agent (req library enriches use-case title suggestions)
-      const contextResult = await runUIContextAgent(scanResult, customInstructions, libraryContext);
+      const uiContextEnabled = await isAgentEnabled('ui-context-agent');
+      if (!uiContextEnabled) {
+        console.log('[scan-worker] UI Context Agent is disabled — skipping context analysis');
+      }
+      const contextResult = uiContextEnabled
+        ? await runUIContextAgent(scanResult, customInstructions, libraryContext)
+        : {
+            useCaseSuggestions: [],
+            loginInstructions: { steps: [], selectors: { username: '', password: '', submit: '' }, loginType: 'standard' as const, postLoginUrl: '', notes: '' },
+            navigationMap: [],
+            pageLocators: {},
+          };
 
       // 5. Upsert ProjectContext
       const useCaseSummaryJson = JSON.stringify(
@@ -104,7 +116,15 @@ export function startScanWorker(): void {
 
       // 6. TC generation via Writer Agent (non-fatal — failure keeps scan COMPLETED)
       let tcCount = 0;
-      if (generateTCs && contextResult.useCaseSuggestions.length > 0) {
+      const writerEnabled = await isAgentEnabled('writer-agent');
+      if (!generateTCs) {
+        console.log('[scan-worker] TC generation skipped — generateTCs=false (checkbox was not checked when scan was started)');
+      } else if (!writerEnabled) {
+        console.log('[scan-worker] TC generation skipped — Writer Agent is disabled');
+      } else if (contextResult.useCaseSuggestions.length === 0) {
+        console.warn('[scan-worker] TC generation skipped — context agent returned 0 use case suggestions (check ui-context-agent logs above for parse errors)');
+      }
+      if (generateTCs && writerEnabled && contextResult.useCaseSuggestions.length > 0) {
         try {
           const project = projectMeta; // already fetched above
           const prefix = (project?.slug ?? 'PRJ').replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
@@ -116,6 +136,24 @@ export function startScanWorker(): void {
             select: { title: true },
           });
           const existingTestCaseTitles = existingTCRows.map((r) => r.title);
+
+          // Fetch approved TCs as golden style reference — writer uses them to learn
+          // the correct step phrasing, login sequence, and field terminology for this app
+          const goldenTCRows = await prisma.testCase.findMany({
+            where: { projectId, status: 'APPROVED' },
+            select: { tcId: true, title: true, steps: true, expectedResult: true, useCaseTag: true, type: true, priority: true },
+            orderBy: { updatedAt: 'desc' },
+            take: 10,
+          });
+          const goldenTestCases = goldenTCRows.map((tc) => ({
+            tcId: tc.tcId,
+            title: tc.title,
+            steps: (() => { try { return JSON.parse(tc.steps) as string[]; } catch { return [tc.steps]; } })(),
+            expectedResult: tc.expectedResult,
+            useCaseTag: tc.useCaseTag ?? undefined,
+            type: tc.type,
+            priority: tc.priority,
+          }));
 
           // Give the writer agent the discovered navigation map as context
           const navLines = contextResult.navigationMap
@@ -154,6 +192,7 @@ export function startScanWorker(): void {
                 existingTestCaseTitles,
                 projectContextSummary,
                 targetTcCount: targetCount,
+                goldenTestCases,
               });
               return result.testCases.map((tc) => ({ ...tc, sourceRef: `scan:${scanId}` }));
             }),

@@ -24,17 +24,19 @@ export const scriptVerifyQueue = new Queue('script-verify', { connection });
 
 export interface RunJobPayload {
   runId: string;
+  runSeq: number;
   projectId: string;
   testCaseIds: string[];
   scriptPaths: string[];
+  skippedTcIds?: string[];
   environment: string;
   envBaseUrl: string;
-  envUsername: string;
-  envPassword: string;
+  envUsername?: string;
+  envPassword?: string;
   parallelWorkers: number;
   headless: boolean;
   browser: 'chromium' | 'firefox' | 'webkit';
-  triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP';
+  triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP' | 'HEAL_RERUN';
 }
 
 export interface HealJobPayload {

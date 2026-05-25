@@ -361,9 +361,10 @@ interface GenerateContextModalProps {
   initialNote: string; // pre-populated from stored hints when count === 1
   onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) => void;
   onClose: () => void;
+  onImportInstead?: () => void;
 }
 
-function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfirm, onClose }: GenerateContextModalProps) {
+function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfirm, onClose, onImportInstead }: GenerateContextModalProps) {
   const [heal, setHeal] = useState(initHeal);
   const [note, setNote] = useState(initialNote);
   const [save, setSave] = useState(false);
@@ -439,22 +440,39 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfir
           </label>
         </div>
 
-        <div style={MODAL_FOOTER}>
-          <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
-          <button
-            onClick={handleSubmit}
-            disabled={busy}
-            style={{
-              padding: '7px 18px', borderRadius: 6, border: 'none', cursor: busy ? 'wait' : 'pointer',
-              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
-              background: heal
-                ? 'linear-gradient(135deg, var(--violet), var(--cyan))'
-                : 'linear-gradient(135deg, var(--violet), var(--6d-orange-deep))',
-              opacity: busy ? 0.7 : 1,
-            }}
-          >
-            {busy ? 'Queuing…' : (heal ? '🩹 Generate + Heal' : '⚡ Generate')}
-          </button>
+        <div style={{ ...MODAL_FOOTER, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {onImportInstead && (
+              <button
+                onClick={() => { onClose(); onImportInstead(); }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-dim)', fontSize: 11, padding: '4px 0',
+                  textDecoration: 'underline', fontFamily: 'var(--font-ui)',
+                }}
+                title="Import a manually generated .spec.ts file instead of AI generation"
+              >
+                ⬆ Import script instead
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
+            <button
+              onClick={handleSubmit}
+              disabled={busy}
+              style={{
+                padding: '7px 18px', borderRadius: 6, border: 'none', cursor: busy ? 'wait' : 'pointer',
+                fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
+                background: heal
+                  ? 'linear-gradient(135deg, var(--violet), var(--cyan))'
+                  : 'linear-gradient(135deg, var(--violet), var(--6d-orange-deep))',
+                opacity: busy ? 0.7 : 1,
+              }}
+            >
+              {busy ? 'Queuing…' : (heal ? '🩹 Generate + Heal' : '⚡ Generate')}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -575,13 +593,288 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   );
 }
 
+// ── RegenerateModal ──────────────────────────────────────────────────────────
+
+interface RegenerateModalProps {
+  script: Script;
+  tc: TestCase | undefined;
+  onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) => void;
+  onClose: () => void;
+}
+
+function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProps) {
+  const [note, setNote] = useState(tc?.generationHints ?? '');
+  const [heal, setHeal] = useState(false);
+  const [save, setSave] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    setBusy(true);
+    await onConfirm({ withHeal: heal, contextNote: note, saveHints: save });
+    setBusy(false);
+  }
+
+  return (
+    <div style={MODAL_OVERLAY} onClick={onClose}>
+      <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
+        <div style={MODAL_HEADER}>
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>↺ Regenerate Script</span>
+            <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+              {tc ? `${tc.tcId} — ${tc.title}` : script.filename}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={MODAL_BODY}>
+          {/* Context note */}
+          <div>
+            <span style={LABEL_STYLE}>
+              What needs to be corrected{' '}
+              <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — guides the script agent)</span>
+            </span>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={'Describe what to fix or improve...\n\nExamples:\n• The submit button selector should be input[type="submit"] not #btn-login\n• After login navigate to /projects before checking the dashboard\n• The route is /#/FinanceUserListReport not /finance/reports\n• Login is two-step: enter username → click Login → enter password → click Login again'}
+              style={{ ...TEXTAREA_STYLE, minHeight: 130 }}
+              autoFocus
+            />
+          </div>
+
+          {/* Save hints checkbox */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={save}
+              onChange={(e) => setSave(e.target.checked)}
+              style={{ width: 14, height: 14, accentColor: 'var(--violet)', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-mid)' }}>
+              Save as default hints for this test case (auto-populated on future regenerations)
+            </span>
+          </label>
+
+          {/* Mode toggle */}
+          <div>
+            <span style={LABEL_STYLE}>Mode</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {([false, true] as const).map((v) => (
+                <button
+                  key={String(v)}
+                  onClick={() => setHeal(v)}
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    fontWeight: 700, fontFamily: 'var(--font-ui)',
+                    border: heal === v
+                      ? (v ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(245,158,11,0.5)')
+                      : '1px solid var(--border)',
+                    background: heal === v
+                      ? (v ? 'rgba(139,92,246,0.12)' : 'rgba(245,158,11,0.08)')
+                      : 'transparent',
+                    color: heal === v ? (v ? 'var(--violet)' : 'var(--amber)') : 'var(--text-dim)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {v ? '🩹 Regenerate + Heal' : '↺ Regenerate only'}
+                </button>
+              ))}
+            </div>
+            {heal && (
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                The new script will be live-tested and auto-healed up to 2 times after generation.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div style={MODAL_FOOTER}>
+          <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={busy}
+            style={{
+              padding: '7px 18px', borderRadius: 6, border: 'none', cursor: busy ? 'wait' : 'pointer',
+              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
+              background: heal
+                ? 'linear-gradient(135deg, var(--amber), var(--violet))'
+                : 'linear-gradient(135deg, var(--amber), var(--6d-orange-deep))',
+              opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {busy ? 'Queuing…' : (heal ? '🩹 Regenerate + Heal' : '↺ Regenerate')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ImportScriptModal ────────────────────────────────────────────────────────
+
+interface ImportScriptModalProps {
+  projectId: string;
+  testCases: TestCase[];
+  preSelectedTcId?: string;
+  onClose: () => void;
+}
+
+function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: ImportScriptModalProps) {
+  const [selectedTcId, setSelectedTcId] = useState(preSelectedTcId ?? '');
+  const [file, setFile] = useState<File | null>(null);
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const upload = useUploadScript(projectId);
+
+  const filteredTCs = useMemo(() => {
+    const q = search.toLowerCase();
+    return testCases
+      .filter((tc) => tc.title.toLowerCase().includes(q) || tc.tcId.toLowerCase().includes(q))
+      .slice(0, 40);
+  }, [testCases, search]);
+
+  async function handleImport() {
+    if (!file) { toast.error('Select a .spec.ts or .spec.js file first'); return; }
+    setBusy(true);
+    try {
+      await upload.mutateAsync({ file, testCaseId: selectedTcId || undefined });
+      const linked = selectedTcId
+        ? testCases.find((tc) => tc.id === selectedTcId)
+        : null;
+      toast.success(linked
+        ? `Imported and linked to ${linked.tcId}`
+        : `Imported ${file.name}`
+      );
+      onClose();
+    } catch {
+      toast.error('Import failed');
+    }
+    setBusy(false);
+  }
+
+  const INPUT_STYLE_SM: React.CSSProperties = {
+    width: '100%', padding: '7px 10px', background: 'var(--surface2)',
+    border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)',
+    fontSize: 11, outline: 'none', boxSizing: 'border-box', fontFamily: 'var(--font-ui)',
+  };
+
+  return (
+    <div style={MODAL_OVERLAY} onClick={onClose}>
+      <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
+        <div style={MODAL_HEADER}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>⬆ Import Script</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={MODAL_BODY}>
+          {/* File picker */}
+          <div>
+            <span style={LABEL_STYLE}>Script File <span style={{ color: '#f87171', fontWeight: 400 }}>*</span></span>
+            <button
+              onClick={() => fileRef.current?.click()}
+              style={{
+                width: '100%', padding: '18px 12px',
+                border: `2px dashed ${file ? 'var(--violet)' : 'var(--border)'}`,
+                borderRadius: 8, background: file ? 'rgba(139,92,246,0.06)' : 'transparent',
+                cursor: 'pointer', color: file ? 'var(--text)' : 'var(--text-dim)',
+                fontSize: 12, fontFamily: 'var(--font-ui)', textAlign: 'center',
+                transition: 'all 0.15s',
+              }}
+            >
+              {file ? `📄 ${file.name}` : '+ Click to select .spec.ts or .spec.js'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".spec.ts,.spec.js"
+              style={{ display: 'none' }}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+
+          {/* TC selector */}
+          <div>
+            <span style={LABEL_STYLE}>Link to Test Case <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span></span>
+            <input
+              type="text"
+              placeholder="Search by title or TC ID…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={INPUT_STYLE_SM}
+            />
+            <div style={{
+              maxHeight: 160, overflowY: 'auto', marginTop: 4,
+              border: '1px solid var(--border)', borderRadius: 6,
+              background: 'var(--surface2)',
+            }}>
+              <div
+                onClick={() => setSelectedTcId('')}
+                style={{
+                  padding: '7px 10px', cursor: 'pointer', fontSize: 11,
+                  background: !selectedTcId ? 'rgba(37,99,171,0.18)' : 'transparent',
+                  color: !selectedTcId ? 'var(--cyan)' : 'var(--text-dim)',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                None — upload as unlinked custom script
+              </div>
+              {filteredTCs.map((tc) => (
+                <div
+                  key={tc.id}
+                  onClick={() => setSelectedTcId(tc.id)}
+                  style={{
+                    padding: '7px 10px', cursor: 'pointer', fontSize: 11,
+                    background: selectedTcId === tc.id ? 'rgba(37,99,171,0.18)' : 'transparent',
+                    color: selectedTcId === tc.id ? 'var(--cyan)' : 'var(--text-mid)',
+                    display: 'flex', gap: 8, alignItems: 'baseline',
+                  }}
+                >
+                  <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>{tc.tcId}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tc.title}</span>
+                </div>
+              ))}
+              {filteredTCs.length === 0 && search && (
+                <div style={{ padding: '8px 10px', color: 'var(--text-dim)', fontSize: 11 }}>No matches</div>
+              )}
+            </div>
+            {selectedTcId && (
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '5px 0 0', lineHeight: 1.5 }}>
+                Any existing script for this test case will be replaced.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div style={MODAL_FOOTER}>
+          <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
+          <button
+            onClick={handleImport}
+            disabled={!file || busy}
+            style={{
+              padding: '7px 18px', borderRadius: 6, border: 'none',
+              cursor: !file || busy ? 'not-allowed' : 'pointer',
+              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
+              background: 'linear-gradient(135deg, var(--violet), var(--cyan))',
+              opacity: !file || busy ? 0.55 : 1,
+              transition: 'opacity 0.15s',
+            }}
+          >
+            {busy ? 'Importing…' : '⬆ Import'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export default function Scripts() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project } = useProject(slug);
   const projectId = project?.id;
@@ -592,7 +885,6 @@ export default function Scripts() {
 
   const save = useSaveScriptContent(projectId ?? '');
   const deleteScript = useDeleteScript(projectId ?? '');
-  const upload = useUploadScript(projectId ?? '');
   const { setSelected: setExecutionSelected } = useExecutionStore();
 
   // ── Derived data ─────────────────────────────────────────────────────────
@@ -668,6 +960,28 @@ export default function Scripts() {
 
   const { jobs: queueJobs, clear: clearFinishedJobs, clearAll: clearAllJobs } = useScriptJobs(projectId);
 
+  // Fire toasts when script jobs reach a terminal phase
+  const prevJobPhasesRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const prev = prevJobPhasesRef.current;
+    for (const job of queueJobs) {
+      const prevPhase = prev[job.id];
+      const phase = job.phase;
+      if (prevPhase !== phase) {
+        if (phase === 'GENERATED') {
+          toast.success(`Script regenerated: ${job.testCase?.tcId ?? job.id}`);
+        } else if (phase === 'VERIFIED') {
+          toast.success(`Script regenerated & verified: ${job.testCase?.tcId ?? job.id}`);
+        } else if (phase === 'MANUAL_REVIEW') {
+          toast(`Script needs manual review: ${job.testCase?.tcId ?? job.id}`, { icon: '⚠️' });
+        } else if (phase === 'FAILED') {
+          toast.error(`Regeneration failed: ${job.lastError ?? 'unknown error'}`);
+        }
+      }
+    }
+    prevJobPhasesRef.current = Object.fromEntries(queueJobs.map((j) => [j.id, j.phase]));
+  }, [queueJobs]);
+
   // "Generate with Heal" toggle — defaults OFF every page load (no persistence)
   const [withHeal, setWithHeal] = useState(false);
 
@@ -679,6 +993,20 @@ export default function Scripts() {
   // ── Retry feedback modal state ────────────────────────────────────────────
 
   const [retryJob, setRetryJob] = useState<ScriptJob | null>(null);
+
+  // ── Regenerate modal state ────────────────────────────────────────────────
+
+  const [showRegenModal, setShowRegenModal] = useState(false);
+
+  // ── Import script modal state ─────────────────────────────────────────────
+
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPreTcId, setImportPreTcId] = useState('');
+
+  function handleOpenImport(tcId = '') {
+    setImportPreTcId(tcId);
+    setShowImportModal(true);
+  }
 
   const queueVisible = queueJobs.length > 0;
   const queueDone = queueJobs.filter((j) => j.phase === 'VERIFIED' || j.phase === 'GENERATED').length;
@@ -699,6 +1027,7 @@ export default function Scripts() {
 
   const activeScript = openTabs.find((t) => t.id === activeTabId) ?? null;
   const activeContent = activeTabId ? (tabContents[activeTabId] ?? '') : '';
+  const activeTc = allTCs.find((tc) => tc.id === activeScript?.testCaseId) ?? undefined;
 
   // ── Open a tab ───────────────────────────────────────────────────────────
 
@@ -892,6 +1221,33 @@ export default function Scripts() {
     }
   }
 
+  // ── Regenerate active script ──────────────────────────────────────────────
+
+  async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) {
+    if (!projectId || !activeScript?.testCaseId) return;
+    setShowRegenModal(false);
+
+    if (opts.saveHints && opts.contextNote.trim() && activeTc) {
+      await api.patch(
+        `/projects/${projectId}/test-cases/${activeTc.tcId}/hints`,
+        { hints: opts.contextNote.trim() },
+      ).catch(() => {});
+      void qc.invalidateQueries({ queryKey: ['testCases', projectId] });
+    }
+
+    try {
+      await api.post<GenerateApiResponse>(
+        `/projects/${projectId}/scripts/generate`,
+        { testCaseIds: [activeScript.testCaseId], withHeal: opts.withHeal, contextNote: opts.contextNote || undefined },
+        { timeout: 30_000 },
+      );
+      toast.success(opts.withHeal ? '↺ Regenerating with heal…' : '↺ Regenerating…');
+    } catch (err) {
+      const msg = (err as Error)?.message ?? 'Failed to regenerate';
+      toast.error(msg);
+    }
+  }
+
   // ── Toggle golden ─────────────────────────────────────────────────────────
 
   async function handleToggleGolden(scriptId: string) {
@@ -917,19 +1273,6 @@ export default function Scripts() {
     }
   }
 
-  // ── Upload ────────────────────────────────────────────────────────────────
-
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      await upload.mutateAsync(file);
-      toast.success(`Uploaded ${file.name}`);
-    } catch {
-      toast.error('Upload failed');
-    }
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  }
 
   // ── Send to execution ─────────────────────────────────────────────────────
 
@@ -958,6 +1301,10 @@ export default function Scripts() {
           initialNote={genModalInitNote}
           onConfirm={handleModalConfirmGenerate}
           onClose={() => setShowGenModal(false)}
+          onImportInstead={tcSelected.size === 1
+            ? () => handleOpenImport([...tcSelected][0])
+            : () => handleOpenImport()
+          }
         />
       )}
 
@@ -967,6 +1314,26 @@ export default function Scripts() {
           job={retryJob}
           onConfirm={handleRetryConfirm}
           onClose={() => setRetryJob(null)}
+        />
+      )}
+
+      {/* Regenerate modal */}
+      {showRegenModal && activeScript && (
+        <RegenerateModal
+          script={activeScript}
+          tc={activeTc}
+          onConfirm={handleRegenConfirm}
+          onClose={() => setShowRegenModal(false)}
+        />
+      )}
+
+      {/* Import script modal */}
+      {showImportModal && projectId && (
+        <ImportScriptModal
+          projectId={projectId}
+          testCases={allTCs}
+          preSelectedTcId={importPreTcId}
+          onClose={() => setShowImportModal(false)}
         />
       )}
 
@@ -1016,12 +1383,28 @@ export default function Scripts() {
               </span>
               🩹 Generate with Heal
             </button>
+            <TbBtn variant="ghost" onClick={() => handleOpenImport()}>
+              ⬆ Import Script
+            </TbBtn>
             <TbBtn
               variant="ghost"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={upload.isPending}
+              onClick={async () => {
+                if (!projectId) return;
+                try {
+                  const res = await api.get(`/projects/${projectId}/scripts/prompt-guide`, { responseType: 'blob' });
+                  const url = URL.createObjectURL(new Blob([res.data as BlobPart], { type: 'text/markdown' }));
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'qa-infinity-script-prompt-guide.md';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch {
+                  toast.error('Failed to download prompt guide');
+                }
+              }}
+              title="Download the external LLM prompt guide for manual script generation"
             >
-              ⬆ Upload .spec.ts
+              📋 Prompt Guide
             </TbBtn>
             <TbBtn variant="primary" onClick={handleSendToExecution}>
               → Send to Execution
@@ -1365,14 +1748,13 @@ export default function Scripts() {
                   + Generate
                 </button>
                 <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={upload.isPending}
+                  onClick={() => handleOpenImport()}
                   style={{
                     padding: '6px 8px', background: 'transparent',
                     border: '1px solid var(--border)', borderRadius: 5,
                     cursor: 'pointer', color: 'var(--text-mid)', fontSize: 11,
                   }}
-                  title="Upload .spec.ts"
+                  title="Import .spec.ts and link to a test case"
                 >
                   ⬆
                 </button>
@@ -1418,6 +1800,72 @@ export default function Scripts() {
                 onActivate={setActiveTabId}
                 onClose={closeTab}
               />
+
+              {/* Editor action toolbar */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                padding: '4px 10px', gap: 6, flexShrink: 0,
+                background: 'rgba(0,0,0,0.25)',
+                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                minHeight: 32,
+              }}>
+                {activeScript?.testCaseId && (
+                  <button
+                    onClick={() => setShowRegenModal(true)}
+                    title="Regenerate this script — provide correction context to guide the agent"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '3px 11px', borderRadius: 5, cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: '1px solid rgba(245,158,11,0.45)',
+                      background: 'rgba(245,158,11,0.09)',
+                      color: 'var(--amber)',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(245,158,11,0.18)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(245,158,11,0.7)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(245,158,11,0.09)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(245,158,11,0.45)';
+                    }}
+                  >
+                    ↺ Regenerate
+                  </button>
+                )}
+                {activeScript && (
+                  <button
+                    onClick={() => handleToggleGolden(activeScript.id)}
+                    title={activeScript.isGolden ? 'Remove golden status (stop using as few-shot example)' : 'Mark as golden — used as few-shot example for future script generation'}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '3px 9px', borderRadius: 5, cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: activeScript.isGolden
+                        ? '1px solid rgba(245,158,11,0.6)'
+                        : '1px solid rgba(255,255,255,0.1)',
+                      background: activeScript.isGolden
+                        ? 'rgba(245,158,11,0.12)'
+                        : 'transparent',
+                      color: activeScript.isGolden ? '#fbbf24' : 'rgba(226,232,240,0.3)',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color = '#fbbf24';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(245,158,11,0.5)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!activeScript.isGolden) {
+                        (e.currentTarget as HTMLButtonElement).style.color = 'rgba(226,232,240,0.3)';
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.1)';
+                      }
+                    }}
+                  >
+                    {activeScript.isGolden ? '★ Golden' : '☆ Golden'}
+                  </button>
+                )}
+              </div>
 
               <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
                 {loadingContent && (
@@ -1489,13 +1937,6 @@ export default function Scripts() {
         </div>
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".spec.ts,.spec.js"
-        style={{ display: 'none' }}
-        onChange={handleUpload}
-      />
     </div>
   );
 }

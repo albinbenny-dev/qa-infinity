@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useProject } from '../hooks/useProjects';
 import {
   BarChart,
@@ -275,8 +275,12 @@ function AIAnalysisCard({ analysis }: { analysis: AIAnalysis }) {
 
 export default function Reports() {
   const { slug } = useParams<{ slug: string }>();
+  const [searchParams] = useSearchParams();
   const { data: project } = useProject(slug);
   const projectId = project?.id;
+
+  // When navigated from TC Library run-history block, auto-open that run.
+  const deepLinkedRunId = searchParams.get('run') ?? undefined;
 
   const [days, setDays] = useState(30);
   const [page, setPage] = useState(1);
@@ -389,7 +393,7 @@ export default function Reports() {
         </div>
 
         {/* ── 2-column main layout ──────────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', gap: 16, alignItems: 'start' }}>
 
           {/* LEFT column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -499,6 +503,7 @@ export default function Reports() {
                   runs={runs}
                   onExport={handleExport}
                   onGenerate={handleGenerateReport}
+                  initialExpandedRunId={deepLinkedRunId}
                 />
               </div>
               {/* Pagination */}

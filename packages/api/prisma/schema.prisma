@@ -47,6 +47,7 @@ model Project {
   scriptJobs      ScriptJob[]
   runs            Run[]
   schedules       Schedule[]
+  suites          Suite[]
   heals           Heal[]
   reports         Report[]
   chatMessages    ChatMessage[]
@@ -115,6 +116,9 @@ model TestCase {
   priority       String      @default("MEDIUM")   // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
   sourceRef        String?
   generationHints  String?   // free-text locator/context hints injected into script agent
+  prerequisiteTcId String?                                                        // optional FK to another TC
+  prerequisiteTc   TestCase?  @relation("PrerequisiteOf", fields: [prerequisiteTcId], references: [id], onDelete: SetNull)
+  dependentTcs     TestCase[] @relation("PrerequisiteOf")
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -174,6 +178,7 @@ model ScriptJob {
 model Run {
   id          String    @id @default(cuid())
   projectId   String
+  runSeq      Int       @default(0)          // global auto-increment assigned at creation
   name        String
   environment String
   status      String    @default("PENDING")  // "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED"
@@ -195,17 +200,19 @@ model RunResult {
   runId          String
   testCaseId     String
   scriptId       String?
-  status         String    // "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED"
+  status         String    // "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED" | "SKIPPED"
   duration       Int?
   errorMessage   String?
   screenshotPath String?
   tracePath      String?
+  videoPath      String?
   createdAt      DateTime  @default(now())
   run            Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
   testCase       TestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
   script         Script?   @relation(fields: [scriptId], references: [id], onDelete: SetNull)
   heals          Heal[]
 
+  @@unique([runId, testCaseId])
   @@index([runId])
   @@index([testCaseId])
 }
@@ -225,6 +232,18 @@ model Schedule {
 
   @@index([projectId])
   @@index([projectId, isActive])
+}
+
+model Suite {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  testCaseIds String   @default("[]")  // JSON: string[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
 }
 
 model Heal {
@@ -317,6 +336,12 @@ model ProjectContext {
   lastScanId         String?
   updatedAt          DateTime @updatedAt
   project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model AgentConfig {
+  agentName String   @id
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
 }
 
 model LlmCall {

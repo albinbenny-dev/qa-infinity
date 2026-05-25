@@ -147,11 +147,12 @@ export async function triggerHeal(runResultId: string): Promise<void> {
 
   if (autoApply) {
     writeScriptToDisk(projectId, script.filename, patchResult.patchedScript);
+    // Promote to golden — auto-applied at ≥95% confidence is a trusted fix
     await prisma.script.update({
       where: { id: script.id },
-      data: { content: patchResult.patchedScript },
+      data: { content: patchResult.patchedScript, isGolden: true },
     });
-    console.log(`[heal-service] Auto-applied heal ${heal.id} (confidence: ${finalConfidence}%)`);
+    console.log(`[heal-service] Auto-applied heal ${heal.id} (confidence: ${finalConfidence}%) — script promoted to golden`);
   }
 }
 
@@ -200,9 +201,10 @@ export async function applyHeal(healId: string): Promise<{
     select: { id: true },
   });
 
+  // Human-approved heal = expert-validated fix → promote script to golden
   await prisma.$transaction([
     prisma.heal.update({ where: { id: healId }, data: { status: 'APPROVED' } }),
-    prisma.script.update({ where: { id: script.id }, data: { content: heal.patchedCode } }),
+    prisma.script.update({ where: { id: script.id }, data: { content: heal.patchedCode, isGolden: true } }),
     ...(siblingIds.length > 0
       ? [prisma.heal.updateMany({
           where: { id: { in: siblingIds.map((h) => h.id) } },
@@ -210,6 +212,7 @@ export async function applyHeal(healId: string): Promise<{
         })]
       : []),
   ]);
+  console.log(`[heal-service] Heal ${healId} approved — script ${script.id} promoted to golden`);
 
   const envConfig = await prisma.envConfig.findFirst({
     where: { projectId, name: heal.runResult.run.environment },

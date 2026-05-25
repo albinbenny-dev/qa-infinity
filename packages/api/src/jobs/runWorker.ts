@@ -6,6 +6,7 @@ import { emitToRun } from '../lib/socket.js';
 import { addHealJob } from '../lib/queue.js';
 import type { RunJobPayload } from '../lib/queue.js';
 import { generateReport } from '../services/reportService.js';
+import { isAgentEnabled } from '../lib/agentConfig.js';
 
 const ARTIFACTS_ROOT = process.env.ARTIFACTS_PATH ?? '/artifacts';
 
@@ -56,11 +57,13 @@ function flattenTests(suite: PWSuite): PWTestCase[] {
 
 // ── Main job processor ─────────────────────────────────────────────────────
 async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
-  const { runId, projectId, testCaseIds, scriptPaths, environment, envBaseUrl,
-    envUsername, envPassword, parallelWorkers, headless, browser } = job.data;
+  const { runId, runSeq, projectId, testCaseIds, scriptPaths, skippedTcIds = [],
+    environment, envBaseUrl,
+    envUsername = '', envPassword = '', parallelWorkers, headless, browser } = job.data;
 
   const total = scriptPaths.length;
-  const artifactsDir = path.join(ARTIFACTS_ROOT, projectId, runId);
+  const runLabel = `RUN-${String(runSeq).padStart(4, '0')}`;
+  const artifactsDir = path.join(ARTIFACTS_ROOT, projectId, `${runLabel}_${runId}`);
 
   try {
     fs.mkdirSync(artifactsDir, { recursive: true });
@@ -72,9 +75,9 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     data: { status: 'RUNNING', startedAt: new Date() },
   });
 
-  emitToRun(runId, 'run:start', { total, environment, parallelWorkers, browser, headless });
+  emitToRun(runId, 'run:start', { total: total + skippedTcIds.length, environment, parallelWorkers, browser, headless: false });
   emitLog(runId, 'info',
-    `▶ Starting run · ${total} script${total !== 1 ? 's' : ''} · ${parallelWorkers} workers · ${browser}${headless ? ' headless' : ''}`
+    `▶ Starting run · ${total} script${total !== 1 ? 's' : ''}${skippedTcIds.length > 0 ? ` · ${skippedTcIds.length} skipped (no script)` : ''} · ${parallelWorkers} workers · ${browser} · headed`
   );
 
   // ── 2. Check for cancellation ────────────────────────────────────────────
@@ -85,7 +88,19 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     return;
   }
 
+  // ── 2b. Build readable TC id lookup (for artifact dir naming) ─────────────
+  const allTcIds = [...testCaseIds, ...skippedTcIds];
+  const tcRecords = await prisma.testCase.findMany({
+    where: { id: { in: allTcIds } },
+    select: { id: true, tcId: true },
+  });
+  const tcReadableId = new Map<string, string>(tcRecords.map((t) => [t.id, t.tcId]));
+
   // ── 3. Initialise RunResult records ─────────────────────────────────────
+  // Delete any rows left from a previous (failed/retried) attempt so each execution
+  // starts with exactly one row per test case.
+  await prisma.runResult.deleteMany({ where: { runId } });
+
   // Fetch scripts up-front so RunResults are linked — healService requires scriptId
   const scriptRecords = await prisma.script.findMany({
     where: { testCaseId: { in: testCaseIds }, projectId },
@@ -105,6 +120,16 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     });
   }
 
+  // Create SKIPPED RunResults for TCs with no automation script
+  if (skippedTcIds.length > 0) {
+    for (const tcId of skippedTcIds) {
+      await prisma.runResult.create({
+        data: { runId, testCaseId: tcId, status: 'SKIPPED', errorMessage: 'No automation script — test case skipped' },
+      });
+      emitLog(runId, 'warn', `⊙ ${tcReadableId.get(tcId) ?? tcId} SKIPPED — no automation script`);
+    }
+  }
+
   // ── 4. Build a quick lookup: testCaseId → RunResult id ──────────────────
   const runResults = await prisma.runResult.findMany({
     where: { runId },
@@ -117,7 +142,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   const startTime = Date.now();
   let totalPassed = 0;
   let totalFailed = 0;
-  let totalSkipped = 0;
+  let totalSkipped = skippedTcIds.length;
 
   // One AbortController for the entire run. The cancel watcher below aborts it
   // the moment the DB status flips to CANCELLED, which propagates into the
@@ -158,11 +183,14 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     }
     emitToRun(runId, 'run:progress', { testCaseId, status: 'RUNNING', index: i, total });
 
-    const reportFile = path.join(artifactsDir, `report-${i}.json`);
+    const tcLabel = tcReadableId.get(testCaseId) ?? `tc-${i}`;
+    const reportFile = path.join(artifactsDir, `${runLabel}_${tcLabel}_report.json`);
+    const outputDir = path.join(artifactsDir, `${runLabel}_${tcLabel}`);
 
     const result = await spawnPlaywright(
       scriptPath,
       reportFile,
+      outputDir,
       { parallelWorkers, headless, browser, envBaseUrl, envUsername, envPassword, environment },
       (line) => emitLog(runId, 'run', line),
       runAbortController.signal,
@@ -185,6 +213,8 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     let duration = 0;
     let errorMessage: string | undefined;
     let screenshotPath: string | undefined;
+    let tracePath: string | undefined;
+    let videoPath: string | undefined;
 
     if (result.reportData) {
       const stats = result.reportData.stats;
@@ -196,17 +226,26 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
         errorMessage = 'No tests ran — possible import or syntax error in the script.';
       } else {
         passed = (stats?.unexpected ?? 1) === 0;
+
+        // Flatten all test results to extract attachments
+        const allPWResults = (result.reportData.suites ?? [])
+          .flatMap(flattenTests)
+          .flatMap((spec) => spec.tests ?? [])
+          .flatMap((run) => run.results ?? []);
+
+        // For failed tests use the failing result as the attachment source; otherwise first result
+        const failingResult = allPWResults.find((r: PWTestResult) => r.status !== 'passed');
         if (!passed) {
-          const allSpecs = (result.reportData.suites ?? []).flatMap(flattenTests);
-          const failingResult = allSpecs
-            .flatMap((spec) => spec.tests ?? [])
-            .flatMap((run) => run.results ?? [])
-            .find((r: PWTestResult) => r.status !== 'passed');
           errorMessage = failingResult?.error?.message?.slice(0, 500) ?? result.error ?? 'Test failed';
-          const screenshot = failingResult?.attachments?.find(
-            (a: { name: string; path?: string }) => a.name === 'screenshot',
-          );
-          if (screenshot?.path) screenshotPath = screenshot.path;
+        }
+        const attachmentSource = failingResult ?? allPWResults[0];
+        if (attachmentSource) {
+          const shot = attachmentSource.attachments?.find((a: { name: string; path?: string }) => a.name === 'screenshot');
+          if (shot?.path) screenshotPath = shot.path;
+          const video = attachmentSource.attachments?.find((a: { name: string; path?: string }) => a.name === 'video');
+          if (video?.path) videoPath = video.path;
+          const trace = attachmentSource.attachments?.find((a: { name: string; path?: string }) => a.name === 'trace');
+          if (trace?.path) tracePath = trace.path;
         }
       }
     } else {
@@ -220,7 +259,14 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     if (runResultId) {
       await prisma.runResult.update({
         where: { id: runResultId },
-        data: { status: finalStatus, duration, errorMessage: errorMessage ?? null, screenshotPath: screenshotPath ?? null },
+        data: {
+          status: finalStatus,
+          duration,
+          errorMessage: errorMessage ?? null,
+          screenshotPath: screenshotPath ?? null,
+          tracePath: tracePath ?? null,
+          videoPath: videoPath ?? null,
+        },
       });
     }
 
@@ -259,8 +305,9 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     data: { status: runFinalStatus, completedAt: new Date() },
   });
 
-  // ── 6. Queue heal jobs for failures (skipped if run was cancelled by user) ──
-  if (totalFailed > 0) {
+  // ── 6. Queue heal jobs for failures (skipped if run was cancelled or healing disabled) ──
+  const healingEnabled = await isAgentEnabled('healing-agent');
+  if (totalFailed > 0 && healingEnabled) {
     const failedResults = await prisma.runResult.findMany({
       where: { runId, status: 'FAILED' },
       select: { id: true },
@@ -277,19 +324,26 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
         emitLog(runId, 'warn', `⚠ Could not queue heal job: ${(err as Error).message}`);
       }
     }
+  } else if (totalFailed > 0 && !healingEnabled) {
+    emitLog(runId, 'info', `⊘ Healing Agent is disabled — skipping heal analysis for ${totalFailed} failure${totalFailed !== 1 ? 's' : ''}`);
   }
 
   emitLog(runId, 'info',
-    `■ Run complete · ${totalPassed} passed · ${totalFailed} failed · ${(elapsed / 1000).toFixed(1)}s`
+    `■ Run complete · ${totalPassed} passed · ${totalFailed} failed · ${totalSkipped} skipped · ${(elapsed / 1000).toFixed(1)}s`
   );
   emitToRun(runId, 'run:complete', {
     passed: totalPassed, failed: totalFailed, skipped: totalSkipped, duration: elapsed,
   });
 
   // ── 7. Auto-generate report (best-effort, fire-and-forget after close) ───
-  void generateReport(runId).catch((err) =>
-    console.error('[run-worker] Auto-report generation failed:', err),
-  );
+  const reportsEnabled = await isAgentEnabled('reports-agent');
+  if (reportsEnabled) {
+    void generateReport(runId).catch((err) =>
+      console.error('[run-worker] Auto-report generation failed:', err),
+    );
+  } else {
+    console.log('[run-worker] Reports Agent is disabled — skipping AI report for run', runId);
+  }
 }
 
 // ── Helper: emit log line ────────────────────────────────────────────────────
@@ -308,6 +362,7 @@ interface SpawnResult {
 async function spawnPlaywright(
   scriptPath: string,
   reportFile: string,
+  outputDir: string,
   opts: { parallelWorkers: number; headless: boolean; browser: string; envBaseUrl: string; envUsername: string; envPassword: string; environment: string },
   onLine: (line: string) => void,
   externalSignal?: AbortSignal,
@@ -333,6 +388,7 @@ async function spawnPlaywright(
       body: JSON.stringify({
         scriptPath,
         reportFile,
+        outputDir,
         browser: opts.browser,
         workers: opts.parallelWorkers,
         headless: opts.headless,

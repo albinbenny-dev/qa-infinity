@@ -29,10 +29,10 @@ const CONFIG_CONTENT = `module.exports = {
     actionTimeout: 15000,   // 15 s for each action (fill, click, …)
     navigationTimeout: 20000, // 20 s for page loads / waitForNavigation
     baseURL: process.env.BASE_URL || '',
-    screenshot: 'only-on-failure',
+    screenshot: 'on',
     trace: 'on-first-retry',
     ignoreHTTPSErrors: true,
-    video: process.env.HEADED === '1' ? 'on' : 'retain-on-failure',
+    video: 'on',
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
@@ -78,6 +78,7 @@ const server = http.createServer(async (req, res) => {
     const {
       scriptPath,
       reportFile,
+      outputDir,
       browser = 'chromium',
       workers = 1,
       headless = true,
@@ -102,7 +103,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Build args
+    // Build args — always headed for screenshot/video capture
     const args = [
       'test',
       path.basename(scriptPath),
@@ -111,8 +112,12 @@ const server = http.createServer(async (req, res) => {
       '--reporter=json',
       `--workers=${workers}`,
       `--project=${browser}`,
+      '--headed',
     ];
-    if (!headless) args.push('--headed');
+    // Route artifacts to a per-TC directory so they aren't overwritten by the next run
+    if (outputDir) {
+      args.push(`--output=${outputDir}`);
+    }
 
     const env = Object.assign({}, process.env, {
       BASE_URL: baseUrl || '',
@@ -121,7 +126,7 @@ const server = http.createServer(async (req, res) => {
       TEST_ENV: environment || '',
       PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile,
       CI: '1',
-      HEADED: headless ? '0' : '1',
+      HEADED: '1',
       // Allow test scripts in /scripts to resolve @playwright/test from the runner's node_modules
       NODE_PATH: [
         '/app/node_modules',
@@ -139,20 +144,14 @@ const server = http.createServer(async (req, res) => {
     const start = Date.now();
     const playwrightBin = findPlaywrightBin();
 
-    // Headed mode requires a virtual display inside Docker
-    let spawnCmd, spawnArgs;
-    if (!headless) {
-      spawnCmd = 'xvfb-run';
-      spawnArgs = [
-        '--auto-servernum',
-        '--server-args=-screen 0 1920x1080x24',
-        playwrightBin,
-        ...args,
-      ];
-    } else {
-      spawnCmd = playwrightBin;
-      spawnArgs = args;
-    }
+    // Always use xvfb-run for virtual display inside Docker
+    const spawnCmd = 'xvfb-run';
+    const spawnArgs = [
+      '--auto-servernum',
+      '--server-args=-screen 0 1920x1080x24',
+      playwrightBin,
+      ...args,
+    ];
 
     const proc = spawn(spawnCmd, spawnArgs, {
       cwd: SCRIPTS_DIR,

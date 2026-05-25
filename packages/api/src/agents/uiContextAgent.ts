@@ -72,10 +72,17 @@ export async function runUIContextAgent(
 
   const { pages, loginInstructions, navigationMap } = scanResult;
 
-  // Build page summaries for the prompt (cap per-page content to stay within token budget)
-  const pageSummaries = pages.map((p, i) => {
+  // Build page summaries — keep per-page content tight so the full response fits in
+  // the model's output window even when 30-50 pages are scanned.
+  // Prioritise pages with forms/inputs (more interesting for TC generation).
+  const sortedPages = [...pages].sort(
+    (a, b) => (b.formCount + b.inputCount) - (a.formCount + a.inputCount),
+  );
+  const pagesToSummarise = sortedPages.slice(0, 25); // cap at 25 most interesting pages
+
+  const pageSummaries = pagesToSummarise.map((p, i) => {
     const locatorLines = p.keyLocators
-      .slice(0, 5)
+      .slice(0, 4)
       .map((l) => `    - ${l.semanticName}: ${l.selector}`)
       .join('\n');
 
@@ -83,14 +90,13 @@ export async function runUIContextAgent(
       `### Page ${i + 1}: ${p.navLabel}`,
       `URL: ${p.url}`,
       `Forms: ${p.formCount}  Inputs: ${p.inputCount}  Buttons: ${p.buttonCount}`,
-      'Key locators:',
-      locatorLines || '    (none detected)',
-      'Accessibility snapshot (truncated):',
-      `    ${p.accessibilityTree.slice(0, 1500)}`,
-    ].join('\n');
+      locatorLines ? `Key locators:\n${locatorLines}` : '',
+      `Accessibility (truncated): ${p.accessibilityTree.slice(0, 600)}`,
+    ].filter(Boolean).join('\n');
   });
 
-  const navSummary = flattenForPrompt(navigationMap).join('\n');
+  // Cap the navigation summary to avoid ballooning the prompt
+  const navSummary = flattenForPrompt(navigationMap).slice(0, 60).join('\n');
 
   const textContent = [
     `Application has ${pages.length} pages scanned.`,
@@ -147,7 +153,6 @@ function parseContextResult(
   try {
     const parsed = JSON.parse(cleaned) as Partial<UIContextResult & { useCaseSuggestions: UseCaseSuggestion[] }>;
 
-    // Assign colors to use case suggestions if missing
     const suggestions: UseCaseSuggestion[] = (parsed.useCaseSuggestions ?? []).map((s, i) => ({
       useCase: s.useCase ?? `Use Case ${i + 1}`,
       color: s.color ?? USE_CASE_COLORS[i % USE_CASE_COLORS.length],
@@ -161,14 +166,44 @@ function parseContextResult(
       pageLocators: (parsed.pageLocators as Record<string, PageLocators>) ?? buildFallbackLocators(pages),
       useCaseSuggestions: suggestions,
     };
-  } catch {
-    // Fallback: return unprocessed scan data
-    return {
-      loginInstructions,
-      navigationMap,
-      pageLocators: buildFallbackLocators(pages),
-      useCaseSuggestions: [],
-    };
+  } catch (parseErr) {
+    // Full JSON parse failed (likely truncated response). Try to salvage useCaseSuggestions
+    // by extracting just that array — enough for TC generation to proceed.
+    console.warn(
+      `[ui-context-agent] Full JSON parse failed (${(parseErr as Error).message}). Attempting partial extraction.`,
+    );
+
+    try {
+      // Match the useCaseSuggestions array, allowing for truncation after the last complete object
+      const arrayMatch = cleaned.match(/"useCaseSuggestions"\s*:\s*(\[[\s\S]*)/);
+      if (arrayMatch) {
+        // Close any dangling open bracket so JSON.parse can recover partial arrays
+        let fragment = arrayMatch[1];
+        // Count open/close brackets to find how many ] we need to add
+        let depth = 0;
+        for (const ch of fragment) {
+          if (ch === '[' || ch === '{') depth++;
+          else if (ch === ']' || ch === '}') depth--;
+        }
+        // Trim trailing comma / partial object, then close
+        fragment = fragment.replace(/,\s*$/, '').replace(/\{[^}]*$/, '');
+        while (depth > 0) { fragment += depth-- > 1 ? '}' : ']'; }
+
+        const suggestions = (JSON.parse(fragment) as UseCaseSuggestion[]).map((s, i) => ({
+          useCase: s.useCase ?? `Use Case ${i + 1}`,
+          color: s.color ?? USE_CASE_COLORS[i % USE_CASE_COLORS.length],
+          pages: Array.isArray(s.pages) ? s.pages : [],
+          testCaseTitles: Array.isArray(s.testCaseTitles) ? s.testCaseTitles : [],
+        }));
+
+        console.log(`[ui-context-agent] Partial extraction recovered ${suggestions.length} use case suggestions.`);
+        return { loginInstructions, navigationMap, pageLocators: buildFallbackLocators(pages), useCaseSuggestions: suggestions };
+      }
+    } catch (extractErr) {
+      console.warn(`[ui-context-agent] Partial extraction also failed: ${(extractErr as Error).message}`);
+    }
+
+    return { loginInstructions, navigationMap, pageLocators: buildFallbackLocators(pages), useCaseSuggestions: [] };
   }
 }
 

@@ -19,7 +19,7 @@ export interface UseCaseGroupProps {
   onEditTc: (tc: TestCase) => void;
 }
 
-const COLUMNS_HEADER = ['', 'Test Case', 'Type', 'Automation', 'Last Run', ''];
+const COLUMNS_HEADER = ['', 'Test Case', 'Type', 'Automation', 'Run History', ''];
 
 export default function UseCaseGroup({
   name,
@@ -255,7 +255,7 @@ export default function UseCaseGroup({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '28px 1fr 60px 100px 80px 72px',
+              gridTemplateColumns: '28px 1fr 60px 100px 96px 72px',
               gap: '8px',
               padding: '6px 14px',
               background: 'var(--surface2)',

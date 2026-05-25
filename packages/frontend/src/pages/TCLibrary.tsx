@@ -18,6 +18,8 @@ import {
 } from '../hooks/useTestCases';
 import { useExecutionStore } from '../stores/executionStore';
 import { useScripts } from '../hooks/useScripts';
+import { useCreateRun } from '../hooks/useRuns';
+import { useProjectStore } from '../stores/projectStore';
 import { api } from '../lib/api';
 import type { TestCase } from '../types';
 
@@ -149,6 +151,10 @@ export default function TCLibrary() {
   const updateTcMutation = useUpdateTestCase(projectId ?? '');
   const bulkDeleteMutation = useBulkDelete(projectId ?? '');
   const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
+  const createRun = useCreateRun(projectId ?? '');
+  const { activeProject } = useProjectStore();
+  const envConfigs = activeProject?.envConfigs ?? [];
+  const defaultEnv = envConfigs.find(e => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
 
   const [editingTc, setEditingTc] = useState<TestCase | null>(null);
 
@@ -222,13 +228,25 @@ export default function TCLibrary() {
   }
 
   // ── Run handlers ─────────────────────────────────────────────────────────
-  function handleRunGroup(ids: string[]) {
-    setSelected(ids);
-    navigate(`/projects/${slug}/execution`);
+  async function handleRunGroup(ids: string[]) {
+    if (!projectId || ids.length === 0) return;
+    try {
+      await createRun.mutateAsync({ testCaseIds: ids, environment: defaultEnv, name: `Quick Run — ${defaultEnv}` });
+      toast.success('Run queued! Check Execution for live logs.');
+      navigate(`/projects/${slug}/execution`);
+    } catch {
+      toast.error('Failed to start run.');
+    }
   }
-  function handleRunIndividual(tc: TestCase) {
-    setSelected([tc.id]);
-    navigate(`/projects/${slug}/execution`);
+  async function handleRunIndividual(tc: TestCase) {
+    if (!projectId) return;
+    try {
+      await createRun.mutateAsync({ testCaseIds: [tc.id], environment: defaultEnv, name: `Quick Run — ${defaultEnv}` });
+      toast.success('Run queued! Check Execution for live logs.');
+      navigate(`/projects/${slug}/execution`);
+    } catch {
+      toast.error('Failed to start run.');
+    }
   }
   function handleSendToExecution() {
     setSelected(Array.from(selectedIds));
