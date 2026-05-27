@@ -1,9 +1,10 @@
-import { useMemo, useReducer, useCallback } from 'react';
+import React, { useMemo, useReducer, useCallback, useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import UseCaseGroup from '../components/tc-library/UseCaseGroup';
 import SelectionBar from '../components/tc-library/SelectionBar';
+import EditTCModal from '../components/tc-library/EditTCModal';
 import { useProject } from '../hooks/useProjects';
 import {
   useTestCases,
@@ -11,36 +12,23 @@ import {
   useTCLibraryStats,
   useBulkUpdateUseCase,
   useDeleteTestCase,
+  useUpdateTestCase,
   useBulkDelete,
   useBulkAddTag,
 } from '../hooks/useTestCases';
 import { useExecutionStore } from '../stores/executionStore';
 import { useScripts } from '../hooks/useScripts';
+import { useCreateRun } from '../hooks/useRuns';
+import { useProjectStore } from '../stores/projectStore';
+import { useRBAC } from '../hooks/useRBAC';
 import { api } from '../lib/api';
 import type { TestCase } from '../types';
 
-// ── Airtel Ventas group config ──────────────────────────────────────────────
-const AIRTEL_USE_CASES = [
-  'Primary Sales',
-  'Stock Management',
-  'Dealer Onboarding & KYC',
-  'Sales API',
-  'Secondary Sales',
-  'Distributor API',
-];
-
-const UC_COLOR: Record<string, string> = {
-  'Primary Sales':           '--violet',
-  'Stock Management':        '--amber',
-  'Dealer Onboarding & KYC': '--emerald',
-  'Sales API':               '--cyan',
-  'Secondary Sales':         '--rose',
-  'Distributor API':         '--sky',
-};
+// ── UseCase colour cycling ──────────────────────────────────────────────────
 const UC_COLOR_FALLBACKS = ['--violet', '--cyan', '--emerald', '--amber', '--rose', '--sky'];
 
-function getUcColor(name: string, index: number): string {
-  return UC_COLOR[name] ?? UC_COLOR_FALLBACKS[index % UC_COLOR_FALLBACKS.length];
+function getUcColor(_name: string, index: number): string {
+  return UC_COLOR_FALLBACKS[index % UC_COLOR_FALLBACKS.length];
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -161,8 +149,29 @@ export default function TCLibrary() {
 
   const bulkUpdateMutation = useBulkUpdateUseCase(projectId ?? '');
   const deleteTcMutation = useDeleteTestCase(projectId ?? '');
+  const updateTcMutation = useUpdateTestCase(projectId ?? '');
   const bulkDeleteMutation = useBulkDelete(projectId ?? '');
   const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
+  const createRun = useCreateRun(projectId ?? '');
+  const { activeProject } = useProjectStore();
+  const { canWrite } = useRBAC();
+  const envConfigs = activeProject?.envConfigs ?? [];
+  const defaultEnv = envConfigs.find(e => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
+
+  const [editingTc, setEditingTc] = useState<TestCase | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!exportOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [exportOpen]);
 
   const allTCs: TestCase[] = tcData?.testCases ?? [];
 
@@ -186,10 +195,7 @@ export default function TCLibrary() {
   // ── Group TCs by useCaseTag ───────────────────────────────────────────────
   const groups = useMemo(() => {
     const map = new Map<string, TestCase[]>();
-    AIRTEL_USE_CASES.forEach((uc) => map.set(uc, []));
-    useCases
-      .filter((uc) => !AIRTEL_USE_CASES.includes(uc))
-      .forEach((uc) => map.set(uc, []));
+    useCases.forEach((uc) => map.set(uc, []));
     for (const tc of filteredTCs) {
       const key = tc.useCaseTag ?? 'Uncategorised';
       if (!map.has(key)) map.set(key, []);
@@ -219,16 +225,19 @@ export default function TCLibrary() {
   }
 
   // ── Excel export ──────────────────────────────────────────────────────────
-  async function handleExport() {
+  async function downloadExcel(params: Record<string, string>, filename: string) {
     if (!projectId) return;
+    setExportOpen(false);
     try {
-      const res = await api.get(`/projects/${projectId}/test-cases/export/excel`, {
-        responseType: 'blob',
-      });
+      const query = new URLSearchParams(params).toString();
+      const res = await api.get(
+        `/projects/${projectId}/test-cases/export/excel${query ? `?${query}` : ''}`,
+        { responseType: 'blob' },
+      );
       const url = URL.createObjectURL(res.data as Blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${slug}-test-cases.xlsx`;
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -236,14 +245,37 @@ export default function TCLibrary() {
     }
   }
 
-  // ── Run handlers ─────────────────────────────────────────────────────────
-  function handleRunGroup(ids: string[]) {
-    setSelected(ids);
-    navigate(`/projects/${slug}/execution`);
+  function handleExportAll() {
+    downloadExcel({}, `${slug}-test-cases.xlsx`);
   }
-  function handleRunIndividual(tc: TestCase) {
-    setSelected([tc.id]);
-    navigate(`/projects/${slug}/execution`);
+  function handleExportByUseCase(tag: string) {
+    downloadExcel({ useCaseTag: tag }, `${slug}-${tag.replace(/\s+/g, '-')}.xlsx`);
+  }
+  function handleExportSelected() {
+    const ids = Array.from(selectedIds).join(',');
+    downloadExcel({ ids }, `${slug}-selected.xlsx`);
+  }
+
+  // ── Run handlers ─────────────────────────────────────────────────────────
+  async function handleRunGroup(ids: string[]) {
+    if (!projectId || ids.length === 0) return;
+    try {
+      await createRun.mutateAsync({ testCaseIds: ids, environment: defaultEnv, name: `Quick Run — ${defaultEnv}` });
+      toast.success('Run queued! Check Execution for live logs.');
+      navigate(`/projects/${slug}/execution`);
+    } catch {
+      toast.error('Failed to start run.');
+    }
+  }
+  async function handleRunIndividual(tc: TestCase) {
+    if (!projectId) return;
+    try {
+      await createRun.mutateAsync({ testCaseIds: [tc.id], environment: defaultEnv, name: `Quick Run — ${defaultEnv}` });
+      toast.success('Run queued! Check Execution for live logs.');
+      navigate(`/projects/${slug}/execution`);
+    } catch {
+      toast.error('Failed to start run.');
+    }
   }
   function handleSendToExecution() {
     setSelected(Array.from(selectedIds));
@@ -284,6 +316,17 @@ export default function TCLibrary() {
     }
   }
 
+  // ── Edit handler ─────────────────────────────────────────────────────────
+  async function handleSaveEdit(tcId: string, patch: Partial<TestCase>) {
+    try {
+      await updateTcMutation.mutateAsync({ tcId, data: patch });
+      setEditingTc(null);
+      toast.success('Test case updated');
+    } catch {
+      toast.error('Update failed');
+    }
+  }
+
   // ── Bulk delete selected ──────────────────────────────────────────────────
   const handleDeleteSelected = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -312,6 +355,22 @@ export default function TCLibrary() {
 
   const sendBtnEnabled = selectedIds.size > 0;
 
+  const dropdownItemStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    width: '100%',
+    padding: '8px 12px',
+    background: 'none',
+    border: 'none',
+    color: 'var(--text)',
+    fontSize: '12px',
+    fontFamily: 'var(--font-mono)',
+    cursor: 'pointer',
+    textAlign: 'left',
+    transition: 'background 0.1s',
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* Topbar */}
@@ -323,20 +382,82 @@ export default function TCLibrary() {
         ]}
         actions={
           <>
-            <TbBtn variant="ghost" onClick={handleExport}>
-              📤 Export Excel
-            </TbBtn>
-            <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/writer`)}>
-              + Generate More
-            </TbBtn>
-            <TbBtn
-              variant="primary"
-              disabled={!sendBtnEnabled}
-              style={!sendBtnEnabled ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
-              onClick={handleSendToExecution}
-            >
-              ▶ Send to Execution ({selectedIds.size})
-            </TbBtn>
+            {/* Export dropdown */}
+            <div ref={exportRef} style={{ position: 'relative' }}>
+              <TbBtn variant="ghost" onClick={() => setExportOpen((o) => !o)}>
+                📤 Export Excel ▾
+              </TbBtn>
+              {exportOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    right: 0,
+                    minWidth: '220px',
+                    background: 'var(--surface2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                    zIndex: 200,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {/* Export All */}
+                  <button
+                    onClick={handleExportAll}
+                    style={dropdownItemStyle}
+                  >
+                    <span style={{ opacity: 0.7 }}>📋</span> Export All ({allTCs.length} TCs)
+                  </button>
+
+                  {/* Export Selected */}
+                  {selectedIds.size > 0 && (
+                    <button
+                      onClick={handleExportSelected}
+                      style={dropdownItemStyle}
+                    >
+                      <span style={{ opacity: 0.7 }}>✅</span> Export Selected ({selectedIds.size})
+                    </button>
+                  )}
+
+                  {/* Divider + by use case */}
+                  {useCases.length > 0 && (
+                    <>
+                      <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+                      <div style={{ padding: '5px 12px 3px', fontSize: '9px', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                        By Use Case
+                      </div>
+                      <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                        {useCases.map((uc) => (
+                          <button
+                            key={uc}
+                            onClick={() => handleExportByUseCase(uc)}
+                            style={dropdownItemStyle}
+                          >
+                            <span style={{ opacity: 0.7 }}>📂</span> {uc}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            {canWrite && (
+              <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/writer`)}>
+                + Generate More
+              </TbBtn>
+            )}
+            {canWrite && (
+              <TbBtn
+                variant="primary"
+                disabled={!sendBtnEnabled}
+                style={!sendBtnEnabled ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
+                onClick={handleSendToExecution}
+              >
+                ▶ Send to Execution ({selectedIds.size})
+              </TbBtn>
+            )}
           </>
         }
       />
@@ -487,12 +608,21 @@ export default function TCLibrary() {
                   onRunIndividual={handleRunIndividual}
                   onDeleteTc={handleDeleteTc}
                   onDeleteGroup={handleDeleteGroup}
+                  onEditTc={setEditingTc}
                 />
               );
             })}
           </div>
         )}
       </div>
+
+      {editingTc && (
+        <EditTCModal
+          tc={editingTc}
+          onSave={handleSaveEdit}
+          onClose={() => setEditingTc(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/albin/AppData/Local/Temp/**)",
+      "PowerShell(docker exec qa-api sh -c \"ls /app/node_modules/.bin/ | grep prisma\")",
+      "PowerShell(docker exec qa-api sh -c \"ls /app/packages/api/node_modules/.bin/ 2>/dev/null | head -20; ls /app/node_modules/@prisma/ 2>/dev/null | head -10\")",
+      "PowerShell(docker exec qa-api sh -c \"cd /app && /app/packages/api/node_modules/.bin/prisma db push --schema packages/api/prisma/schema.prisma\")",
+      "Bash(mkdir -p \"c:/Users/albin/Sixdee telecom solutions pvt. ltd/AirtelAfrica-Ventas - Documents/Delivery/Automation/QA Infinity/qa-infinity/packages/api/prisma/migrations/20260524140000_add_suites\" && echo \"done\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\albin\\Sixdee telecom solutions pvt. ltd\\AirtelAfrica-Ventas - Documents\\Delivery\\Automation\\QA Infinity\\qa-infinity\\packages\\api\\prisma\\migrations"
+    ]
+  }
+}

@@ -25,21 +25,26 @@ const storage = multer.diskStorage({
   },
 });
 
+const ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'text/plain',
+  'text/markdown',
+]);
+
+const ALLOWED_EXTS = new Set(['.pdf', '.xlsx', '.xls', '.docx', '.doc', '.txt', '.md']);
+
 const fileFilter = (
   _req: Request,
   file: Express.Multer.File,
   cb: multer.FileFilterCallback,
 ) => {
-  const allowed = [
-    'application/pdf',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/msword',
-    'text/plain',
-    'text/markdown',
-  ];
-  if (allowed.includes(file.mimetype)) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  // Some browsers/OS send application/octet-stream for Office files — trust the extension
+  if (ALLOWED_MIMES.has(file.mimetype) || (file.mimetype === 'application/octet-stream' && ALLOWED_EXTS.has(ext))) {
     cb(null, true);
   } else {
     cb(new Error(`File type "${file.mimetype}" not supported`));

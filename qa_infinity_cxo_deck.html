@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QA Infinity — Executive Presentation · May 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy:       #06224A;
+    --navy-mid:   #0A2A57;
+    --blue:       #2563AB;
+    --blue-light: #60a5fa;
+    --orange:     #F47B20;
+    --gold:       #FFB347;
+    --teal:       #34d399;
+    --rose:       #f87171;
+    --surface:    #0f1623;
+    --surface2:   #141e30;
+    --border:     rgba(255,255,255,0.08);
+    --text:       #e2e8f0;
+    --text-mid:   #94a3b8;
+    --text-dim:   #64748b;
+    --sans:       'Open Sans', system-ui, sans-serif;
+    --mono:       'JetBrains Mono', monospace;
+    --banner:     linear-gradient(90deg, #06224A 0%, #0A2A57 40%, #2563AB 70%, #F47B20 88%, #FFB347 100%);
+  }
+
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+  html {
+    scroll-snap-type: y mandatory;
+    scroll-behavior: smooth;
+    height: 100%;
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--navy);
+    color: var(--text);
+    height: 100%;
+    overflow-y: scroll;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── TOP BRAND BAR ── */
+  .brand-bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 4px;
+    background: var(--banner); z-index: 1000;
+  }
+
+  /* ── SLIDE FRAME ── */
+  .slide {
+    scroll-snap-align: start;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 64px 80px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ── SLIDE NUMBERS ── */
+  .slide-num {
+    position: absolute; bottom: 36px; right: 48px;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--text-dim); letter-spacing: 2px;
+  }
+
+  /* ── PROGRESS DOTS ── */
+  .progress {
+    position: fixed; right: 24px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 10px; z-index: 500;
+  }
+  .pdot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(255,255,255,0.2); cursor: pointer;
+    transition: all .3s;
+  }
+  .pdot.active { background: var(--gold); box-shadow: 0 0 8px rgba(255,179,71,0.6); }
+  @media(max-width:900px){.progress{display:none}}
+
+  /* ── EYEBROW LABEL ── */
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .eyebrow::before {
+    content: ''; display: block; width: 28px; height: 2px;
+    background: var(--gold);
+  }
+
+  /* ── HEADLINE ── */
+  h1.slide-title {
+    font-size: clamp(48px, 7vw, 88px);
+    font-weight: 800; line-height: 1.0;
+    letter-spacing: -2px; color: var(--text);
+  }
+  h2.slide-title {
+    font-size: clamp(32px, 4.5vw, 56px);
+    font-weight: 800; line-height: 1.1;
+    letter-spacing: -1.5px; color: var(--text);
+  }
+
+  .accent-blue   { color: var(--blue-light); }
+  .accent-gold   { color: var(--gold); }
+  .accent-orange { color: var(--orange); }
+  .accent-teal   { color: var(--teal); }
+
+  .slide-body {
+    font-size: 18px; color: var(--text-mid); line-height: 1.8;
+    max-width: 680px; margin-top: 20px; font-weight: 400;
+  }
+
+  /* ── COVER SLIDE ── */
+  .slide-cover {
+    background: linear-gradient(135deg, #06224A 0%, #0A2A57 45%, #0f1a35 100%);
+    align-items: center; text-align: center;
+  }
+  .cover-logo {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 3px;
+    color: rgba(255,255,255,0.3); margin-bottom: 48px;
+    text-transform: uppercase;
+  }
+  .cover-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(96,165,250,0.1); border: 1px solid rgba(96,165,250,0.3);
+    border-radius: 100px; padding: 8px 24px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 2px;
+    color: var(--blue-light); margin-bottom: 36px;
+  }
+  .cover-dot { width: 6px; height: 6px; background: var(--blue-light); border-radius: 50%; animation: blink 1.5s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  .cover-title-qa {
+    font-size: clamp(64px, 11vw, 130px); font-weight: 800;
+    line-height: 0.9; letter-spacing: -4px;
+    background: linear-gradient(135deg, #60a5fa 0%, #2563AB 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .cover-title-inf {
+    font-size: clamp(64px, 11vw, 130px); font-weight: 800;
+    line-height: 0.9; letter-spacing: -4px;
+    background: linear-gradient(135deg, #FFB347 0%, #F47B20 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .cover-sub {
+    font-size: 20px; font-weight: 300; color: rgba(255,255,255,0.55);
+    margin-top: 28px; letter-spacing: .5px; line-height: 1.7;
+  }
+  .cover-meta {
+    display: flex; gap: 32px; justify-content: center; margin-top: 48px;
+    flex-wrap: wrap;
+  }
+  .cover-meta-item {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 2px;
+    color: rgba(255,255,255,0.25); text-transform: uppercase;
+  }
+
+  /* ── GRID LAYOUTS ── */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 44px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 44px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 44px; }
+
+  /* ── PAIN POINT CARDS ── */
+  .pain-card {
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px;
+    border-top: 3px solid var(--rose);
+  }
+  .pain-icon { font-size: 32px; margin-bottom: 14px; }
+  .pain-head { font-size: 17px; font-weight: 700; margin-bottom: 8px; line-height: 1.3; }
+  .pain-body { font-size: 14px; color: var(--text-mid); line-height: 1.75; }
+  .pain-stat { font-family: var(--mono); font-size: 28px; font-weight: 600; color: var(--rose); margin-top: 14px; }
+
+  /* ── PIPELINE STRIP ── */
+  .pipeline {
+    display: flex; align-items: stretch; gap: 0; margin-top: 44px;
+    overflow-x: auto; padding-bottom: 4px;
+  }
+  .pipe-step {
+    flex: 1; min-width: 110px;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 14px; text-align: center;
+    position: relative;
+  }
+  .pipe-step + .pipe-step { margin-left: -1px; border-left-color: transparent; }
+  .pipe-step:first-child { border-radius: 10px 0 0 10px; }
+  .pipe-step:last-child { border-radius: 0 10px 10px 0; }
+  .pipe-icon { font-size: 26px; margin-bottom: 10px; }
+  .pipe-label { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  .pipe-sub { font-family: var(--mono); font-size: 10px; color: var(--text-dim); line-height: 1.5; }
+  .pipe-arrow { display: flex; align-items: center; color: var(--text-dim); font-size: 18px; padding: 0 4px; flex-shrink: 0; align-self: center; }
+
+  /* ── KPI STAT ── */
+  .kpi-card {
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 24px; text-align: center;
+  }
+  .kpi-num { font-size: 52px; font-weight: 800; letter-spacing: -2px; line-height: 1; }
+  .kpi-unit { font-size: 22px; font-weight: 700; vertical-align: super; }
+  .kpi-label { font-size: 13px; color: var(--text-mid); margin-top: 10px; line-height: 1.5; }
+  .kpi-note { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+
+  /* ── CAPABILITY CARDS ── */
+  .cap-card {
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 12px; padding: 26px; position: relative; overflow: hidden;
+  }
+  .cap-card-bar { height: 3px; position: absolute; top: 0; left: 0; right: 0; border-radius: 12px 12px 0 0; }
+  .cap-icon { font-size: 28px; margin-bottom: 14px; }
+  .cap-head { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .cap-body { font-size: 13.5px; color: var(--text-mid); line-height: 1.75; }
+  .cap-result { font-family: var(--mono); font-size: 11px; margin-top: 14px; padding: 6px 10px; border-radius: 6px; display: inline-block; }
+
+  /* ── STATUS TIMELINE ── */
+  .timeline { margin-top: 40px; display: flex; flex-direction: column; gap: 0; }
+  .tl-item { display: flex; gap: 24px; align-items: flex-start; padding: 20px 0; border-bottom: 1px solid var(--border); }
+  .tl-item:last-child { border-bottom: none; }
+  .tl-indicator { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; margin-top: 2px; }
+  .tl-content { flex: 1; }
+  .tl-phase { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+  .tl-head { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .tl-body { font-size: 13.5px; color: var(--text-mid); line-height: 1.7; }
+  .tl-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-family: var(--mono); font-size: 10px; font-weight: 600; margin-top: 8px; }
+
+  /* ── ASK CARDS ── */
+  .ask-card {
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px; display: flex; gap: 20px; align-items: flex-start;
+  }
+  .ask-num { font-family: var(--mono); font-size: 28px; font-weight: 600; color: var(--gold); flex-shrink: 0; line-height: 1; }
+  .ask-head { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .ask-body { font-size: 14px; color: var(--text-mid); line-height: 1.7; }
+
+  /* ── DIVIDER LINE ── */
+  .rule { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  /* ── QUOTE BLOCK ── */
+  .pull-quote {
+    background: linear-gradient(135deg, rgba(37,99,171,0.08), rgba(244,123,32,0.06));
+    border-left: 4px solid var(--blue-light);
+    border-radius: 0 12px 12px 0;
+    padding: 28px 32px; margin-top: 40px;
+    font-size: 22px; font-weight: 600; line-height: 1.55;
+    color: var(--text);
+  }
+  .pull-quote em { color: var(--gold); font-style: normal; }
+
+  /* ── BG DECORATION ── */
+  .bg-glow {
+    position: absolute; border-radius: 50%; filter: blur(90px);
+    opacity: 0.07; pointer-events: none;
+  }
+  .bg-glow-blue { background: #2563AB; }
+  .bg-glow-orange { background: #F47B20; }
+  .bg-glow-teal { background: #34d399; }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--navy); }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+  @media(max-width: 900px) {
+    .slide { padding: 48px 28px; }
+    .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .pipeline { flex-wrap: wrap; }
+    .pipe-step { border-radius: 10px !important; margin-left: 0 !important; border-left-color: var(--border) !important; }
+    .pipe-arrow { display: none; }
+  }
+  @media(max-width: 600px) {
+    .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    h1.slide-title { font-size: 40px; }
+    h2.slide-title { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Brand bar -->
+<div class="brand-bar"></div>
+
+<!-- Progress dots -->
+<nav class="progress" id="progress"></nav>
+
+<!-- ═══════════════════ SLIDE 1 · COVER ═══════════════════ -->
+<section class="slide slide-cover" id="s1">
+  <div class="bg-glow bg-glow-blue" style="width:700px;height:700px;top:-200px;left:-200px;"></div>
+  <div class="bg-glow bg-glow-orange" style="width:500px;height:500px;bottom:-150px;right:-100px;"></div>
+
+  <div class="cover-logo">Sixdee Technology · Airtel Africa Ventas Platform</div>
+
+  <div class="cover-badge"><div class="cover-dot"></div>Executive Briefing · May 2026</div>
+
+  <div class="cover-title-qa">QA</div>
+  <div class="cover-title-inf">INFINITY</div>
+
+  <div class="cover-sub">
+    Autonomous Quality Engineering<br>
+    From Requirement to Test Report — Without Human Handoffs.
+  </div>
+
+  <div class="cover-meta">
+    <span class="cover-meta-item">v1.0.0 Production Build</span>
+    <span class="cover-meta-item">Live · May 2026</span>
+    <span class="cover-meta-item">Confidential</span>
+  </div>
+  <div class="slide-num">01 / 07</div>
+</section>
+
+<!-- ═══════════════════ SLIDE 2 · THE PROBLEM ═══════════════════ -->
+<section class="slide" id="s2" style="background: linear-gradient(160deg, #0a0e17 0%, #0f1623 100%);">
+  <div class="bg-glow bg-glow-blue" style="width:400px;height:400px;top:-100px;right:-50px;"></div>
+
+  <div class="eyebrow">The Challenge</div>
+  <h2 class="slide-title">Testing was our<br><span class="accent-blue">biggest bottleneck.</span></h2>
+  <p class="slide-body">Before QA Infinity, quality validation was manual, slow, and unpredictable — creating release anxiety across every sprint.</p>
+
+  <div class="grid-3">
+    <div class="pain-card">
+      <div class="pain-icon">⏳</div>
+      <div class="pain-head">Weeks to Write Test Cases</div>
+      <div class="pain-body">Business analysts wrote test cases in spreadsheets. Each story required 2–5 days of manual documentation before testing could begin.</div>
+      <div class="pain-stat">5 days</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-icon">🔁</div>
+      <div class="pain-head">Scripts Break on Every UI Change</div>
+      <div class="pain-body">Automation scripts failed the moment the UI changed. Teams spent more time maintaining broken tests than catching real bugs.</div>
+      <div class="pain-stat">40% failure</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-icon">📊</div>
+      <div class="pain-head">No Visibility Until It's Too Late</div>
+      <div class="pain-body">Test results lived in spreadsheets and email threads. Leadership had no real-time view of quality across the platform.</div>
+      <div class="pain-stat">Zero dashboards</div>
+    </div>
+  </div>
+
+  <div class="slide-num">02 / 07</div>
+</section>
+
+<!-- ═══════════════════ SLIDE 3 · THE SOLUTION ═══════════════════ -->
+<section class="slide" id="s3" style="background: linear-gradient(160deg, #0f1623 0%, #141e30 100%);">
+  <div class="bg-glow bg-glow-teal" style="width:450px;height:450px;bottom:-100px;left:-80px;"></div>
+
+  <div class="eyebrow">Our Solution</div>
+  <h2 class="slide-title">One trigger.<br><span class="accent-gold">Everything else is automated.</span></h2>
+  <p class="slide-body">QA Infinity is a self-running quality engine. A team member — or a Jira ticket — starts the process. Eight AI agents do the rest.</p>
+
+  <div class="pipeline">
+    <div class="pipe-step" style="border-top: 3px solid var(--gold);">
+      <div class="pipe-icon">⚡</div>
+      <div class="pipe-label">Trigger</div>
+      <div class="pipe-sub">Jira story, CI/CD event, or scheduled run</div>
+    </div>
+    <div class="pipe-arrow">›</div>
+    <div class="pipe-step" style="border-top: 3px solid var(--blue-light);">
+      <div class="pipe-icon">🧠</div>
+      <div class="pipe-label">Write Test Cases</div>
+      <div class="pipe-sub">AI reads requirements and writes structured test cases</div>
+    </div>
+    <div class="pipe-arrow">›</div>
+    <div class="pipe-step" style="border-top: 3px solid var(--teal);">
+      <div class="pipe-icon">⚙️</div>
+      <div class="pipe-label">Generate Scripts</div>
+      <div class="pipe-sub">Automation code is generated — no developer needed</div>
+    </div>
+    <div class="pipe-arrow">›</div>
+    <div class="pipe-step" style="border-top: 3px solid var(--orange);">
+      <div class="pipe-icon">▶️</div>
+      <div class="pipe-label">Run Tests</div>
+      <div class="pipe-sub">Real browser tests run against UAT or Production</div>
+    </div>
+    <div class="pipe-arrow">›</div>
+    <div class="pipe-step" style="border-top: 3px solid var(--rose);">
+      <div class="pipe-icon">🔧</div>
+      <div class="pipe-label">Self-Heal</div>
+      <div class="pipe-sub">Broken scripts fix themselves when the UI changes</div>
+    </div>
+    <div class="pipe-arrow">›</div>
+    <div class="pipe-step" style="border-top: 3px solid #a78bfa;">
+      <div class="pipe-icon">📊</div>
+      <div class="pipe-label">Report</div>
+      <div class="pipe-sub">Pass/fail dashboard, email, Slack, and Jira — automatically</div>
+    </div>
+  </div>
+
+  <div class="pull-quote">
+    What used to take a QA team <em>2 weeks</em> now completes in <em>under 4 hours</em> — fully unattended.
+  </div>
+
+  <div class="slide-num">03 / 07</div>
+</section>
+
+<!-- ═══════════════════ SLIDE 4 · CAPABILITIES ═══════════════════ -->
+<section class="slide" id="s4" style="background: linear-gradient(160deg, #141e30 0%, #0a0e17 100%);">
+  <div class="bg-glow bg-glow-orange" style="width:350px;height:350px;top:-60px;right:0;"></div>
+
+  <div class="eyebrow">What It Does</div>
+  <h2 class="slide-title">Four capabilities.<br><span class="accent-orange">One platform.</span></h2>
+
+  <div class="grid-2" style="margin-top: 36px;">
+    <div class="cap-card">
+      <div class="cap-card-bar" style="background: linear-gradient(90deg, var(--blue-light), var(--teal));"></div>
+      <div class="cap-icon">🧠</div>
+      <div class="cap-head">AI Test Case Generation</div>
+      <div class="cap-body">The AI reads Jira stories, design documents, screenshots, and existing test cases — then writes comprehensive, structured test cases in minutes. No analyst time required.</div>
+      <div class="cap-result" style="background: rgba(96,165,250,0.1); color: var(--blue-light); border: 1px solid rgba(96,165,250,0.2);">≈ 90% faster than manual writing</div>
+    </div>
+
+    <div class="cap-card">
+      <div class="cap-card-bar" style="background: linear-gradient(90deg, var(--teal), var(--gold));"></div>
+      <div class="cap-icon">⚙️</div>
+      <div class="cap-head">Automated Script Creation</div>
+      <div class="cap-body">Test cases are automatically converted into Playwright automation scripts — the same professional-grade code a senior developer would write, with zero manual effort.</div>
+      <div class="cap-result" style="background: rgba(52,211,153,0.08); color: var(--teal); border: 1px solid rgba(52,211,153,0.2);">Zero developer time per script</div>
+    </div>
+
+    <div class="cap-card">
+      <div class="cap-card-bar" style="background: linear-gradient(90deg, var(--gold), var(--orange));"></div>
+      <div class="cap-icon">🔧</div>
+      <div class="cap-head">Self-Healing Automation</div>
+      <div class="cap-body">When a UI change breaks a test, QA Infinity detects the failure, identifies the new element, updates the script, and re-runs — all without a human touching it.</div>
+      <div class="cap-result" style="background: rgba(255,179,71,0.08); color: var(--gold); border: 1px solid rgba(255,179,71,0.2);">Tests stay green through UI changes</div>
+    </div>
+
+    <div class="cap-card">
+      <div class="cap-card-bar" style="background: linear-gradient(90deg, var(--orange), var(--rose));"></div>
+      <div class="cap-icon">📡</div>
+      <div class="cap-head">Live Reporting & Alerts</div>
+      <div class="cap-body">Every test run produces a timestamped report with pass/fail rates, failure screenshots, and trend history. Results push automatically to email, Slack, and Jira.</div>
+      <div class="cap-result" style="background: rgba(244,123,32,0.08); color: var(--orange); border: 1px solid rgba(244,123,32,0.2);">Real-time quality visibility</div>
+    </div>
+  </div>
+
+  <div class="slide-num">04 / 07</div>
+</section>
+
+<!-- ═══════════════════ SLIDE 5 · NUMBERS ═══════════════════ -->
+<section class="slide" id="s5" style="background: linear-gradient(160deg, #06224A 0%, #0A2A57 50%, #0f1623 100%);">
+  <div class="bg-glow bg-glow-blue" style="width:600px;height:600px;top:-150px;left:-150px;opacity:0.12;"></div>
+
+  <div class="eyebrow">By the Numbers</div>
+  <h2 class="slide-title">What we built.<br><span class="accent-blue">What it delivers.</span></h2>
+
+  <div class="grid-4" style="margin-top: 40px;">
+    <div class="kpi-card">
+      <div class="kpi-num" style="color: var(--blue-light);">8</div>
+      <div class="kpi-label">Specialized AI Agents working in sequence</div>
+      <div class="kpi-note">Writer · Scanner · Script · Executor · Healer · Reporter · Chat · Orchestrator</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-num accent-gold">90<span class="kpi-unit" style="font-size:28px;">%</span></div>
+      <div class="kpi-label">Reduction in time to produce test cases</div>
+      <div class="kpi-note">From days to minutes per story</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-num" style="color: var(--teal);">0</div>
+      <div class="kpi-label">Manual handoffs in the testing pipeline</div>
+      <div class="kpi-note">Fully unattended end-to-end</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-num" style="color: var(--orange);">70<span class="kpi-unit" style="font-size:28px;">+</span></div>
+      <div class="kpi-label">API endpoints live and tested in production</div>
+      <div class="kpi-note">14 UI pages · 18 data models</div>
+    </div>
+  </div>
+
+  <div class="grid-4" style="margin-top: 16px;">
+    <div class="kpi-card">
+      <div class="kpi-num" style="color: var(--blue-light);">1</div>
+      <div class="kpi-label">Command to deploy the entire platform</div>
+      <div class="kpi-note">docker compose up — no client install</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-num accent-gold">∞</div>
+      <div class="kpi-label">Projects supported simultaneously</div>
+      <div class="kpi-note">Multi-project, isolated workspaces</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-num" style="color: var(--teal);">24/7</div>
+      <div class="kpi-label">Automated test runs via scheduler</div>
+      <div class="kpi-note">Cron-based or on every deployment</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-num" style="color: var(--orange);">6</div>
+      <div class="kpi-label">Background workers running in parallel</div>
+      <div class="kpi-note">Scan · Run · Script · Report · Heal · Orchestrate</div>
+    </div>
+  </div>
+
+  <div class="slide-num">05 / 07</div>
+</section>
+
+<!-- ═══════════════════ SLIDE 6 · STATUS ═══════════════════ -->
+<section class="slide" id="s6" style="background: linear-gradient(160deg, #0f1623 0%, #141e30 100%);">
+  <div class="bg-glow bg-glow-teal" style="width:350px;height:350px;bottom:-80px;right:-60px;"></div>
+
+  <div class="eyebrow">Where We Stand</div>
+  <h2 class="slide-title">Built and live.<br><span class="accent-teal">Expanding further.</span></h2>
+
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-indicator" style="background: rgba(52,211,153,0.15); border: 2px solid var(--teal);">✓</div>
+      <div class="tl-content">
+        <div class="tl-phase">Completed · Q1–Q2 2026</div>
+        <div class="tl-head">Core Platform — Live in Production</div>
+        <div class="tl-body">Full test lifecycle automation deployed: AI test writing, browser-based UI scanning, Playwright script generation, parallel test execution, self-healing, real-time reports, and an embedded AI chat assistant for QA queries.</div>
+        <div class="tl-badge" style="background: rgba(52,211,153,0.1); color: var(--teal); border: 1px solid rgba(52,211,153,0.25);">● Live — v1.0.0</div>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-indicator" style="background: rgba(255,179,71,0.15); border: 2px solid var(--gold);">→</div>
+      <div class="tl-content">
+        <div class="tl-phase">In Progress · Q2 2026</div>
+        <div class="tl-head">Orchestration Agent — Full Pipeline Automation</div>
+        <div class="tl-body">One-click or Jira-triggered pipeline: the Orchestration Agent sequences all 8 agents end-to-end. A single webhook from a Jira story triggers TC generation, script creation, test run, and result publication — without anyone pressing a button.</div>
+        <div class="tl-badge" style="background: rgba(255,179,71,0.1); color: var(--gold); border: 1px solid rgba(255,179,71,0.25);">● In Development</div>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-indicator" style="background: rgba(96,165,250,0.1); border: 2px solid rgba(96,165,250,0.3); color: var(--text-dim);">○</div>
+      <div class="tl-content">
+        <div class="tl-phase">Planned · Q3 2026</div>
+        <div class="tl-head">Enterprise Expansion</div>
+        <div class="tl-body">SSO integration, audit trail logging, Confluence report publishing, multi-environment test matrix (UAT / Pre-prod / Production), and dedicated team workspaces for the Airtel Africa wider delivery organisation.</div>
+        <div class="tl-badge" style="background: rgba(96,165,250,0.06); color: var(--text-dim); border: 1px solid var(--border);">○ Roadmap</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-num">06 / 07</div>
+</section>
+
+<!-- ═══════════════════ SLIDE 7 · THE ASK ═══════════════════ -->
+<section class="slide" id="s7" style="background: linear-gradient(160deg, #06224A 0%, #0A2A57 60%, #141e30 100%);">
+  <div class="bg-glow bg-glow-orange" style="width:500px;height:500px;top:-150px;right:-100px;opacity:0.09;"></div>
+  <div class="bg-glow bg-glow-blue" style="width:400px;height:400px;bottom:-80px;left:-80px;opacity:0.1;"></div>
+
+  <div class="eyebrow">The Ask</div>
+  <h2 class="slide-title">Three decisions<br><span class="accent-gold">to unlock full ROI.</span></h2>
+  <p class="slide-body" style="max-width:700px">The platform is live and proven. These approvals will allow us to scale it across the entire Ventas delivery programme.</p>
+
+  <div style="display:flex; flex-direction:column; gap:16px; margin-top:40px;">
+    <div class="ask-card">
+      <div class="ask-num">01</div>
+      <div>
+        <div class="ask-head">Extend to All Active Ventas Sprints</div>
+        <div class="ask-body">Mandate QA Infinity as the primary QA tool for all ongoing Ventas stories. Each new Jira epic automatically feeds the AI test generation pipeline — eliminating analyst test-writing effort from every sprint going forward.</div>
+      </div>
+    </div>
+    <div class="ask-card">
+      <div class="ask-num">02</div>
+      <div>
+        <div class="ask-head">Approve Jira Webhook Integration</div>
+        <div class="ask-body">A simple Jira automation rule triggers QA Infinity when a story moves to "Ready for Test." This makes the entire pipeline hands-free. IT approval needed for the webhook configuration in the Airtel Africa Jira instance.</div>
+      </div>
+    </div>
+    <div class="ask-card">
+      <div class="ask-num">03</div>
+      <div>
+        <div class="ask-head">Allocate Dedicated Server for 24/7 Operation</div>
+        <div class="ask-body">QA Infinity currently runs on a shared dev machine. A dedicated Linux server (4 vCPU, 8 GB RAM) enables scheduled nightly test runs, always-on monitoring, and parallel multi-project execution — serving the full team uninterrupted.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-num">07 / 07</div>
+</section>
+
+<script>
+  // Build progress dots
+  const slides = document.querySelectorAll('.slide');
+  const nav = document.getElementById('progress');
+  const labels = ['Cover','Challenge','Solution','Capabilities','Numbers','Status','The Ask'];
+
+  slides.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'pdot' + (i === 0 ? ' active' : '');
+    d.title = labels[i] || '';
+    d.addEventListener('click', () => slides[i].scrollIntoView({ behavior: 'smooth' }));
+    nav.appendChild(d);
+  });
+
+  // Update active dot on scroll
+  const observer = new IntersectionObserver(
+    entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const idx = Array.from(slides).indexOf(entry.target);
+          document.querySelectorAll('.pdot').forEach((d, i) => {
+            d.classList.toggle('active', i === idx);
+          });
+        }
+      });
+    },
+    { threshold: 0.5 }
+  );
+  slides.forEach(s => observer.observe(s));
+
+  // Keyboard navigation
+  document.addEventListener('keydown', e => {
+    const dots = document.querySelectorAll('.pdot');
+    const active = Array.from(dots).findIndex(d => d.classList.contains('active'));
+    if ((e.key === 'ArrowDown' || e.key === 'PageDown') && active < slides.length - 1) {
+      slides[active + 1].scrollIntoView({ behavior: 'smooth' });
+    }
+    if ((e.key === 'ArrowUp' || e.key === 'PageUp') && active > 0) {
+      slides[active - 1].scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+</script>
+
+</body>
+</html>

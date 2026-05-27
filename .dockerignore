@@ -1,0 +1,11 @@
+**/node_modules
+**/node_modules/.vite
+**/node_modules/.cache
+**/.git
+**/dist
+**/local_artifacts
+**/*.log
+**/.env
+**/.env.*
+design_handoff_qa_infinity_airtel
+deployment-guide.html

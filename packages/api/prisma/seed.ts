@@ -82,6 +82,19 @@ async function main() {
   });
   console.log('✅  Admin user:', admin.email);
 
+  const albinHash = await bcrypt.hash('admin123', 12);
+  const albin = await prisma.user.upsert({
+    where: { email: 'albin.benny@6dtech.co.in' },
+    update: {},
+    create: {
+      email: 'albin.benny@6dtech.co.in',
+      name: 'Albin Benny',
+      passwordHash: albinHash,
+      globalRole: GlobalRole.SUPER_ADMIN,
+    },
+  });
+  console.log('✅  User:', albin.email);
+
   // ════════════════════════════════════════════════════════════════════════════
   // PROJECT 1 — Airtel Ventas Local Lab
   // Sales & Distribution platform — local development environment

@@ -66,9 +66,10 @@ export function useDeleteScript(projectId: string) {
 export function useUploadScript(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, testCaseId }: { file: File; testCaseId?: string }) => {
       const formData = new FormData();
       formData.append('file', file);
+      if (testCaseId) formData.append('testCaseId', testCaseId);
       const res = await api.post<Script>(
         `/projects/${projectId}/scripts/upload`,
         formData,
@@ -78,6 +79,42 @@ export function useUploadScript(projectId: string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+    },
+  });
+}
+
+export interface UploadWithExtractResult {
+  testCase: {
+    id: string;
+    tcId: string;
+    title: string;
+    status: string;
+    type: string;
+    useCaseTag: string | null;
+  };
+  script: {
+    id: string;
+    filename: string;
+    testCaseId: string;
+  };
+}
+
+export function useUploadScriptWithExtract(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post<UploadWithExtractResult>(
+        `/projects/${projectId}/scripts/upload-with-extract`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60_000 },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+      qc.invalidateQueries({ queryKey: ['testCases', projectId] });
     },
   });
 }

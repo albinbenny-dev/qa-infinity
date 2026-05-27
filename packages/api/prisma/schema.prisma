@@ -44,11 +44,17 @@ model Project {
   requirementDocs RequirementDoc[]
   testCases       TestCase[]
   scripts         Script[]
+  scriptJobs      ScriptJob[]
   runs            Run[]
   schedules       Schedule[]
+  suites          Suite[]
   heals           Heal[]
   reports         Report[]
   chatMessages    ChatMessage[]
+  chatMemories    ChatMemory[]
+  uiScans         UIScan[]
+  projectContext  ProjectContext?
+  agentTraces     AgentTrace[]
 
   @@index([createdBy])
 }
@@ -109,12 +115,16 @@ model TestCase {
   useCaseTag     String?
   status         String      @default("DRAFT")    // "DRAFT" | "APPROVED" | "DEPRECATED"
   priority       String      @default("MEDIUM")   // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
-  sourceRef      String?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  project        Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scripts        Script[]
-  runResults     RunResult[]
+  sourceRef        String?
+  generationHints  String?   // free-text locator/context hints injected into script agent
+  prerequisiteTcId String?                                                        // optional FK to another TC
+  prerequisiteTc   TestCase?  @relation("PrerequisiteOf", fields: [prerequisiteTcId], references: [id], onDelete: SetNull)
+  dependentTcs     TestCase[] @relation("PrerequisiteOf")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scripts          Script[]
+  runResults       RunResult[]
 
   @@unique([projectId, tcId])
   @@index([projectId])
@@ -124,31 +134,58 @@ model TestCase {
 }
 
 model Script {
-  id             String      @id @default(cuid())
-  projectId      String
-  testCaseId     String?
-  filename       String
-  content        String
-  isCustomUpload Boolean     @default(false)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  project        Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  testCase       TestCase?   @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
-  runResults     RunResult[]
+  id                 String      @id @default(cuid())
+  projectId          String
+  testCaseId         String?
+  filename           String
+  content            String
+  isCustomUpload     Boolean     @default(false)
+  isGolden           Boolean     @default(false)           // marked as a reference example for few-shot generation
+  verificationStatus String      @default("NOT_VERIFIED")  // "NOT_VERIFIED" | "VERIFIED" | "MANUAL_REVIEW"
+  suspectedIssue     String?     // AI-suggested cause when MANUAL_REVIEW
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  project            Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testCase           TestCase?   @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  runResults         RunResult[]
+  scriptJobs         ScriptJob[]
 
   @@index([projectId])
   @@index([testCaseId])
 }
 
+model ScriptJob {
+  id              String    @id @default(cuid())
+  projectId       String
+  testCaseId      String
+  scriptId        String?
+  phase           String    @default("QUEUED")    // "QUEUED" | "GENERATING" | "GENERATED" | "QUEUED_VERIFY" | "VERIFYING" | "HEALING" | "VERIFIED" | "MANUAL_REVIEW" | "FAILED"
+  withHeal        Boolean   @default(false)
+  healAttempts    Int       @default(0)
+  maxHealAttempts Int       @default(2)
+  lastError       String?
+  suspectedIssue  String?
+  healType        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  script          Script?   @relation(fields: [scriptId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([projectId, phase])
+  @@index([projectId, createdAt])
+}
+
 model Run {
   id          String    @id @default(cuid())
   projectId   String
+  runSeq      Int       @default(0)          // global auto-increment assigned at creation
   name        String
   environment String
   status      String    @default("PENDING")  // "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED"
   startedAt   DateTime?
   completedAt DateTime?
-  triggerType String    @default("MANUAL")   // "MANUAL" | "SCHEDULED" | "INDIVIDUAL" | "GROUP"
+  triggerType String    @default("MANUAL")   // "MANUAL" | "SCHEDULED" | "INDIVIDUAL" | "GROUP" | "HEAL_RERUN"
   createdAt   DateTime  @default(now())
   project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   results     RunResult[]
@@ -164,17 +201,19 @@ model RunResult {
   runId          String
   testCaseId     String
   scriptId       String?
-  status         String    // "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED"
+  status         String    // "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED" | "SKIPPED"
   duration       Int?
   errorMessage   String?
   screenshotPath String?
   tracePath      String?
+  videoPath      String?
   createdAt      DateTime  @default(now())
   run            Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
   testCase       TestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
   script         Script?   @relation(fields: [scriptId], references: [id], onDelete: SetNull)
   heals          Heal[]
 
+  @@unique([runId, testCaseId])
   @@index([runId])
   @@index([testCaseId])
 }
@@ -196,19 +235,34 @@ model Schedule {
   @@index([projectId, isActive])
 }
 
+model Suite {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  testCaseIds String   @default("[]")  // JSON: string[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
 model Heal {
-  id           String   @id @default(cuid())
+  id           String      @id @default(cuid())
   projectId    String
   runResultId  String
-  type         String   // "SELECTOR" | "FLOW" | "API_SCHEMA"
+  type         String      // "SELECTOR" | "FLOW" | "API_SCHEMA"
   originalCode String
   patchedCode  String
   confidence   Int
-  status       String   @default("PENDING")  // "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPLIED"
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  runResult    RunResult @relation(fields: [runResultId], references: [id], onDelete: Cascade)
+  summary      String?     // AI explanation from patcher chain
+  status       String      @default("PENDING")  // "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPLIED" | "EXHAUSTED"
+  agentTraceId String?     @unique // set when a live browser trace was run to diagnose the failure
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runResult    RunResult   @relation(fields: [runResultId], references: [id], onDelete: Cascade)
+  agentTrace   AgentTrace? @relation("HealTrace", fields: [agentTraceId], references: [id])
 
   @@index([projectId])
   @@index([projectId, status])
@@ -235,8 +289,99 @@ model ChatMessage {
   role           String   // "user" | "assistant"
   content        String
   actionType     String?
+  actionPayload  String?  // JSON: structured data for action cards
+  attachments    String?  // JSON: [{name, mimeType}] metadata only
   createdAt      DateTime @default(now())
   project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, conversationId])
+}
+
+model ChatMemory {
+  id        String   @id @default(cuid())
+  projectId String
+  content   String
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model UIScan {
+  id           String    @id @default(cuid())
+  projectId    String
+  status       String    @default("PENDING")  // "PENDING"|"RUNNING"|"COMPLETED"|"FAILED"
+  triggeredBy  String
+  startedAt    DateTime?
+  completedAt  DateTime?
+  progress     Int       @default(0)          // 0–100
+  currentPage  String?
+  pagesTotal   Int       @default(0)
+  pagesScanned Int       @default(0)
+  rawPageData  String?                        // JSON: PageScanData[]
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectId, status])
+}
+
+model ProjectContext {
+  id                 String   @id @default(cuid())
+  projectId          String   @unique
+  loginInstructions  String?  // JSON: LoginInstructions
+  navigationMap      String?  // JSON: NavNode[]
+  pageLocators       String?  // JSON: Record<urlPattern, PageLocators>
+  useCaseSummary     String?  // JSON: UseCaseSummary[]
+  customInstructions String?  // Free-text guidance for scanner & agents
+  pendingTCDraft     String?  // JSON: GeneratedTestCase[] awaiting review in Test Writer
+  agentLearnings     String?  // JSON: AgentLearning[] — verified locators/flows per menu from agentic traces
+  lastScanId         String?
+  updatedAt          DateTime @updatedAt
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model AgentTrace {
+  id           String    @id @default(cuid())
+  projectId    String
+  // "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "BLOCKED"
+  status       String    @default("QUEUED")
+  testGoal     String
+  menuContext  String?
+  targetUrl    String?
+  stepCount    Int       @default(0)
+  currentStep  String?
+  actionLog    String?   // JSON: RecordedAction[]
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  heal         Heal?     @relation("HealTrace")  // back-ref: set when trace was spawned by healing agent
+
+  @@index([projectId])
+  @@index([projectId, status])
+}
+
+model AgentConfig {
+  agentName String   @id
+  enabled   Boolean  @default(true)
+  settings  String?  // JSON: agent-specific settings (e.g. {"selectorTraceThreshold":60} for healing-agent)
+  updatedAt DateTime @updatedAt
+}
+
+model LlmCall {
+  id               String   @id @default(cuid())
+  agentName        String   // "script-agent" | "healing-agent" | "writer-agent" | "chat-agent" | "reports-agent" | "ui-context-agent"
+  projectId        String?
+  model            String
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  durationMs       Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  @@index([agentName])
+  @@index([projectId])
+  @@index([createdAt])
 }

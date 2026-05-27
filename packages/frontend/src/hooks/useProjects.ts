@@ -72,8 +72,8 @@ export function useUpdateProject(projectId: string) {
 export function useDeleteProject(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      await api.delete(`/projects/${projectId}`);
+    mutationFn: async (confirmName: string) => {
+      await api.delete(`/projects/${projectId}`, { data: { confirmName } });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] });
@@ -157,6 +157,44 @@ export function useProjectMembers(projectId: string | undefined) {
   });
 }
 
+export function useAddMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ email, role }: { email: string; role: string }) => {
+      const res = await api.post<{ member: ProjectMember }>(`/projects/${projectId}/members`, { email, role });
+      return res.data.member;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+}
+
+export function useRemoveMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      await api.delete(`/projects/${projectId}/members/${userId}`);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+}
+
+export function useUpdateMemberRole(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const res = await api.put<{ member: ProjectMember }>(`/projects/${projectId}/members/${userId}`, { role });
+      return res.data.member;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+}
+
 export function useRequirementDocs(projectId: string | undefined) {
   return useQuery({
     queryKey: ['req-docs', projectId],
@@ -165,5 +203,48 @@ export function useRequirementDocs(projectId: string | undefined) {
       return res.data.docs;
     },
     enabled: !!projectId,
+  });
+}
+
+export function useUploadReqDoc(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api.post<{ doc: RequirementDoc }>(
+        `/projects/${projectId}/req-docs`,
+        form,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return res.data.doc;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['req-docs', projectId] });
+    },
+  });
+}
+
+export function useToggleReqDoc(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
+      await api.patch(`/projects/${projectId}/req-docs/${id}`, { isActive });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['req-docs', projectId] });
+    },
+  });
+}
+
+export function useDeleteReqDoc(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/projects/${projectId}/req-docs/${id}`);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['req-docs', projectId] });
+    },
   });
 }

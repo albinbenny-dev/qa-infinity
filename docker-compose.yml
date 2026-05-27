@@ -19,6 +19,8 @@ services:
     image: redis:7-alpine
     container_name: qa-redis
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Kolkata
     ports:
       - "6379:6379"
     healthcheck:
@@ -43,6 +45,7 @@ services:
     env_file:
       - .env
     environment:
+      - TZ=Asia/Kolkata
       - NODE_ENV=development
       - PORT=4000
       - REDIS_URL=redis://qa-redis:6379
@@ -75,6 +78,8 @@ services:
       dockerfile: packages/runner/Dockerfile
     container_name: qa-runner
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Kolkata
     depends_on:
       qa-api:
         condition: service_healthy
@@ -91,6 +96,8 @@ services:
       dockerfile: packages/frontend/Dockerfile
     container_name: qa-ui
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Kolkata
     ports:
       - "3000:80"
     depends_on:

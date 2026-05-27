@@ -12,15 +12,6 @@ interface SelectionBarProps {
   visible: boolean;
 }
 
-const AIRTEL_USE_CASES = [
-  'Primary Sales',
-  'Stock Management',
-  'Dealer Onboarding & KYC',
-  'Sales API',
-  'Secondary Sales',
-  'Distributor API',
-];
-
 export default function SelectionBar({
   selectedCount,
   useCaseOptions,
@@ -36,10 +27,7 @@ export default function SelectionBar({
   const [newUCName, setNewUCName] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
-  const allOptions = [
-    ...AIRTEL_USE_CASES,
-    ...useCaseOptions.filter((uc) => !AIRTEL_USE_CASES.includes(uc)),
-  ];
+  const allOptions = useCaseOptions;
 
   function handleMoveTargetChange(val: string) {
     if (val === '__new__') {

@@ -1,8 +1,8 @@
 FROM node:20-alpine
 
 # Install pnpm, curl, and Chromium for UI screenshot capture
-RUN npm install -g pnpm@9 && \
-    apk add --no-cache curl openssl openssl-dev \
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate && \
+    apk add --no-cache curl openssl openssl-dev tzdata \
       chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 # Tell playwright-core where to find the system Chromium
@@ -14,11 +14,13 @@ WORKDIR /app
 # Copy workspace files for dependency resolution
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/api/package.json ./packages/api/
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Copy Prisma schema and generate client
+# Use the local prisma binary (v5.22.0) — NOT npx which may pull a different version from cache
 COPY packages/api/prisma ./packages/api/prisma
-RUN cd packages/api && npx prisma generate
+RUN cd packages/api && ./node_modules/.bin/prisma generate
 
 # Copy source
 COPY packages/api/src ./packages/api/src
@@ -29,4 +31,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-CMD ["pnpm", "--filter", "@qa-infinity/api", "dev"]
+CMD sh -c "cd packages/api && ./node_modules/.bin/prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"

@@ -16,10 +16,24 @@ interface GenerateInput {
   label: string;
 }
 
+interface SeedTCPayload {
+  title: string;
+  steps: string[];
+  expectedResult: string;
+  useCaseTag?: string;
+  description?: string;
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  type?: 'UI' | 'API' | 'SIT';
+  preConditions?: string;
+  testData?: string;
+  notes?: string;
+}
+
 interface GenerateRequest {
   inputs: GenerateInput[];
   testTypes: ('UI' | 'API' | 'SIT')[];
   additionalContext?: string;
+  seedTestCases?: SeedTCPayload[];
 }
 
 interface GenerateResponse {
@@ -74,6 +88,18 @@ export function useGenerateTestCases(projectId: string) {
   });
 }
 
+export function useParseSeedFile(projectId: string) {
+  return useMutation({
+    mutationFn: async (filePath: string) => {
+      const res = await api.post<{ seedTCs: SeedTCPayload[] }>(
+        `/projects/${projectId}/test-cases/parse-seed`,
+        { filePath },
+      );
+      return res.data.seedTCs;
+    },
+  });
+}
+
 export function useSaveTestCases(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -87,6 +113,7 @@ export function useSaveTestCases(projectId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }
@@ -115,6 +142,7 @@ export function useDeleteTestCase(projectId: string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }
@@ -193,6 +221,7 @@ export function useBulkDelete(projectId: string) {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['tc-library-stats', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }
@@ -209,6 +238,32 @@ export function useBulkAddTag(projectId: string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+    },
+  });
+}
+
+// ── Agentic Browser Trace ──────────────────────────────────────────────────
+
+export interface AgentTraceRequest {
+  targetUrl: string;
+  menuContext: string;
+  username?: string;
+  password?: string;
+  additionalContext?: string;
+  seedSteps?: string[];
+  testTypes?: ('UI' | 'API' | 'SIT')[];
+  envConfigId?: string;
+}
+
+export function useStartAgentTrace(projectId: string) {
+  return useMutation({
+    mutationFn: async (req: AgentTraceRequest) => {
+      const res = await api.post<{ agentTraceId: string }>(
+        `/projects/${projectId}/test-cases/agent-trace`,
+        req,
+        { timeout: 15_000 },
+      );
+      return res.data;
     },
   });
 }

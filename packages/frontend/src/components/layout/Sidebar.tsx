@@ -1,6 +1,11 @@
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useProjectStore } from '../../stores/projectStore';
+import { clearAuth } from '../../lib/auth';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
+import { useHealStats } from '../../hooks/useHeals';
+import { useSchedules } from '../../hooks/useRuns';
 import type { NavSection } from '../../types';
 
 interface SidebarProps {
@@ -10,7 +15,20 @@ interface SidebarProps {
 export default function Sidebar({ slug }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { activeProject, projects, currentUser } = useProjectStore();
+  const qc = useQueryClient();
+  const { activeProject, projects, currentUser, setCurrentUser } = useProjectStore();
+  const [logoutHover, setLogoutHover] = useState(false);
+
+  function handleLogout() {
+    clearAuth();
+    setCurrentUser(null);
+    qc.clear();
+    navigate('/login', { replace: true });
+  }
+  const projectId = activeProject?.id ?? '';
+  const { data: healStats } = useHealStats(projectId || undefined);
+  const { data: schedules = [] } = useSchedules(projectId || undefined);
+  const activeScheduleCount = schedules.filter((s) => s.isActive).length;
 
   const navSections: NavSection[] = slug
     ? [
@@ -27,7 +45,8 @@ export default function Sidebar({ slug }: SidebarProps) {
             { label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', badge: 'AI', badgeVariant: 'blue' },
             { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨' },
             { label: 'Execution', path: `/projects/${slug}/execution`, icon: '▶' },
-            { label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳' },
+            { label: 'Scheduler', path: `/projects/${slug}/scheduler`, icon: '⏰', badge: activeScheduleCount || undefined, badgeVariant: 'blue' },
+            { label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' },
           ],
         },
         {
@@ -52,6 +71,7 @@ export default function Sidebar({ slug }: SidebarProps) {
   const gradientIndex = activeProject
     ? activeProject.id.charCodeAt(0) % PROJECT_GRADIENTS.length
     : 0;
+  const projectColor = activeProject?.color ?? PROJECT_GRADIENTS[gradientIndex];
 
   return (
     <aside
@@ -82,7 +102,7 @@ export default function Sidebar({ slug }: SidebarProps) {
                 width: '32px',
                 height: '32px',
                 borderRadius: '8px',
-                background: PROJECT_GRADIENTS[gradientIndex],
+                background: projectColor,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -152,6 +172,25 @@ export default function Sidebar({ slug }: SidebarProps) {
             </span>
           )}
         </Link>
+        <Link
+          to="/usage"
+          className={`nav-item${location.pathname === '/usage' ? ' active' : ''}`}
+        >
+          <span className="nav-icon">💳</span>
+          AI Usage
+        </Link>
+        {currentUser?.globalRole === 'SUPER_ADMIN' && (
+          <Link
+            to="/admin/users"
+            className={`nav-item${location.pathname === '/admin/users' ? ' active' : ''}`}
+          >
+            <span className="nav-icon">👤</span>
+            User Management
+            <span className="nav-badge" style={{ marginLeft: 'auto', background: 'rgba(244,123,32,0.2)', color: 'var(--6d-orange)', fontSize: '8px', padding: '1px 5px' }}>
+              ADMIN
+            </span>
+          </Link>
+        )}
       </div>
 
       {/* Nav sections */}
@@ -200,10 +239,10 @@ export default function Sidebar({ slug }: SidebarProps) {
         )}
       </nav>
 
-      {/* User widget */}
+      {/* User widget + logout */}
       <div
         style={{
-          padding: '12px 10px',
+          padding: '10px 10px',
           borderTop: '1px solid var(--border)',
         }}
       >
@@ -211,12 +250,13 @@ export default function Sidebar({ slug }: SidebarProps) {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
-            padding: '8px 10px',
+            gap: '8px',
+            padding: '7px 8px',
             borderRadius: 'var(--radius)',
-            cursor: 'pointer',
+            background: 'transparent',
           }}
         >
+          {/* Avatar */}
           <div
             style={{
               width: '28px',
@@ -234,6 +274,8 @@ export default function Sidebar({ slug }: SidebarProps) {
           >
             {currentUser ? getInitials(currentUser.name) : 'U'}
           </div>
+
+          {/* Name + role */}
           <div style={{ flex: 1, overflow: 'hidden' }}>
             <div
               style={{
@@ -259,6 +301,31 @@ export default function Sidebar({ slug }: SidebarProps) {
               {currentUser?.globalRole === 'SUPER_ADMIN' ? 'Super Admin' : 'QA Engineer'}
             </div>
           </div>
+
+          {/* Logout button */}
+          <button
+            onClick={handleLogout}
+            onMouseEnter={() => setLogoutHover(true)}
+            onMouseLeave={() => setLogoutHover(false)}
+            title="Sign out"
+            style={{
+              flexShrink: 0,
+              width: '28px',
+              height: '28px',
+              borderRadius: '7px',
+              border: `1px solid ${logoutHover ? 'rgba(220,38,38,0.4)' : 'var(--border)'}`,
+              background: logoutHover ? 'rgba(220,38,38,0.10)' : 'transparent',
+              color: logoutHover ? 'var(--fail)' : 'var(--text-dim)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '13px',
+              transition: 'all 0.15s',
+            }}
+          >
+            ⏻
+          </button>
         </div>
       </div>
     </aside>

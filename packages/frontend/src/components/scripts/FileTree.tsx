@@ -6,6 +6,8 @@ interface FileTreeProps {
   activeId: string | null;
   onSelect: (script: Script) => void;
   onDelete: (script: Script) => void;
+  /** When false (Viewer role) the per-row delete button is hidden */
+  canDelete?: boolean;
 }
 
 function StatusDot({ status }: { status: Script['lastRunStatus'] }) {
@@ -74,11 +76,13 @@ function TreeItem({
   isActive,
   onSelect,
   onDelete,
+  canDelete = true,
 }: {
   script: Script;
   isActive: boolean;
   onSelect: (s: Script) => void;
   onDelete: (s: Script) => void;
+  canDelete?: boolean;
 }) {
   const [hovering, setHovering] = React.useState(false);
 
@@ -162,8 +166,8 @@ function TreeItem({
       {/* Status dot */}
       <StatusDot status={script.lastRunStatus} />
 
-      {/* Delete button on hover */}
-      {hovering && (
+      {/* Delete button on hover — hidden for Viewers */}
+      {hovering && canDelete && (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -214,7 +218,7 @@ function SectionLabel({ label }: { label: string }) {
   );
 }
 
-export default function FileTree({ scripts, activeId, onSelect, onDelete }: FileTreeProps) {
+export default function FileTree({ scripts, activeId, onSelect, onDelete, canDelete = true }: FileTreeProps) {
   const generated = scripts.filter((s) => !s.isCustomUpload);
   const custom = scripts.filter((s) => s.isCustomUpload);
 
@@ -249,6 +253,7 @@ export default function FileTree({ scripts, activeId, onSelect, onDelete }: File
               isActive={s.id === activeId}
               onSelect={onSelect}
               onDelete={onDelete}
+              canDelete={canDelete}
             />
           ))}
         </>
@@ -264,6 +269,7 @@ export default function FileTree({ scripts, activeId, onSelect, onDelete }: File
               isActive={s.id === activeId}
               onSelect={onSelect}
               onDelete={onDelete}
+              canDelete={canDelete}
             />
           ))}
         </>

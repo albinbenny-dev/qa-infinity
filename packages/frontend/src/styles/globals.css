@@ -84,6 +84,40 @@
 }
 
 /* ═══════════════════════════════════════════════════
+   SKELETON LOADING SHIMMER — 6D brand colors
+═══════════════════════════════════════════════════ */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface2) 25%,
+    var(--surface3) 50%,
+    var(--surface2) 75%
+  );
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius);
+}
+
+/* ═══════════════════════════════════════════════════
+   SCAN PROGRESS ANIMATION
+═══════════════════════════════════════════════════ */
+@keyframes scan-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+.scan-progress-fill-animated {
+  background-size: 200% 100%;
+  background-image: linear-gradient(90deg, var(--6d-blue) 0%, var(--6d-orange) 50%, var(--6d-blue) 100%);
+  animation: scan-shimmer 2s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════
    BASE
 ═══════════════════════════════════════════════════ */
 @layer base {
