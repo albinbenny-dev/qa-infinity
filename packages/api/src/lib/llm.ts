@@ -61,10 +61,26 @@ export function createLLM(options?: {
   temperature?: number;
   agentName?: string;
   projectId?: string;
+  /**
+   * Enable Anthropic prompt caching (only takes effect with provider=anthropic).
+   *
+   * When true, the model is initialised with the `prompt-caching-2024-07-31` beta
+   * header so that system messages tagged with `cache_control: {type:"ephemeral"}`
+   * are cached server-side.
+   *
+   * Cached tokens cost 10% of normal input price — large wins for agents that
+   * repeat the same long system prompt on every step (e.g. browser-agent).
+   *
+   * OpenRouter handles caching automatically on their end — no flag needed there.
+   *
+   * Default: true (opt-out by passing false)
+   */
+  enableCaching?: boolean;
 }): BaseChatModel {
   const temperature = options?.temperature ?? 0.2;
   const agentName = options?.agentName ?? 'unknown';
   const projectId = options?.projectId;
+  const enableCaching = options?.enableCaching ?? true;
   const provider = process.env.LLM_PROVIDER ?? 'openrouter';
 
   if (provider === 'anthropic') {
@@ -78,10 +94,23 @@ export function createLLM(options?: {
       temperature,
       maxTokens: 8192,
       callbacks: [new LlmUsageTracker(agentName, projectId, model)],
+      // ── Prompt caching: reduces cost by 90% on repeated system prompts ──
+      // Agents that call this model multiple times with the same system prompt
+      // (e.g. browser-agent running 20 steps) benefit most.
+      // Mark system message content with cache_control: {type:"ephemeral"} at
+      // the call site (see browserAgent.ts buildSystemPrompt).
+      ...(enableCaching && {
+        clientOptions: {
+          defaultHeaders: {
+            'anthropic-beta': 'prompt-caching-2024-07-31',
+          },
+        },
+      }),
     });
   }
 
   // Default: OpenRouter (OpenAI-compatible endpoint)
+  // OpenRouter applies its own prompt caching automatically — no header needed.
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set');
   const model = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4-5';

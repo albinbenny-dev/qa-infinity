@@ -10,6 +10,7 @@ import {
   UpdateProjectSchema,
   DeleteProjectSchema,
   CreateMemberSchema,
+  UpdateMemberSchema,
   CreateEnvConfigSchema,
   UpdateEnvConfigSchema,
   ToggleReqDocSchema,
@@ -288,7 +289,7 @@ projectRouter.get('/members', async (req: Request, res: Response, next: NextFunc
     const members = await prisma.projectMember.findMany({
       where: { projectId: req.project.id },
       include: { user: { select: { id: true, name: true, email: true, globalRole: true } } },
-      orderBy: { joinedAt: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
     res.json({ members });
   } catch (err) {
@@ -368,6 +369,53 @@ projectRouter.delete(
       });
 
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /api/projects/:projectId/members/:uid — change a member's role
+projectRouter.put(
+  '/members/:uid',
+  requireProjectAdmin as RequestHandler,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = UpdateMemberSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+        return;
+      }
+
+      const { uid } = req.params;
+      const { role } = parsed.data;
+
+      const existing = await prisma.projectMember.findUnique({
+        where: { projectId_userId: { projectId: req.project.id, userId: uid } },
+      });
+      if (!existing) {
+        res.status(404).json({ error: 'Member not found in this project' });
+        return;
+      }
+
+      // Prevent removing last ADMIN by demoting them
+      if (existing.role === 'ADMIN' && role !== 'ADMIN') {
+        const adminCount = await prisma.projectMember.count({
+          where: { projectId: req.project.id, role: 'ADMIN' },
+        });
+        if (adminCount <= 1) {
+          res.status(400).json({ error: 'Cannot demote the last ADMIN of a project' });
+          return;
+        }
+      }
+
+      const updated = await prisma.projectMember.update({
+        where: { projectId_userId: { projectId: req.project.id, userId: uid } },
+        data: { role },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
+
+      res.json({ member: updated });
     } catch (err) {
       next(err);
     }

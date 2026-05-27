@@ -18,8 +18,9 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 # Copy Prisma schema and generate client
+# Use the local prisma binary (v5.22.0) — NOT npx which may pull a different version from cache
 COPY packages/api/prisma ./packages/api/prisma
-RUN cd packages/api && npx prisma generate
+RUN cd packages/api && ./node_modules/.bin/prisma generate
 
 # Copy source
 COPY packages/api/src ./packages/api/src
@@ -30,4 +31,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-CMD sh -c "cd packages/api && npx prisma migrate resolve --rolled-back 20260525065033_add_prerequisite_tc 2>/dev/null || true && npx prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"
+CMD sh -c "cd packages/api && ./node_modules/.bin/prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"

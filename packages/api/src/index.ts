@@ -14,6 +14,7 @@ import { startHealWorker } from './jobs/healWorker.js';
 import { startScanWorker } from './jobs/scanWorker.js';
 import { startScriptGenWorker } from './jobs/scriptGenWorker.js';
 import { startScriptVerifyWorker } from './jobs/scriptVerifyWorker.js';
+import { startAgentScanWorker } from './jobs/agentScanWorker.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -135,19 +136,36 @@ httpServer.listen(PORT, () => {
   console.log(`[qa-api] Environment     → ${process.env.NODE_ENV ?? 'development'}`);
   console.log(`[qa-api] Socket.io       → /runs namespace ready`);
 
-  // Start BullMQ worker only if Redis is configured
-  if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {
+  // Cancel interrupted HEAL_RERUN runs BEFORE workers attach so stalled BullMQ
+  // jobs see a terminal status and exit instead of re-executing the healing loop.
+  void (async () => {
     try {
-      startRunWorker();
-      startHealWorker();
-      startScanWorker();
-      startScriptGenWorker();
-      startScriptVerifyWorker();
+      const cleaned = await prisma.run.updateMany({
+        where: { triggerType: 'HEAL_RERUN', status: { in: ['PENDING', 'RUNNING'] } },
+        data: { status: 'CANCELLED', completedAt: new Date() },
+      });
+      if (cleaned.count > 0) {
+        console.log(`[qa-api] Startup cleanup: cancelled ${cleaned.count} interrupted HEAL_RERUN run(s)`);
+      }
     } catch (err) {
-      console.warn('[qa-api] Workers failed to start (Redis may be unavailable):', (err as Error).message);
+      console.warn('[qa-api] Startup cleanup failed (non-fatal):', (err as Error).message);
     }
-  }
 
-  // Load saved schedules from DB
-  void loadSchedules();
+    // Start BullMQ workers only after cleanup so they see the cancelled state
+    if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {
+      try {
+        startRunWorker();
+        startHealWorker();
+        startScanWorker();
+        startScriptGenWorker();
+        startScriptVerifyWorker();
+        startAgentScanWorker();
+      } catch (err) {
+        console.warn('[qa-api] Workers failed to start (Redis may be unavailable):', (err as Error).message);
+      }
+    }
+
+    // Load saved schedules from DB
+    void loadSchedules();
+  })();
 });

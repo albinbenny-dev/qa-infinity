@@ -477,7 +477,7 @@ export default function RunHistoryTable({ projectId, runs, onExport, onGenerate,
 
   async function handleHeal(runId: string) {
     try {
-      const result = await triggerHeal.mutateAsync(runId);
+      const result = await triggerHeal.mutateAsync({ runId });
       if (result.count > 0) {
         toast.success(`${result.count} failed test${result.count !== 1 ? 's' : ''} sent to Healing Agent`);
       }

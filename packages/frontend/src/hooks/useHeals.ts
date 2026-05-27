@@ -35,10 +35,11 @@ export function useHealStats(projectId: string | undefined) {
 export function useTriggerHeal(projectId: string, onNoHeals?: () => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (runId: string) =>
+    mutationFn: ({ runId, runResultIds }: { runId: string; runResultIds?: string[] }) =>
       api
         .post<{ message: string; count: number }>(
           `/projects/${projectId}/heals/trigger/${runId}`,
+          { runResultIds },
         )
         .then((r) => r.data),
     onSuccess: (data) => {
@@ -52,14 +53,15 @@ export function useTriggerHeal(projectId: string, onNoHeals?: () => void) {
   });
 }
 
-// New: POST /:healId/approve — applies patch + re-queues test
+// POST /:healId/approve — applies patch; optional rerun: true queues a single INDIVIDUAL re-run
 export function useApproveHeal(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (healId: string) =>
+    mutationFn: ({ healId, rerun }: { healId: string; rerun: boolean }) =>
       api
-        .post<{ message: string; runId: string }>(
+        .post<{ message: string; runId?: string }>(
           `/projects/${projectId}/heals/${healId}/approve`,
+          { rerun },
         )
         .then((r) => r.data),
     onSuccess: () => {
@@ -124,6 +126,24 @@ export function useDismissHeal(projectId: string) {
     mutationFn: (healId: string) =>
       api
         .delete<{ message: string }>(`/projects/${projectId}/heals/${healId}`)
+        .then((r) => r.data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['heals', projectId] });
+      void qc.invalidateQueries({ queryKey: ['heal-stats', projectId] });
+    },
+  });
+}
+
+// POST /:healId/retry-with-context — re-run patcher with user-supplied context
+export function useRetryHealWithContext(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ healId, userContext }: { healId: string; userContext: string }) =>
+      api
+        .post<HealProposal>(
+          `/projects/${projectId}/heals/${healId}/retry-with-context`,
+          { userContext },
+        )
         .then((r) => r.data),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['heals', projectId] });

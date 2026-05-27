@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QA Infinity — Autonomous QA Platform · Blueprint v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #0f1623; --surface2: #141e30; --surface3: #1a2640;
+    --border: #1f2f48; --border2: #263852;
+    --cyan: #60a5fa; --violet: #FFB347; --emerald: #34d399; --amber: #fbbf24;
+    --rose: #f87171; --pink: #a78bfa; --indigo: #818cf8; --orange: #F47B20;
+    --text: #e2e8f0; --text-mid: #94a3b8; --text-dim: #64748b;
+    --6d-navy: #0A2A57; --6d-blue: #2563AB; --6d-orange: #F47B20; --6d-gold: #FFB347;
+    --banner: linear-gradient(90deg, #06224A 0%, #0A2A57 35%, #2563AB 100%);
+    --warm-accent: linear-gradient(90deg, #FFB347, #F47B20);
+    --glow-cyan: 0 0 30px rgba(96,165,250,0.18);
+    --glow-violet: 0 0 30px rgba(255,179,71,0.18);
+    --glow-emerald: 0 0 30px rgba(52,211,153,0.15);
+    --mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+    --sans: 'Open Sans', 'Inter', system-ui, sans-serif;
+    --body: 'Open Sans', 'Inter', system-ui, sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--body); overflow-x:hidden; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; text-rendering:optimizeLegibility; }
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image:
+      linear-gradient(rgba(37,99,171,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(37,99,171,0.04) 1px, transparent 1px);
+    background-size:40px 40px;
+  }
+
+  /* ── SCROLL SNAP ── */
+  html { scroll-behavior:smooth; }
+
+  /* ── HERO ── */
+  .hero {
+    position:relative; min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; padding:60px 40px; text-align:center; overflow:hidden;
+  }
+  .orb { position:absolute; border-radius:50%; filter:blur(80px); opacity:0.15; animation:pulse 6s ease-in-out infinite; }
+  .orb1 { width:600px; height:600px; background:radial-gradient(circle, #2563AB, #06224A); top:-200px; left:-150px; }
+  .orb2 { width:500px; height:500px; background:radial-gradient(circle, #F47B20, #0A2A57); bottom:-150px; right:-100px; animation-delay:2s; }
+  .orb3 { width:300px; height:300px; background:radial-gradient(circle, #34d399, #1a2640); top:50%; left:50%; transform:translate(-50%,-50%); animation-delay:4s; }
+  @keyframes pulse { 0%,100%{opacity:.1;transform:scale(1)} 50%{opacity:.22;transform:scale(1.05)} }
+
+  .hero-badge {
+    display:inline-flex; align-items:center; gap:8px;
+    background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3);
+    border-radius:100px; padding:8px 20px; font-family:var(--mono); font-size:11px;
+    letter-spacing:2px; text-transform:uppercase; color:var(--cyan); margin-bottom:32px; position:relative; z-index:1;
+  }
+  .badge-dot { width:6px; height:6px; background:var(--cyan); border-radius:50%; animation:blink 1.5s ease infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  .hero h1 { font-family:var(--sans); font-size:clamp(52px,8vw,96px); font-weight:900; line-height:.95; letter-spacing:-4px; position:relative; z-index:1; margin-bottom:8px; }
+  .hero h1 .c { color:var(--cyan); }
+  .hero h1 .v { background:var(--warm-accent); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+  .hero-sub { font-family:var(--body); font-size:16px; color:var(--text-mid); margin:24px auto 0; max-width:700px; line-height:1.8; position:relative; z-index:1; font-weight:400; }
+  .hero-version { font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:3px; margin-top:12px; position:relative; z-index:1; }
+  .hero-tags { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:36px; position:relative; z-index:1; }
+  .htag { padding:5px 14px; border:1px solid var(--border); border-radius:4px; font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:1px; background:rgba(255,255,255,0.02); }
+
+  .scroll-hint { position:absolute; bottom:36px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:8px; font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:2px; z-index:1; }
+  .scroll-line { width:1px; height:48px; background:linear-gradient(to bottom, var(--cyan), transparent); animation:scrollLine 2s ease-in-out infinite; box-shadow:0 0 6px rgba(96,165,250,0.3); }
+  @keyframes scrollLine { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+  /* ── SECTION ── */
+  .section { position:relative; z-index:1; padding:80px 40px; max-width:1400px; margin:0 auto; }
+  .section.full { max-width:none; padding-left:60px; padding-right:60px; }
+  .section-label { font-family:var(--mono); font-size:11px; letter-spacing:3px; text-transform:uppercase; color:var(--cyan); margin-bottom:12px; display:flex; align-items:center; gap:12px; }
+  .section-label::after { content:''; flex:1; height:1px; background:var(--border); max-width:60px; }
+  .section-title { font-family:var(--sans); font-size:clamp(26px,3.5vw,44px); font-weight:800; letter-spacing:-1px; line-height:1.15; margin-bottom:16px; }
+  .section-desc { color:var(--text-mid); font-size:15px; line-height:1.8; max-width:640px; font-family:var(--body); font-weight:400; }
+
+  /* ── DIVIDER ── */
+  .divider { border:none; border-top:1px solid var(--border); margin:0 40px; }
+
+  /* ── CARDS ── */
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:28px; position:relative; overflow:hidden; transition:border-color .3s, box-shadow .3s; }
+  .card:hover { box-shadow:var(--glow-cyan); border-color:rgba(96,165,250,0.3); }
+  .card-top { height:3px; position:absolute; top:0; left:0; right:0; }
+
+  .mono { font-family:var(--mono); }
+  .io-label { font-family:var(--mono); font-size:10px; letter-spacing:2px; color:var(--text-dim); text-transform:uppercase; margin-bottom:8px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { padding:4px 10px; border-radius:4px; font-family:var(--mono); font-size:10px; border:1px solid; letter-spacing:.5px; }
+  .chip-cyan { background:rgba(96,165,250,0.08); border-color:rgba(96,165,250,0.28); color:var(--cyan); }
+  .chip-violet { background:rgba(255,179,71,0.08); border-color:rgba(255,179,71,0.28); color:var(--violet); }
+  .chip-emerald { background:rgba(52,211,153,0.08); border-color:rgba(52,211,153,0.28); color:var(--emerald); }
+  .chip-amber { background:rgba(251,191,36,0.08); border-color:rgba(251,191,36,0.28); color:var(--amber); }
+  .chip-rose { background:rgba(248,113,113,0.08); border-color:rgba(248,113,113,0.28); color:var(--rose); }
+  .chip-pink { background:rgba(167,139,250,0.08); border-color:rgba(167,139,250,0.28); color:var(--pink); }
+  .chip-orange { background:rgba(244,123,32,0.08); border-color:rgba(244,123,32,0.28); color:var(--orange); }
+
+  .fl { list-style:none; }
+  .fl li { font-family:var(--body); font-size:13.5px; color:var(--text-mid); padding:6px 0; border-bottom:1px solid var(--border); display:flex; align-items:flex-start; gap:8px; line-height:1.65; }
+  .fl li::before { content:'›'; color:var(--cyan); flex-shrink:0; }
+  .fl li:last-child { border-bottom:none; }
+
+  /* ── TABLE ── */
+  table.dt { width:100%; border-collapse:collapse; font-size:13px; }
+  table.dt th { font-family:var(--mono); text-align:left; padding:12px 16px; border-bottom:2px solid var(--border); color:var(--text-dim); font-size:10px; letter-spacing:2px; text-transform:uppercase; }
+  table.dt td { font-family:var(--body); font-size:13.5px; padding:13px 16px; border-bottom:1px solid var(--border); color:var(--text-mid); line-height:1.65; }
+  table.dt tr:hover td { background:rgba(255,255,255,0.02); }
+  .ft-a { color:var(--cyan); font-weight:600; }
+
+  /* ── EXECUTIVE SUMMARY ── */
+  .exec-hero {
+    background:linear-gradient(135deg, rgba(37,99,171,0.06) 0%, rgba(10,42,87,0.08) 50%, rgba(52,211,153,0.04) 100%);
+    border:1px solid var(--border); border-radius:16px; padding:48px; margin-top:48px; position:relative; overflow:hidden;
+  }
+  .exec-hero::before {
+    content:''; position:absolute; top:-60px; right:-60px; width:300px; height:300px;
+    background:radial-gradient(circle, rgba(96,165,250,0.1), transparent 70%); border-radius:50%;
+  }
+  .exec-hero::after {
+    content:''; position:absolute; bottom:-40px; left:-40px; width:200px; height:200px;
+    background:radial-gradient(circle, rgba(244,123,32,0.08), transparent 70%); border-radius:50%;
+  }
+  .kpi-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:16px; margin-top:40px; }
+  .kpi { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:20px 16px; text-align:center; }
+  .kpi-num { font-family:var(--sans); font-size:32px; font-weight:800; letter-spacing:-1px; }
+  .kpi-label { font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; margin-top:4px; line-height:1.4; }
+
+  .value-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:40px; }
+  .value-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:24px; border-left:3px solid; }
+
+  .pipeline-mini { display:flex; align-items:center; gap:0; margin-top:40px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:8px; }
+  .pm-step { flex-shrink:0; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 16px; text-align:center; min-width:110px; }
+  .pm-step .pm-icon { font-size:20px; margin-bottom:6px; }
+  .pm-step .pm-label { font-family:var(--mono); font-size:10px; color:var(--text-mid); letter-spacing:.5px; }
+  .pm-arrow { color:var(--text-dim); font-size:20px; margin:0 4px; flex-shrink:0; }
+
+  /* ── ORCHESTRATION AGENT ── */
+  .orch-trigger-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:32px; }
+  .trig-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:20px; position:relative; }
+  .trig-card::after { content:attr(data-arrow); position:absolute; right:-18px; top:50%; transform:translateY(-50%); color:var(--cyan); font-size:18px; font-weight:700; }
+
+  .orch-pipeline { margin-top:40px; position:relative; }
+  .orch-flow { display:grid; grid-template-columns:repeat(7,1fr); gap:8px; align-items:stretch; }
+  .orch-stage { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px 12px; text-align:center; display:flex; flex-direction:column; gap:6px; position:relative; transition:border-color .3s; }
+  .orch-stage:hover { border-color:rgba(96,165,250,0.35); }
+  .orch-stage-icon { font-size:22px; }
+  .orch-stage-num { font-family:var(--mono); font-size:9px; color:var(--text-dim); letter-spacing:1px; }
+  .orch-stage-label { font-size:12px; font-weight:700; line-height:1.3; }
+  .orch-stage-desc { font-family:var(--mono); font-size:10px; color:var(--text-dim); line-height:1.4; }
+  .orch-conn { display:flex; align-items:center; justify-content:center; color:var(--text-dim); font-size:14px; align-self:center; }
+
+  .orch-config-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:32px; }
+  .orch-config-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:24px; }
+
+  .output-row { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-top:24px; }
+  .out-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:16px; text-align:center; }
+
+  /* ── AGENTS PIPELINE ── */
+  .agents-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:48px; }
+  .agent-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:28px; position:relative; overflow:hidden; }
+  .agent-card .top-bar { height:3px; position:absolute; top:0; left:0; right:0; }
+  .agent-num { font-family:var(--mono); font-size:10px; letter-spacing:2px; margin-bottom:6px; }
+  .agent-title { font-family:var(--sans); font-size:19px; font-weight:700; letter-spacing:-.3px; margin-bottom:10px; line-height:1.25; }
+  .agent-desc { font-family:var(--body); font-size:14px; color:var(--text-mid); line-height:1.8; margin-bottom:16px; font-weight:400; }
+
+  /* ── ARCH GRID ── */
+  .arch-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:40px; }
+  .arch-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:24px; }
+  .arch-icon { font-size:28px; margin-bottom:12px; }
+  .arch-title { font-family:var(--mono); font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--cyan); margin-bottom:8px; }
+  .arch-body { font-family:var(--body); font-size:14px; color:var(--text-mid); line-height:1.8; font-weight:400; }
+  .ts-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .ts { padding:3px 8px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:3px; font-family:var(--mono); font-size:10px; color:var(--text-dim); }
+
+  /* ── DOCKER ── */
+  .docker-wrap { margin-top:48px; background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:36px; position:relative; overflow:hidden; }
+  .docker-wrap::before { content:'DOCKER COMPOSE TOPOLOGY'; position:absolute; top:18px; right:24px; font-family:var(--mono); font-size:10px; letter-spacing:2px; color:var(--text-dim); }
+  .docker-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-top:24px; }
+  .ds { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:16px; }
+  .ds-port { font-family:var(--mono); font-size:9px; color:var(--emerald); letter-spacing:1px; margin-bottom:4px; }
+  .ds-name { font-family:var(--mono); font-size:13px; font-weight:600; color:var(--cyan); margin-bottom:6px; }
+  .ds-desc { font-family:var(--body); font-size:13px; color:var(--text-dim); line-height:1.65; font-weight:400; }
+
+  /* ── FEATURES GRID ── */
+  .feat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:40px; }
+  .feat-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:22px; }
+  .feat-num { font-family:var(--mono); font-size:10px; color:var(--text-dim); margin-bottom:6px; }
+  .feat-title { font-family:var(--sans); font-size:15px; font-weight:700; margin-bottom:8px; letter-spacing:-.2px; }
+  .feat-body { font-family:var(--body); font-size:13.5px; color:var(--text-dim); line-height:1.8; font-weight:400; }
+
+  /* ── DATA MODEL ── */
+  .model-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:32px; }
+  .model-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:14px; }
+  .model-name { font-family:var(--mono); font-size:11px; color:var(--cyan); font-weight:600; margin-bottom:4px; }
+  .model-desc { font-family:var(--body); font-size:13px; color:var(--text-dim); line-height:1.55; }
+
+  /* ── NEW BADGE ── */
+  .new-badge { display:inline-block; padding:1px 7px; background:rgba(52,211,153,0.1); border:1px solid rgba(52,211,153,0.3); border-radius:10px; font-family:var(--mono); font-size:9px; color:var(--emerald); letter-spacing:1px; text-transform:uppercase; margin-left:6px; vertical-align:middle; }
+  .updated-badge { display:inline-block; padding:1px 7px; background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.3); border-radius:10px; font-family:var(--mono); font-size:9px; color:var(--amber); letter-spacing:1px; text-transform:uppercase; margin-left:6px; vertical-align:middle; }
+
+  /* ── TOC ── */
+  .toc { position:fixed; right:20px; top:50%; transform:translateY(-50%); z-index:100; display:flex; flex-direction:column; gap:8px; }
+  .toc-dot { width:6px; height:6px; border-radius:50%; background:var(--border); cursor:pointer; transition:all .3s; position:relative; }
+  .toc-dot:hover { background:var(--cyan); box-shadow:0 0 10px rgba(96,165,250,0.5); }
+  .toc-dot:hover::after { content:attr(data-label); position:absolute; right:14px; top:50%; transform:translateY(-50%); font-family:var(--mono); font-size:10px; color:var(--cyan); white-space:nowrap; background:var(--surface); padding:3px 8px; border:1px solid var(--border); border-radius:3px; }
+  @media(max-width:900px) { .toc{display:none} }
+
+  /* ── STATUS BADGE ── */
+  .status { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:10px; font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.5px; }
+  .status-live { background:rgba(52,211,153,0.1); border:1px solid rgba(52,211,153,0.3); color:var(--emerald); }
+  .status-new { background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3); color:var(--cyan); }
+  .status-dot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+
+  /* ── TERMINAL BLOCK ── */
+  .terminal { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .terminal-bar { padding:12px 20px; background:var(--surface2); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+  .t-dot { width:10px; height:10px; border-radius:50%; }
+  .t-title { font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:2px; margin-left:6px; }
+  .terminal pre { padding:28px; font-family:var(--mono); font-size:12px; line-height:2; color:var(--text-mid); overflow-x:auto; }
+
+  /* ── RESPONSIVE ── */
+  @media(max-width:1100px) { .orch-flow{grid-template-columns:1fr 1fr 1fr} .orch-conn{display:none} .kpi-grid{grid-template-columns:repeat(3,1fr)} }
+  @media(max-width:800px) { .arch-grid,.feat-grid,.agents-grid,.value-grid,.docker-grid,.kpi-grid,.model-grid{grid-template-columns:1fr 1fr} .section{padding:48px 20px} }
+  @media(max-width:500px) { .arch-grid,.feat-grid,.agents-grid,.value-grid,.docker-grid,.kpi-grid,.model-grid{grid-template-columns:1fr} }
+  ::-webkit-scrollbar{width:5px} ::-webkit-scrollbar-track{background:var(--bg)} ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- TOC -->
+<nav class="toc">
+  <div class="toc-dot" data-label="Overview"></div>
+  <div class="toc-dot" data-label="Executive Summary"></div>
+  <div class="toc-dot" data-label="Orchestration Agent"></div>
+  <div class="toc-dot" data-label="Agent Pipeline"></div>
+  <div class="toc-dot" data-label="Architecture"></div>
+  <div class="toc-dot" data-label="Data Model"></div>
+  <div class="toc-dot" data-label="Features"></div>
+  <div class="toc-dot" data-label="Data Flow"></div>
+  <div class="toc-dot" data-label="Tech Stack"></div>
+  <div class="toc-dot" data-label="Deployment"></div>
+</nav>
+
+<!-- 6D BRAND BANNER TOP -->
+<div style="height:4px;background:linear-gradient(90deg,#06224A 0%,#0A2A57 35%,#2563AB 65%,#F47B20 85%,#FFB347 100%);position:fixed;top:0;left:0;right:0;z-index:200;"></div>
+
+<!-- ═══════════════════════════════════════ HERO -->
+<section class="hero" style="padding-top:80px">
+  <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+  <div class="hero-badge"><div class="badge-dot"></div>Blueprint v2 · Autonomous QA Platform · May 2026</div>
+  <h1><span class="c">QA</span><br><span class="v">INFINITY</span></h1>
+  <p class="hero-sub">A fully autonomous, self-healing, agent-driven quality engineering platform — from requirement to execution to report, with zero manual handoffs. Now with full pipeline orchestration.</p>
+  <p class="hero-version">v1.0.0 PRODUCTION BUILD · 8 AGENTS · 18 DATA MODELS · 14 UI PAGES · 70+ API ENDPOINTS</p>
+  <div class="hero-tags">
+    <span class="htag">8-AGENT PIPELINE</span>
+    <span class="htag">ORCHESTRATION AGENT</span>
+    <span class="htag">JIRA TRIGGERED</span>
+    <span class="htag">CI/CD INTEGRATION</span>
+    <span class="htag">AGENTIC BROWSER TRACE</span>
+    <span class="htag">UI SCANNER</span>
+    <span class="htag">SELF-HEALING</span>
+    <span class="htag">MULTI-PROJECT</span>
+    <span class="htag">PLAYWRIGHT</span>
+    <span class="htag">DOCKER-FIRST</span>
+    <span class="htag">ZERO CLIENT INSTALL</span>
+  </div>
+  <div class="scroll-hint"><div class="scroll-line"></div>SCROLL</div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ EXECUTIVE SUMMARY -->
+<section class="section" id="exec">
+  <div class="section-label">Executive Summary — What Was Built</div>
+  <h2 class="section-title">One Platform.<br>Zero Manual QA Handoffs.</h2>
+  <p class="section-desc">QA Infinity automates the entire quality engineering lifecycle — from Jira story to test report — using a chain of 8 specialized AI agents, real-time browser automation, and a self-healing execution engine. Deployed as a single Docker command on any server.</p>
+
+  <!-- KPI STRIP -->
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-num" style="color:var(--cyan)">8</div><div class="kpi-label">AI Agents<br>Live in Production</div></div>
+    <div class="kpi"><div class="kpi-num" style="color:var(--violet)">18</div><div class="kpi-label">Data Models<br>Prisma + SQLite</div></div>
+    <div class="kpi"><div class="kpi-num" style="color:var(--emerald)">70+</div><div class="kpi-label">REST API<br>Endpoints</div></div>
+    <div class="kpi"><div class="kpi-num" style="color:var(--amber)">14</div><div class="kpi-label">UI Pages<br>React SPA</div></div>
+    <div class="kpi"><div class="kpi-num" style="color:var(--pink)">6</div><div class="kpi-label">Async Workers<br>BullMQ Queue</div></div>
+    <div class="kpi"><div class="kpi-num" style="color:var(--orange)">0</div><div class="kpi-label">Client Install<br>Browser Only</div></div>
+  </div>
+
+  <!-- MINI PIPELINE -->
+  <div style="margin-top:40px">
+    <div class="io-label" style="margin-bottom:14px">End-to-End Automated Pipeline (with Orchestration Agent)</div>
+    <div class="pipeline-mini">
+      <div class="pm-step" style="border-color:rgba(251,191,36,0.3)"><div class="pm-icon">🎫</div><div class="pm-label" style="color:var(--amber)">Jira / CI / API Trigger</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(255,179,71,0.3)"><div class="pm-icon">🎛️</div><div class="pm-label" style="color:var(--indigo)">Orchestration Agent</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(96,165,250,0.3)"><div class="pm-icon">🧠</div><div class="pm-label" style="color:var(--cyan)">TC Writer Agent</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(129,140,248,0.3)"><div class="pm-icon">💻</div><div class="pm-label" style="color:var(--indigo)">Script Agent</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(52,211,153,0.3)"><div class="pm-icon">▶️</div><div class="pm-label" style="color:var(--emerald)">Execution Agent</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(248,113,113,0.3)"><div class="pm-icon">🔧</div><div class="pm-label" style="color:var(--rose)">Healing Agent</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(167,139,250,0.3)"><div class="pm-icon">📊</div><div class="pm-label" style="color:var(--pink)">Reports Agent</div></div>
+      <div class="pm-arrow">→</div>
+      <div class="pm-step" style="border-color:rgba(244,123,32,0.3)"><div class="pm-icon">📤</div><div class="pm-label" style="color:var(--orange)">Publish: Email / Jira / Slack</div></div>
+    </div>
+  </div>
+
+  <!-- VALUE PROPS -->
+  <div class="value-grid">
+    <div class="value-card" style="border-left-color:var(--cyan)">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--cyan);text-transform:uppercase;margin-bottom:10px">QA Speed</div>
+      <div style="font-family:var(--sans);font-size:17px;font-weight:700;margin-bottom:10px;letter-spacing:-.2px">Requirement → Test in Minutes</div>
+      <p style="font-family:var(--body);font-size:14px;color:var(--text-mid);line-height:1.8">Drop a Jira story, PDF, or URL. The Writer Agent extracts acceptance criteria, generates structured test cases with use-case tags, and queues script generation — in one action. No human translation required between requirement and test.</p>
+    </div>
+    <div class="value-card" style="border-left-color:var(--emerald)">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--emerald);text-transform:uppercase;margin-bottom:10px">Resilience</div>
+      <div style="font-family:var(--sans);font-size:17px;font-weight:700;margin-bottom:10px;letter-spacing:-.2px">Tests That Fix Themselves</div>
+      <p style="font-family:var(--body);font-size:14px;color:var(--text-mid);line-height:1.8">When a test fails due to a UI change, the Healing Agent captures the DOM, identifies selector drift or flow changes, and proposes a patch with a confidence score. Above the threshold, it auto-applies and re-runs. QA engineers review proposals rather than debug scripts.</p>
+    </div>
+    <div class="value-card" style="border-left-color:var(--violet)">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--violet);text-transform:uppercase;margin-bottom:10px">Zero Handoff</div>
+      <div style="font-family:var(--sans);font-size:17px;font-weight:700;margin-bottom:10px;letter-spacing:-.2px">Fully Automated End-to-End</div>
+      <p style="font-family:var(--body);font-size:14px;color:var(--text-mid);line-height:1.8">The Orchestration Agent wires all stages into a single automated pipeline. A Jira story moving to "Ready for QA" can trigger TC generation, script writing, test execution, healing, and email report — with no human in the loop unless confidence thresholds require it.</p>
+    </div>
+  </div>
+
+
+<!-- ═══════════════════════════════════════ ORCHESTRATION AGENT -->
+<section class="section" id="orch">
+  <div class="section-label">NEW — Core Platform Feature</div>
+  <h2 class="section-title">Orchestration<br>Agent</h2>
+  <p class="section-desc">The Orchestration Agent is the command layer that connects every other agent into a single automated pipeline. One external trigger — a Jira story, a CI/CD webhook, a scheduled cron, or an API call — fires the full QA lifecycle from TC generation through published report, with configurable human checkpoints at each stage.</p>
+
+  <!-- TRIGGER SOURCES -->
+  <div style="margin-top:40px">
+    <div class="io-label" style="margin-bottom:16px">Pipeline Trigger Sources</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+      <div style="background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:20px;">
+        <div style="font-size:28px;margin-bottom:10px">🎫</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">Jira Webhook</div>
+        <div style="font-family:var(--sans);font-size:15px;font-weight:700;letter-spacing:-.2px;margin-bottom:8px">Story Status Change</div>
+        <p style="font-family:var(--body);font-size:14px;color:var(--text-dim);line-height:1.75">Fires when a story moves to "Ready for QA" or a custom status. Extracts story ID, acceptance criteria, and linked docs. Supports Jira Cloud and Jira Server via webhook configuration.</p>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">
+          <span class="chip chip-amber" style="font-size:9px">Status transition hook</span>
+          <span class="chip chip-amber" style="font-size:9px">Label trigger</span>
+          <span class="chip chip-amber" style="font-size:9px">Sprint completion</span>
+        </div>
+      </div>
+      <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.25);border-radius:10px;padding:20px;">
+        <div style="font-size:28px;margin-bottom:10px">⚙️</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--emerald);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">CI/CD Pipeline</div>
+        <div style="font-family:var(--sans);font-size:15px;font-weight:700;letter-spacing:-.2px;margin-bottom:8px">Build / Deploy Hook</div>
+        <p style="font-family:var(--body);font-size:14px;color:var(--text-dim);line-height:1.75">Triggered after a successful deploy via a POST API call from GitHub Actions, GitLab CI, Jenkins, or Azure DevOps. Payload includes build ID, branch, and affected module list to scope test selection.</p>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">
+          <span class="chip chip-emerald" style="font-size:9px">GitHub Actions</span>
+          <span class="chip chip-emerald" style="font-size:9px">GitLab CI</span>
+          <span class="chip chip-emerald" style="font-size:9px">Jenkins</span>
+        </div>
+      </div>
+      <div style="background:rgba(96,165,250,0.06);border:1px solid rgba(96,165,250,0.25);border-radius:10px;padding:20px;">
+        <div style="font-size:28px;margin-bottom:10px">⏱️</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--cyan);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">Scheduled Pipeline</div>
+        <div style="font-family:var(--sans);font-size:15px;font-weight:700;letter-spacing:-.2px;margin-bottom:8px">Cron-Based Automation</div>
+        <p style="font-family:var(--body);font-size:14px;color:var(--text-dim);line-height:1.75">Nightly regression runs, weekly full-suite execution, or custom schedules defined in the UI Scheduler. Executes the complete pipeline on a timer — no external trigger needed. Survives container restarts.</p>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">
+          <span class="chip chip-cyan" style="font-size:9px">Cron expression</span>
+          <span class="chip chip-cyan" style="font-size:9px">Nightly regression</span>
+          <span class="chip chip-cyan" style="font-size:9px">Sprint cadence</span>
+        </div>
+      </div>
+      <div style="background:rgba(255,179,71,0.06);border:1px solid rgba(255,179,71,0.25);border-radius:10px;padding:20px;">
+        <div style="font-size:28px;margin-bottom:10px">🔌</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--indigo);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">API / Manual</div>
+        <div style="font-family:var(--sans);font-size:15px;font-weight:700;letter-spacing:-.2px;margin-bottom:8px">Direct REST Trigger</div>
+        <p style="font-family:var(--body);font-size:14px;color:var(--text-dim);line-height:1.75">Any external system can trigger a pipeline via <code style="color:var(--indigo)">POST /api/orchestrate</code> with a JSON payload specifying scope, target environment, stages to run, and output destinations. Also triggerable from the QA Infinity UI.</p>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">
+          <span class="chip chip-violet" style="font-size:9px">REST API</span>
+          <span class="chip chip-violet" style="font-size:9px">Chat command</span>
+          <span class="chip chip-violet" style="font-size:9px">UI button</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIPELINE STAGES -->
+  <div style="margin-top:48px;">
+    <div class="io-label" style="margin-bottom:16px">Automated Pipeline Stages</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+      <div style="padding:14px 24px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:2px;display:flex;justify-content:space-between;align-items:center">
+        <span>ORCHESTRATION PIPELINE — STAGE SEQUENCE</span>
+        <span style="color:var(--emerald)">● LIVE</span>
+      </div>
+      <div style="padding:28px;overflow-x:auto;">
+        <div style="display:flex;gap:0;min-width:900px;">
+
+          <div style="flex:1;background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">🎫</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--amber);letter-spacing:1px;margin-bottom:4px">STAGE 0</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Receive<br>Trigger</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">Parse payload, extract stories, scope, env config</div>
+          </div>
+          <div style="display:flex;align-items:center;color:var(--text-dim);font-size:16px;padding:0 6px">→</div>
+
+          <div style="flex:1;background:rgba(96,165,250,0.06);border:1px solid rgba(96,165,250,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">🧠</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--cyan);letter-spacing:1px;margin-bottom:4px">STAGE 1</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Generate<br>Test Cases</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">Writer Agent · auto-approve or hold for review</div>
+          </div>
+          <div style="display:flex;align-items:center;color:var(--text-dim);font-size:16px;padding:0 6px">→</div>
+
+          <div style="flex:1;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">💻</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--indigo);letter-spacing:1px;margin-bottom:4px">STAGE 2</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Generate<br>Scripts</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">Script Agent → verify → flag manual review</div>
+          </div>
+          <div style="display:flex;align-items:center;color:var(--text-dim);font-size:16px;padding:0 6px">→</div>
+
+          <div style="flex:1;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">▶️</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--emerald);letter-spacing:1px;margin-bottom:4px">STAGE 3</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Execute<br>Tests</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">Playwright runner · scoped suite · parallel workers</div>
+          </div>
+          <div style="display:flex;align-items:center;color:var(--text-dim);font-size:16px;padding:0 6px">→</div>
+
+          <div style="flex:1;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">🔧</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--rose);letter-spacing:1px;margin-bottom:4px">STAGE 4</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Heal<br>Failures</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">If failures → Healing Agent → auto-apply or propose</div>
+          </div>
+          <div style="display:flex;align-items:center;color:var(--text-dim);font-size:16px;padding:0 6px">→</div>
+
+          <div style="flex:1;background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">📊</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--pink);letter-spacing:1px;margin-bottom:4px">STAGE 5</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Compile<br>Report</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">AI analysis · pass/fail summary · trend update</div>
+          </div>
+          <div style="display:flex;align-items:center;color:var(--text-dim);font-size:16px;padding:0 6px">→</div>
+
+          <div style="flex:1;background:rgba(244,123,32,0.06);border:1px solid rgba(244,123,32,0.2);border-radius:10px;padding:18px;text-align:center;min-width:120px;">
+            <div style="font-size:24px;margin-bottom:8px">📤</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--orange);letter-spacing:1px;margin-bottom:4px">STAGE 6</div>
+            <div style="font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:-.1px;margin-bottom:6px">Publish<br>Results</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);line-height:1.4">Email · Jira comment · Slack/webhook</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIGURATION OPTIONS -->
+  <div class="orch-config-grid" style="margin-top:32px;">
+    <div class="orch-config-card">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--cyan);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px">Pipeline Configuration Options</div>
+      <ul class="fl">
+        <li><strong style="color:var(--text)">Stage toggles:</strong> Each stage can be enabled/disabled per pipeline definition. Run execution-only or generation-only pipelines.</li>
+        <li><strong style="color:var(--text)">Human checkpoint gates:</strong> Any stage can be configured to pause and send a notification until a QA engineer approves before continuing.</li>
+        <li><strong style="color:var(--text)">Auto-approve threshold:</strong> TC generation and healing patches above the confidence threshold proceed without human review.</li>
+        <li><strong style="color:var(--text)">Scope filtering:</strong> Pipeline can be scoped to a specific use-case group, suite, or tag — e.g. "run only Checkout Flow tests after payment service deploy".</li>
+        <li><strong style="color:var(--text)">Environment routing:</strong> Different pipeline definitions can target different env configs (UAT vs Staging vs Prod).</li>
+        <li><strong style="color:var(--text)">Retry policy:</strong> Max heal attempts, retry delays, and fallback to human review configurable per pipeline.</li>
+        <li><strong style="color:var(--text)">Parallel pipelines:</strong> Multiple pipelines can run simultaneously for different scopes. Concurrency controlled per project.</li>
+      </ul>
+    </div>
+    <div class="orch-config-card">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--orange);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px">Output Destinations</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:22px;margin-bottom:6px">📧</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-mid)">Email Report</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);margin-top:3px">SMTP · per project<br>recipient config</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:22px;margin-bottom:6px">🎫</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-mid)">Jira Comment</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);margin-top:3px">Posts result summary<br>back to source story</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:22px;margin-bottom:6px">💬</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-mid)">Slack / Teams</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);margin-top:3px">Webhook · pass/fail<br>summary with link</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:22px;margin-bottom:6px">🔗</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-mid)">Generic Webhook</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);margin-top:3px">JSON payload to any<br>external endpoint</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REAL WORLD EXAMPLE -->
+  <div style="margin-top:32px;">
+    <div class="io-label" style="margin-bottom:14px">Real-World Example — Jira-Triggered Pipeline</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="t-dot" style="background:#ef4444"></div>
+        <div class="t-dot" style="background:#f59e0b"></div>
+        <div class="t-dot" style="background:#10b981"></div>
+        <span class="t-title">ORCHESTRATION PIPELINE · TRACE LOG</span>
+      </div>
+      <pre><code><span style="color:var(--amber)">TRIGGER</span>  Jira story <span style="color:var(--cyan)">VEN-4821</span> "New Order Form — KYC validation" moved to Ready for QA
+<span style="color:var(--text-dim)">         Extracting acceptance criteria from story description + linked HLD doc...</span>
+
+<span style="color:var(--cyan)">STAGE 1</span>  Writer Agent → generating test cases from VEN-4821 + project requirement library
+<span style="color:var(--text-dim)">         UseCase tag: "KYC Validation" (matched existing group, no new group created)</span>
+<span style="color:var(--emerald)">         ✓</span> Generated <span style="color:var(--text)">12 test cases</span> (7 UI, 3 API, 2 SIT) · <span style="color:var(--text)">0 duplicates</span> · auto-approved
+
+<span style="color:var(--indigo)">STAGE 2</span>  Script Agent → generating Playwright scripts for 12 approved TCs
+<span style="color:var(--text-dim)">         Loaded agent learnings for "KYC Validation" page from ProjectContext</span>
+<span style="color:var(--emerald)">         ✓</span> 11 scripts verified · <span style="color:var(--amber)">⚠</span> 1 flagged for manual review (TC-0089 — file upload flow)
+
+<span style="color:var(--emerald)">STAGE 3</span>  Execution Agent → running 11 verified scripts on UAT environment
+<span style="color:var(--emerald)">         ✓ PASSED</span> 9  <span style="color:var(--rose)">✗ FAILED</span> 2  (TC-0078: form submit selector, TC-0081: assertion mismatch)
+
+<span style="color:var(--rose)">STAGE 4</span>  Healing Agent → analysing 2 failures
+<span style="color:var(--text-dim)">         TC-0078: selector drift detected → patched getByText→getByRole, confidence 0.91 → AUTO-APPLIED</span>
+<span style="color:var(--text-dim)">         TC-0081: API response schema change → patch proposed, awaiting QA approval</span>
+<span style="color:var(--emerald)">         Rerun TC-0078 → ✓ PASSED</span>
+
+<span style="color:var(--pink)">STAGE 5</span>  Reports Agent → compiling results
+<span style="color:var(--text-dim)">         10/11 passed (91%), 1 heal auto-applied, 1 pending engineer review</span>
+<span style="color:var(--text-dim)">         AI summary: "KYC form submit button selector changed in UAT deploy b4f3a2 — healed automatically"</span>
+
+<span style="color:var(--orange)">STAGE 6</span>  Publishing results
+<span style="color:var(--emerald)">         ✓</span> Email sent to qa-team@6dtech.co.in + albin.benny@6dtech.co.in
+<span style="color:var(--emerald)">         ✓</span> Jira comment posted on VEN-4821: "10/11 tests passed. 1 heal applied. 1 pending review."
+<span style="color:var(--emerald)">         ✓</span> Slack notification → #qa-alerts channel
+
+<span style="color:var(--text-dim)">Total pipeline time: 6m 42s from trigger to published report</span>
+      </code></pre>
+    </div>
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ AGENT PIPELINE -->
+<section class="section" id="agents">
+  <div class="section-label">Agent Intelligence Layer</div>
+  <h2 class="section-title">The 8-Agent<br>Intelligence Pipeline</h2>
+  <p class="section-desc">Each agent is a specialized LLM-backed microservice. They share context via a common ProjectContext store and communicate via BullMQ job queues and Socket.io events.</p>
+
+  <div class="agents-grid">
+
+    <!-- AGENT 1: ORCHESTRATION -->
+    <div class="agent-card" style="border-color:rgba(255,179,71,0.3);grid-column:1/-1;">
+      <div class="top-bar" style="background:linear-gradient(90deg,var(--violet),var(--indigo))"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+        <div>
+          <div class="agent-num" style="color:var(--indigo)">AGENT 00 <span class="new-badge">NEW</span></div>
+          <div class="agent-title" style="color:var(--indigo)">Orchestration Agent</div>
+          <div class="agent-desc">The pipeline command centre. Listens for external triggers (Jira webhooks, CI/CD calls, cron), sequences all other agents in the correct order, manages human approval gates, handles retries and failures, and routes results to configured output destinations. Makes the platform fully autonomous end-to-end.</div>
+          <div class="io-label">Triggers</div>
+          <div class="chips" style="margin-bottom:12px">
+            <span class="chip chip-amber">Jira webhook</span>
+            <span class="chip chip-emerald">CI/CD POST API</span>
+            <span class="chip chip-cyan">Cron schedule</span>
+            <span class="chip chip-violet">Manual / REST</span>
+            <span class="chip chip-orange">Chat command</span>
+          </div>
+          <div class="io-label">Produces</div>
+          <div class="chips">
+            <span class="chip chip-emerald">Pipeline run record</span>
+            <span class="chip chip-emerald">Stage status events</span>
+            <span class="chip chip-emerald">Published report</span>
+            <span class="chip chip-emerald">Jira / email / Slack output</span>
+          </div>
+        </div>
+        <div>
+          <div class="io-label">Key Capabilities</div>
+          <ul class="fl">
+            <li>Sequential or parallel stage execution based on dependency graph</li>
+            <li>Per-stage human approval gates with configurable timeout + fallback</li>
+            <li>Confidence-based auto-approve for TC generation and healing patches</li>
+            <li>Scope filtering — run only affected use-case groups from CI payload</li>
+            <li>Real-time pipeline status board in the UI (stage-by-stage progress)</li>
+            <li>Retry with exponential backoff on transient failures</li>
+            <li>Multi-pipeline concurrency — independent pipelines per project</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- AGENT 2: WRITER -->
+    <div class="agent-card" style="border-color:rgba(96,165,250,0.2)">
+      <div class="top-bar" style="background:var(--cyan)"></div>
+      <div class="agent-num" style="color:var(--cyan)">AGENT 01</div>
+      <div class="agent-title" style="color:var(--cyan)">Test Case Writer Agent</div>
+      <div class="agent-desc">Ingests requirements from multiple simultaneous sources and synthesises them into structured, deduplicated test cases with AI-assigned use-case tags. Respects project requirement library for background context.</div>
+      <div class="io-label">Accepts</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-cyan">Jira stories (batch)</span>
+        <span class="chip chip-cyan">PDFs / Word / Excel</span>
+        <span class="chip chip-cyan">URLs</span>
+        <span class="chip chip-cyan">Seed test cases</span>
+        <span class="chip chip-cyan">Req library (auto)</span>
+        <span class="chip chip-cyan">Agent learnings</span>
+      </div>
+      <div class="io-label">Produces</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-emerald">Structured test cases</span>
+        <span class="chip chip-emerald">UseCase tags (AI-assigned)</span>
+        <span class="chip chip-emerald">Dedup report</span>
+      </div>
+      <ul class="fl">
+        <li>Multi-input queue: Jira + docs + URLs processed simultaneously in one session</li>
+        <li>UseCase consistency engine: reuses existing labels before creating new ones</li>
+        <li>Seed TC style mirroring: matches depth, format and coverage of reference TCs</li>
+        <li>ProjectContext enrichment: uses agent learnings and scan context</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 3: UI SCANNER -->
+    <div class="agent-card" style="border-color:rgba(52,211,153,0.2)">
+      <div class="top-bar" style="background:var(--emerald)"></div>
+      <div class="agent-num" style="color:var(--emerald)">AGENT 02 <span class="new-badge">NEW</span></div>
+      <div class="agent-title" style="color:var(--emerald)">UI Scanner Agent</div>
+      <div class="agent-desc">Crawls the AUT using a real Playwright browser, maps every navigation node, extracts semantic locators per page, validates the login flow, and stores everything in ProjectContext. Acts as the project's institutional memory of the application under test.</div>
+      <div class="io-label">Accepts</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-emerald">Base URL + credentials</span>
+        <span class="chip chip-emerald">Scan depth config</span>
+      </div>
+      <div class="io-label">Produces</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-emerald">Navigation tree</span>
+        <span class="chip chip-emerald">Page locator map</span>
+        <span class="chip chip-emerald">Login instructions</span>
+        <span class="chip chip-emerald">UseCase summary</span>
+      </div>
+      <ul class="fl">
+        <li>Saves login steps, selectors, and post-login URL to ProjectContext</li>
+        <li>Extracts semantic locators (role, label, testid) per page and stores per URL pattern</li>
+        <li>Context auto-loaded by Writer + Script agents for richer generation</li>
+        <li>Re-scan on demand when AUT structure changes</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 4: AGENTIC BROWSER TRACE -->
+    <div class="agent-card" style="border-color:rgba(129,140,248,0.2)">
+      <div class="top-bar" style="background:var(--indigo)"></div>
+      <div class="agent-num" style="color:var(--indigo)">AGENT 03 <span class="new-badge">NEW</span></div>
+      <div class="agent-title" style="color:var(--indigo)">Agentic Browser Trace</div>
+      <div class="agent-desc">Claude drives a real Playwright browser through a target menu via tool-use loop (screenshot → tool call → observe), recording every verified selector and action. Returns test cases and saves learnings to ProjectContext. Generates scripts from verified action log without extra LLM calls.</div>
+      <div class="io-label">Accepts</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-violet">Target URL + menu context</span>
+        <span class="chip chip-violet">Seed steps (optional)</span>
+        <span class="chip chip-violet">Additional context</span>
+      </div>
+      <div class="io-label">Produces</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-emerald">Verified test cases</span>
+        <span class="chip chip-emerald">Action log (for script gen)</span>
+        <span class="chip chip-emerald">Agent learnings saved</span>
+      </div>
+      <ul class="fl">
+        <li>8 browser tools: click, fill, navigate, assert_visible, scroll, wait_for, finish</li>
+        <li>Stateless turns (no compounding screenshots) — cost ~$0.08–0.12 per trace</li>
+        <li>20-step max · scoped to target URL only, no app-wide crawl</li>
+        <li>Verified locators saved → future generations use real selectors automatically</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 5: SCRIPT -->
+    <div class="agent-card" style="border-color:rgba(129,140,248,0.2)">
+      <div class="top-bar" style="background:var(--indigo)"></div>
+      <div class="agent-num" style="color:var(--indigo)">AGENT 04</div>
+      <div class="agent-title" style="color:var(--indigo)">Script Writer Agent</div>
+      <div class="agent-desc">Converts approved test cases into production-ready Playwright TypeScript scripts with smart locator strategy, POM classes, and API request builders. Followed immediately by automatic script verification.</div>
+      <div class="io-label">Accepts</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-violet">Approved test cases</span>
+        <span class="chip chip-violet">ProjectContext (locators)</span>
+        <span class="chip chip-violet">Agent learnings</span>
+        <span class="chip chip-violet">Custom .spec.ts files</span>
+      </div>
+      <div class="io-label">Produces</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-emerald">Playwright TS scripts</span>
+        <span class="chip chip-emerald">Page Object Models</span>
+        <span class="chip chip-emerald">API test files</span>
+        <span class="chip chip-emerald">Script verification status</span>
+      </div>
+      <ul class="fl">
+        <li>Locator priority: role → label → testid → placeholder → css fallback</li>
+        <li>Script verification pipeline: QUEUED → GENERATING → VERIFYING → VERIFIED / MANUAL_REVIEW</li>
+        <li>Golden script promotion: reference scripts for healing and future generation</li>
+        <li>Prerequisite TC support: links setup (login/nav) script as a reusable dependency</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 6: EXECUTION -->
+    <div class="agent-card" style="border-color:rgba(52,211,153,0.2)">
+      <div class="top-bar" style="background:var(--emerald)"></div>
+      <div class="agent-num" style="color:var(--emerald)">AGENT 05</div>
+      <div class="agent-title" style="color:var(--emerald)">Execution Agent</div>
+      <div class="agent-desc">Orchestrates test runs with surgical precision. Supports instant individual runs, multi-select batch runs, use-case group runs, and cron-scheduled suites. Real-time log streaming via Socket.io.</div>
+      <div class="io-label">Run Modes</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-emerald">Individual ▶ button per TC</span>
+        <span class="chip chip-emerald">UseCase group run</span>
+        <span class="chip chip-emerald">Multi-select batch</span>
+        <span class="chip chip-emerald">Suite run</span>
+        <span class="chip chip-emerald">Cron schedule</span>
+      </div>
+      <ul class="fl">
+        <li>Live log streaming per test via Socket.io — visible in Execution page</li>
+        <li>Screenshot + trace + video capture per run result</li>
+        <li>Trigger types: MANUAL / SCHEDULED / INDIVIDUAL / GROUP / HEAL_RERUN</li>
+        <li>Multi-environment: select env config (UAT / Staging / Prod) per run</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 7: HEALING -->
+    <div class="agent-card" style="border-color:rgba(248,113,113,0.2)">
+      <div class="top-bar" style="background:var(--rose)"></div>
+      <div class="agent-num" style="color:var(--rose)">AGENT 06</div>
+      <div class="agent-title" style="color:var(--rose)">Self-Healing Agent</div>
+      <div class="agent-desc">Post-failure intelligence. Captures DOM snapshot and error trace, identifies root cause (selector drift, flow change, API schema change), and generates a confidence-scored patch. Auto-applies above threshold; proposes below.</div>
+      <div class="io-label">Heal Types</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-rose">SELECTOR drift</span>
+        <span class="chip chip-rose">FLOW change</span>
+        <span class="chip chip-rose">API_SCHEMA drift</span>
+      </div>
+      <div class="io-label">Patch States</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-cyan">PENDING</span>
+        <span class="chip chip-emerald">AUTO_APPLIED</span>
+        <span class="chip chip-violet">APPROVED</span>
+        <span class="chip chip-rose">REJECTED</span>
+        <span class="chip chip-amber">EXHAUSTED</span>
+      </div>
+      <ul class="fl">
+        <li>Diff viewer: before/after code comparison with line-level highlighting</li>
+        <li>Confidence scoring (0–1.0); auto-apply threshold configurable per project</li>
+        <li>Golden script reference: healing preserves patterns from promoted golden scripts</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 8: REPORTS -->
+    <div class="agent-card" style="border-color:rgba(167,139,250,0.2)">
+      <div class="top-bar" style="background:var(--pink)"></div>
+      <div class="agent-num" style="color:var(--pink)">AGENT 07</div>
+      <div class="agent-title" style="color:var(--pink)">Reports & Dashboard Agent</div>
+      <div class="agent-desc">Transforms raw execution data into actionable intelligence. Real-time dashboards, AI failure analysis, trend analytics, and configurable email dispatch — all within the platform.</div>
+      <div class="io-label">Produces</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-pink">Live dashboard</span>
+        <span class="chip chip-pink">AI failure analysis</span>
+        <span class="chip chip-pink">Run trend chart</span>
+        <span class="chip chip-pink">Flaky test heatmap</span>
+        <span class="chip chip-pink">Email report (HTML)</span>
+        <span class="chip chip-pink">Excel export</span>
+      </div>
+      <ul class="fl">
+        <li>Per-run: pass/fail/skip counts, duration, AI root-cause summary</li>
+        <li>Playwright trace viewer embedded for failed test case inspection</li>
+        <li>Video playback per run result inline in the Reports page</li>
+        <li>Configurable email recipients with trigger events (on failure / always)</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 9: CHAT -->
+    <div class="agent-card" style="border-color:rgba(251,191,36,0.2)">
+      <div class="top-bar" style="background:var(--amber)"></div>
+      <div class="agent-num" style="color:var(--amber)">AGENT 08 <span class="new-badge">NEW</span></div>
+      <div class="agent-title" style="color:var(--amber)">Chat Agent</div>
+      <div class="agent-desc">Conversational AI assistant with persistent memory and cross-agent action routing. Accessible from any page via the floating sidebar. Routes natural language commands to the correct underlying agent and returns results in-chat.</div>
+      <div class="io-label">Example Commands</div>
+      <div class="chips" style="margin-bottom:12px">
+        <span class="chip chip-amber">"Run all checkout tests"</span>
+        <span class="chip chip-amber">"Why did TC-0078 fail?"</span>
+        <span class="chip chip-amber">"Generate TCs for VEN-4821"</span>
+        <span class="chip chip-amber">"Schedule nightly smoke at 2am"</span>
+      </div>
+      <ul class="fl">
+        <li>Multi-turn conversation with persistent ChatMemory per project</li>
+        <li>Action cards: structured results returned inline (test cases, run results, heal proposals)</li>
+        <li>File attachment support: drop a PDF or screenshot into chat for analysis</li>
+        <li>Routes to: Writer, Execution, Reports, Healing, or Orchestration agents based on intent</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ ARCHITECTURE -->
+<section class="section" id="arch">
+  <div class="section-label">System Architecture</div>
+  <h2 class="section-title">Layered Platform<br>Architecture</h2>
+  <p class="section-desc">Six clean architecture layers — browser client through Docker sandbox. Everything runs in a single Docker Compose stack. Zero external services required beyond the LLM API key.</p>
+
+  <div class="arch-grid">
+    <div class="arch-card">
+      <div class="arch-icon">🖥️</div>
+      <div class="arch-title">Client Layer</div>
+      <div class="arch-body">React 18 SPA served via Nginx. Zero local install — runs in any browser. Connects via REST + Socket.io. 14 fully functional pages.</div>
+      <div class="ts-row"><span class="ts">React 18</span><span class="ts">Vite</span><span class="ts">TailwindCSS</span><span class="ts">TanStack Query</span><span class="ts">Socket.io-client</span><span class="ts">Monaco Editor</span><span class="ts">Recharts</span></div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">🔀</div>
+      <div class="arch-title">API Gateway</div>
+      <div class="arch-body">Express.js server handling REST (70+ endpoints), WebSocket upgrades, job queuing, and inter-agent communication. JWT auth middleware. Project-scoped routing.</div>
+      <div class="ts-row"><span class="ts">Express.js</span><span class="ts">Socket.io</span><span class="ts">BullMQ</span><span class="ts">node-cron</span><span class="ts">JWT</span><span class="ts">Multer</span><span class="ts">Zod validation</span></div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">🤖</div>
+      <div class="arch-title">Agent Layer</div>
+      <div class="arch-body">8 LangChain-backed agent modules. Tool-use pattern (bindTools + invoke loop). Share context via ProjectContext. Emit real-time events via Socket.io.</div>
+      <div class="ts-row"><span class="ts">LangChain.js</span><span class="ts">Anthropic SDK</span><span class="ts">Tool calling</span><span class="ts">Structured output</span><span class="ts">LangGraph</span></div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">⚡</div>
+      <div class="arch-title">Execution Layer</div>
+      <div class="arch-body">Playwright runs inside the Docker runner container with pre-installed Chromium/Firefox/WebKit. 6 BullMQ workers handle script gen, verification, scan, agent trace, run, and healing.</div>
+      <div class="ts-row"><span class="ts">Playwright</span><span class="ts">@playwright/test</span><span class="ts">Worker threads</span><span class="ts">Chromium</span><span class="ts">Firefox</span><span class="ts">WebKit</span></div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">🗄️</div>
+      <div class="arch-title">Storage Layer</div>
+      <div class="arch-body">SQLite (18 models, all with projectId FK) via Prisma ORM. Redis for BullMQ and pub/sub. Docker volume for scripts, traces, screenshots, and videos — partitioned by projectId.</div>
+      <div class="ts-row"><span class="ts">SQLite</span><span class="ts">Prisma ORM</span><span class="ts">Redis</span><span class="ts">Docker Volume</span><span class="ts">S3-compatible (opt)</span></div>
+    </div>
+    <div class="arch-card">
+      <div class="arch-icon">🐳</div>
+      <div class="arch-title">Infrastructure</div>
+      <div class="arch-body">5-container Docker Compose setup. Playwright image pre-installed. Nginx reverse proxy. Health checks and auto-restart. Single <code style="font-family:var(--mono)">docker compose up</code> startup.</div>
+      <div class="ts-row"><span class="ts">Docker Compose</span><span class="ts">Nginx</span><span class="ts">mcr.microsoft.com/playwright</span><span class="ts">Alpine Linux</span></div>
+    </div>
+  </div>
+
+  <!-- DOCKER SERVICES -->
+  <div class="docker-wrap">
+    <div style="font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--cyan);text-transform:uppercase;margin-bottom:8px">Docker Compose Services</div>
+    <p style="font-family:var(--body);font-size:13px;color:var(--text-dim)">docker compose up — that's all. No Node.js, no Playwright, no Python needed on the host machine.</p>
+    <div class="docker-grid">
+      <div class="ds">
+        <div class="ds-port">:3000</div>
+        <div class="ds-name">qa-ui</div>
+        <div class="ds-desc">React SPA + Nginx. Reverse-proxies /api and /ws to qa-api.</div>
+      </div>
+      <div class="ds">
+        <div class="ds-port">:4000</div>
+        <div class="ds-name">qa-api</div>
+        <div class="ds-desc">Express API + 8 agents + BullMQ workers. Hot-reload in dev via tsx watch.</div>
+      </div>
+      <div class="ds">
+        <div class="ds-port">internal</div>
+        <div class="ds-name">qa-runner</div>
+        <div class="ds-desc">Playwright sandbox. Official mcr.microsoft.com/playwright base. Browsers pre-installed. Executes .spec.ts files.</div>
+      </div>
+      <div class="ds">
+        <div class="ds-port">:6379</div>
+        <div class="ds-name">qa-redis</div>
+        <div class="ds-desc">BullMQ job queues (6 named queues) + Socket.io pub/sub adapter for real-time streaming.</div>
+      </div>
+      <div class="ds">
+        <div class="ds-port">volume</div>
+        <div class="ds-name">qa-data</div>
+        <div class="ds-desc">Named Docker volume. Holds SQLite DB, scripts, traces, screenshots, videos. Persists across restarts.</div>
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ DATA MODEL -->
+<section class="section" id="data">
+  <div class="section-label">Data Architecture</div>
+  <h2 class="section-title">18-Model Data<br>Architecture</h2>
+  <p class="section-desc">All 18 Prisma models carry a projectId FK with cascade delete. No cross-project data leakage is possible at the query level.</p>
+  <div class="model-grid">
+    <div class="model-card"><div class="model-name">User</div><div class="model-desc">Auth, global roles (SUPER_ADMIN, USER)</div></div>
+    <div class="model-card"><div class="model-name">Project</div><div class="model-desc">Multi-tenant workspace, color, base URL, req library path</div></div>
+    <div class="model-card"><div class="model-name">ProjectMember</div><div class="model-desc">Role-based access (ADMIN, QA_ENGINEER, VIEWER)</div></div>
+    <div class="model-card"><div class="model-name">EnvConfig</div><div class="model-desc">Named environments with URL + credentials (UAT/Staging/Prod)</div></div>
+    <div class="model-card"><div class="model-name">RequirementDoc</div><div class="model-desc">Uploaded spec docs (PDF/Word), active flag, indexed for Writer Agent</div></div>
+    <div class="model-card"><div class="model-name">ProjectContext</div><div class="model-desc">Login flow, navigation tree, page locators, use-case summary, agent learnings</div></div>
+    <div class="model-card"><div class="model-name">TestCase</div><div class="model-desc">TC metadata, steps, priority, status, type, use-case tag, prerequisite link, source ref</div></div>
+    <div class="model-card"><div class="model-name">Script</div><div class="model-desc">Generated/custom scripts, golden flag, verification status, suspected issue, size</div></div>
+    <div class="model-card"><div class="model-name">ScriptJob</div><div class="model-desc">Script generation pipeline state: QUEUED→GENERATING→VERIFYING→VERIFIED/MANUAL_REVIEW</div></div>
+    <div class="model-card"><div class="model-name">Run</div><div class="model-desc">Execution batches, trigger type (MANUAL/SCHEDULED/INDIVIDUAL/GROUP/HEAL_RERUN), env</div></div>
+    <div class="model-card"><div class="model-name">RunResult</div><div class="model-desc">Per-TC result, duration, error, screenshot/trace/video paths</div></div>
+    <div class="model-card"><div class="model-name">Schedule</div><div class="model-desc">Cron expressions, TC ID list, email recipients, active flag</div></div>
+    <div class="model-card"><div class="model-name">Suite</div><div class="model-desc">TC groupings for predefined batch execution (smoke, regression, etc.)</div></div>
+    <div class="model-card"><div class="model-name">HealProposal</div><div class="model-desc">Patches (SELECTOR/FLOW/API_SCHEMA), confidence score, status, line diff</div></div>
+    <div class="model-card"><div class="model-name">Report</div><div class="model-desc">AI analysis JSON, email sent flag, linked run</div></div>
+    <div class="model-card"><div class="model-name">ChatMessage + ChatMemory</div><div class="model-desc">Conversation threads, action payloads, persistent project-scoped memory</div></div>
+    <div class="model-card"><div class="model-name">UIScan + AgentTrace</div><div class="model-desc">Scanner progress, agent step logs, agentic trace records</div></div>
+    <div class="model-card"><div class="model-name">AgentConfig + LlmCall</div><div class="model-desc">Per-agent feature flags, token/cost tracking for usage dashboard</div></div>
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ FEATURES -->
+<section class="section" id="features">
+  <div class="section-label">Platform Capabilities</div>
+  <h2 class="section-title">Complete Feature<br>Reference</h2>
+  <div class="feat-grid">
+
+    <div class="feat-card" style="border-color:rgba(255,179,71,0.2)">
+      <div class="feat-num" style="color:var(--violet)">F-01 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Orchestration Pipelines</div>
+      <div class="feat-body">End-to-end automation from trigger to report. Configurable per-stage human gates, confidence-based auto-approve, scope filtering by use-case or tag, multi-environment routing, real-time pipeline status board in the UI.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(52,211,153,0.2)">
+      <div class="feat-num" style="color:var(--emerald)">F-02 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">UI Scanner + ProjectContext</div>
+      <div class="feat-body">Automated AUT crawl that builds a living knowledge base: navigation map, per-page semantic locators, validated login flow, use-case summary. All data stored in ProjectContext and auto-injected into TC and script generation. Re-scan on demand.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(129,140,248,0.2)">
+      <div class="feat-num" style="color:var(--indigo)">F-03 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Agentic Browser Trace</div>
+      <div class="feat-body">Claude-driven Playwright loop that generates test cases from a real browser session. Verified selectors and flows saved as Agent Learnings — future generations for the same menu use real locators automatically. Script generation skips LLM for traced TCs.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(52,211,153,0.2)">
+      <div class="feat-num" style="color:var(--emerald)">F-04 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Agent Learnings</div>
+      <div class="feat-body">Verified locators, flows, and selectors from browser traces are persisted in ProjectContext.agentLearnings. Every subsequent generation — TC writing, script writing — is enriched with real, verified UI knowledge. Learnings accumulate per project over time.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-05</div>
+      <div class="feat-title">TC Library — UseCase Grouped</div>
+      <div class="feat-body">Full test case catalog with collapsible use-case groups, coverage metrics, multi-select, drag-to-reassign, bulk move/delete/approve, inline edit, filter by type/status/tag, and one-click "Send to Execution" for any group or selection.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-06</div>
+      <div class="feat-title">Multi-Type Testing</div>
+      <div class="feat-body">UI tests via Playwright browser automation. API tests via request builder. SIT tests via multi-service chained scenarios. All three types generated by the Writer Agent and executed by the same runner with type-aware assertions.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(129,140,248,0.2)">
+      <div class="feat-num" style="color:var(--indigo)">F-07 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Script Verification Pipeline</div>
+      <div class="feat-body">Generated scripts pass through an automatic verification step. Scripts that pass are marked VERIFIED; those with quality concerns are flagged MANUAL_REVIEW. Golden scripts can be promoted as reference baselines for healing and future generation.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-08</div>
+      <div class="feat-title">Self-Healing Agent</div>
+      <div class="feat-body">Detects selector drift, flow changes, and API schema changes post-failure. Confidence-scored patches: above threshold = auto-applied; below = proposed for engineer review. Before/after diff viewer. Healing attempts tracked and bounded per job.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(251,191,36,0.2)">
+      <div class="feat-num" style="color:var(--amber)">F-09 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Chat QA Agent</div>
+      <div class="feat-body">Floating chat sidebar with persistent project memory. Natural language commands routed to the correct agent. Returns structured action cards inline. Supports file attachment (PDF, screenshot) for analysis. Covers TC generation, execution trigger, run analysis, and scheduling.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-10</div>
+      <div class="feat-title">Multi-Project Workspaces</div>
+      <div class="feat-body">Fully isolated projects with independent test libraries, scripts, runs, schedules, and dashboards. URL-routed: /projects/:slug/. Global dashboard for admin-level cross-project health view. Copy test cases and scripts between projects.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-11</div>
+      <div class="feat-title">Reports & AI Analysis</div>
+      <div class="feat-body">Per-run: pass/fail/skip counts, AI root-cause summary, flaky test heatmap, run trend chart. Playwright trace viewer embedded. Video playback per failed TC. Email HTML report with configurable recipients and trigger events.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-12</div>
+      <div class="feat-title">Scheduler</div>
+      <div class="feat-body">Built-in cron engine (node-cron) — no external dependency. Visual schedule builder with cron expression editor. Schedules survive container restarts. Per-schedule email recipients. Supports test case sub-sets, full suites, or use-case groups.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-13</div>
+      <div class="feat-title">Requirement Library</div>
+      <div class="feat-body">Per-project requirement document store. Upload HLD, BRD, PDF, Word, or Excel files via the UI. Auto-loaded as background context on every Writer Agent run. New documents picked up on next run. Reduces repeated uploads to zero.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(244,123,32,0.2)">
+      <div class="feat-num" style="color:var(--orange)">F-14 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">LLM Usage Dashboard</div>
+      <div class="feat-body">Every LLM call logged with token counts, cost, agent name, and project. Usage dashboard shows per-agent token consumption over time. Enables cost governance across teams and projects. Admin-level platform-wide view available.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-15</div>
+      <div class="feat-title">Custom Script Upload</div>
+      <div class="feat-body">Drop existing .spec.ts or .spec.js files directly into the script library. Indexed and tagged as first-class citizens alongside AI-generated scripts. Can be promoted to golden status. Full execution engine compatibility.</div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-num">F-16</div>
+      <div class="feat-title">Zero-Dependency Client</div>
+      <div class="feat-body">Entire QA infrastructure runs inside Docker. Engineers need only a browser. No Node.js, no Playwright, no Python on the accessing machine. Works from Windows, Mac, or Linux. Team access via local network or VPN.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(129,140,248,0.2)">
+      <div class="feat-num" style="color:var(--indigo)">F-17 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Prerequisite TC Linking</div>
+      <div class="feat-body">A test case can declare a prerequisite whose script handles the login and navigation setup steps. Script generation uses the prerequisite's verified action log, avoiding redundant login sequences in every script. Managed via the Edit TC modal.</div>
+    </div>
+
+    <div class="feat-card" style="border-color:rgba(52,211,153,0.2)">
+      <div class="feat-num" style="color:var(--emerald)">F-18 <span class="new-badge">NEW</span></div>
+      <div class="feat-title">Environment Config Management</div>
+      <div class="feat-body">Per-project named environment profiles (UAT, Staging, Production, custom) with URL, username, and password. One profile can be set as default. Env configs used by UI Scanner, Agentic Trace, and all run types. Credentials stored encrypted.</div>
+    </div>
+
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ DATA FLOW -->
+<section class="section" id="flow">
+  <div class="section-label">Request Lifecycle</div>
+  <h2 class="section-title">End-to-End<br>Data Flow</h2>
+  <div style="margin-top:32px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+    <table class="dt">
+      <thead><tr><th>#</th><th>Trigger</th><th>Agent</th><th>Action</th><th>State Stored</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Docker compose up</td><td class="ft-a">System</td><td>6 BullMQ workers start (scriptGen, verify, scan, agentScan, run, heal). Socket.io namespace /projects ready.</td><td>Worker process state</td></tr>
+        <tr><td>1</td><td>User creates project, uploads docs, runs UI Scanner</td><td class="ft-a">Scanner Agent</td><td>Playwright crawls AUT → maps navigation, extracts locators, validates login → saves to ProjectContext</td><td>ProjectContext (nav map, locators, login)</td></tr>
+        <tr><td>2</td><td>Jira webhook / API call / Generate button</td><td class="ft-a">Writer Agent</td><td>Loads queued inputs + req library + ProjectContext → generates TCs → assigns use-case tags → deduplicates</td><td>TestCase rows (with useCaseTag)</td></tr>
+        <tr><td>3</td><td>TCs approved (manually or auto by Orchestrator)</td><td class="ft-a">Script Agent</td><td>Converts approved TCs to Playwright .spec.ts using ProjectContext locators + agent learnings</td><td>Script rows + /scripts/{projectId}/ files</td></tr>
+        <tr><td>3b</td><td>Script generated</td><td class="ft-a">Verify Worker</td><td>Automatic verification pass → sets status VERIFIED or MANUAL_REVIEW</td><td>Script.verificationStatus updated</td></tr>
+        <tr><td>4</td><td>Run triggered (manual / schedule / Orchestrator)</td><td class="ft-a">Execution Agent</td><td>Resolves TCs → scripts → pushes job to run queue → Playwright executes → emits live step events</td><td>Run + RunResult rows, artifacts on volume</td></tr>
+        <tr><td>5</td><td>Test fails (automatic)</td><td class="ft-a">Healing Agent</td><td>Captures DOM + error → identifies root cause → generates confidence-scored patch → auto-apply or propose</td><td>HealProposal row, patched Script file</td></tr>
+        <tr><td>6</td><td>Run completes</td><td class="ft-a">Reports Agent</td><td>Aggregates results → AI failure analysis → updates dashboard → sends email → emits to Orchestrator</td><td>Report row, email log</td></tr>
+        <tr><td>7</td><td>Report ready (Orchestrator flow)</td><td class="ft-a">Orchestration Agent</td><td>Posts summary to Jira comment, sends Slack/webhook notification, marks pipeline as COMPLETED</td><td>Pipeline status record</td></tr>
+        <tr><td>8</td><td>Agentic Trace activated</td><td class="ft-a">Browser Agent</td><td>Claude tool-use loop drives Playwright → records verified actions → saves agent learnings to ProjectContext → returns TCs to GeneratedTCList</td><td>AgentTrace row, ProjectContext.agentLearnings</td></tr>
+        <tr><td>9</td><td>User opens Chat</td><td class="ft-a">Chat Agent</td><td>Routes intent to correct agent. "Why did TC-0078 fail?" → pulls RunResult + HealProposal → returns summary with diff link.</td><td>ChatMessage + ChatMemory rows</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ TECH STACK -->
+<section class="section" id="tech">
+  <div class="section-label">Technology Stack</div>
+  <h2 class="section-title">Complete Stack<br>Reference</h2>
+  <div style="margin-top:32px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+    <table class="dt">
+      <thead><tr><th>Layer</th><th>Technology</th><th>Purpose</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Frontend</td><td class="ft-a">React 18 + Vite</td><td>SPA UI — 14 pages</td><td>TanStack Query for server state, React Router v6 for navigation</td></tr>
+        <tr><td>Frontend</td><td class="ft-a">TailwindCSS v3</td><td>Dark-theme UI styling</td><td>Custom design system with dark palette (#0c0c10 base)</td></tr>
+        <tr><td>Frontend</td><td class="ft-a">Monaco Editor</td><td>Script editing in browser</td><td>Full TypeScript intellisense, same engine as VS Code</td></tr>
+        <tr><td>Frontend</td><td class="ft-a">Socket.io-client</td><td>Real-time events</td><td>Run logs, agent trace steps, scan progress, heal events</td></tr>
+        <tr><td>Backend</td><td class="ft-a">Node.js + Express</td><td>API server</td><td>tsx watch for hot-reload. 70+ routes across 13 route files.</td></tr>
+        <tr><td>Backend</td><td class="ft-a">LangChain.js</td><td>Agent orchestration</td><td>Tool calling (bindTools), structured output, message history</td></tr>
+        <tr><td>Backend</td><td class="ft-a">Anthropic SDK</td><td>Primary LLM</td><td>claude-sonnet-4 across all 8 agents. Model configurable per agent.</td></tr>
+        <tr><td>Backend</td><td class="ft-a">BullMQ + Redis</td><td>6 job queues</td><td>scriptGen, verify, scan, agent-scans, run-worker, heal</td></tr>
+        <tr><td>Backend</td><td class="ft-a">node-cron</td><td>Scheduler engine</td><td>Persisted to DB — survives container restarts</td></tr>
+        <tr><td>Backend</td><td class="ft-a">Prisma ORM</td><td>Database access</td><td>Type-safe, migrations, 18 models. SQLite in Docker volume.</td></tr>
+        <tr><td>Testing</td><td class="ft-a">Playwright</td><td>Browser automation + API</td><td>Multi-browser, trace viewer, screenshot, video capture built-in</td></tr>
+        <tr><td>Database</td><td class="ft-a">SQLite</td><td>All structured data</td><td>File-based, zero server. Lives on qa-data Docker volume.</td></tr>
+        <tr><td>Reporting</td><td class="ft-a">SheetJS (xlsx)</td><td>Excel export</td><td>Client-side generation, no server dependency</td></tr>
+        <tr><td>Reporting</td><td class="ft-a">Nodemailer</td><td>Email dispatch</td><td>SMTP/OAuth2. Works with Gmail, Outlook, custom SMTP.</td></tr>
+        <tr><td>Infra</td><td class="ft-a">Docker Compose</td><td>5-service orchestration</td><td>qa-ui, qa-api, qa-runner, qa-redis, qa-data</td></tr>
+        <tr><td>AI</td><td class="ft-a">Anthropic Claude claude-sonnet-4</td><td>Primary LLM for all agents</td><td>Long context, vision, code gen, structured output, tool use</td></tr>
+        <tr><td>AI</td><td class="ft-a">OpenAI (optional)</td><td>Fallback LLM</td><td>Configurable per agent via AgentConfig model</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════ DEPLOYMENT -->
+<section class="section" id="deploy">
+  <div class="section-label">Deployment</div>
+  <h2 class="section-title">From Zero to Running<br>in 3 Commands</h2>
+
+  <div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+    <div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="t-dot" style="background:#ef4444"></div>
+          <div class="t-dot" style="background:#f59e0b"></div>
+          <div class="t-dot" style="background:#10b981"></div>
+          <span class="t-title">TERMINAL · SERVER SETUP</span>
+        </div>
+        <pre><code><span style="color:var(--text-dim)"># 1. Clone</span>
+<span style="color:var(--cyan)">git clone</span> &lt;repo&gt; &amp;&amp; <span style="color:var(--cyan)">cd</span> qa-infinity
+
+<span style="color:var(--text-dim)"># 2. Configure</span>
+<span style="color:var(--cyan)">cp</span> .env.example .env
+<span style="color:var(--text-dim)"># Set: ANTHROPIC_API_KEY
+# Set: JIRA_URL + JIRA_TOKEN (optional)
+# Set: SMTP_HOST + SMTP_USER (optional)
+# Set: SLACK_WEBHOOK (optional)</span>
+
+<span style="color:var(--text-dim)"># 3. Start everything</span>
+<span style="color:var(--cyan)">docker compose up -d</span>
+
+<span style="color:var(--emerald)"># ✓ UI at http://YOUR-SERVER:3000
+# ✓ API at http://YOUR-SERVER:4000
+# ✓ All tests run inside Docker
+# ✓ No install needed on client machines</span>
+        </code></pre>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Server Requirements</div>
+        <ul class="fl">
+          <li>Docker Engine 24+ installed</li>
+          <li>4 GB RAM minimum (8 GB recommended for parallel runs)</li>
+          <li>10 GB disk for traces, screenshots, videos</li>
+          <li>Network access from server to target AUT URLs</li>
+          <li>Outbound HTTPS to Anthropic API (api.anthropic.com)</li>
+        </ul>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--cyan);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Client Requirements</div>
+        <ul class="fl">
+          <li>Modern browser (Chrome / Firefox / Edge / Safari)</li>
+          <li>Network access to server IP:3000</li>
+          <li>No Node.js, no Playwright, no Python — zero install</li>
+          <li>Works from Windows, Mac, Linux, tablet</li>
+        </ul>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--emerald);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">CI/CD Integration</div>
+        <ul class="fl">
+          <li><code style="color:var(--cyan);font-family:var(--mono)">POST /api/orchestrate</code> — trigger full pipeline from any CI system</li>
+          <li>Payload: project slug, scope (use-case/suite), environment, stages to run</li>
+          <li>Callback webhook on pipeline completion with JSON results</li>
+          <li>JUnit XML output available for test result upload to CI dashboards</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer style="text-align:center;padding:60px 40px;font-family:var(--mono);font-size:11px;color:var(--text-dim);letter-spacing:1px;position:relative;z-index:1;line-height:2;border-top:1px solid var(--border)">
+  <div style="font-family:var(--sans);font-size:16px;font-weight:700;color:var(--cyan);margin-bottom:8px;letter-spacing:-.2px">QA INFINITY · Blueprint v2 · May 2026</div>
+  <div>8 AI Agents · Orchestration Pipeline · Jira / CI/CD Triggered · Agentic Browser Trace · UI Scanner · Self-Healing</div>
+  <div>Multi-Project · UseCase-Grouped TC Library · Script Verification · Agent Learnings · Chat Agent · LLM Cost Tracking</div>
+  <div style="margin-top:12px;color:var(--border)">────────────────────────────────────────────────────</div>
+  <div style="margin-top:8px">Sixdee Telecom Solutions Pvt. Ltd. · AirtelAfrica-Ventas · QA Automation Initiative · v1.0.0 Production</div>
+</footer>
+
+</body>
+</html>

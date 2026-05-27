@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { generateLineDiff } from '../services/diffService.js';
-import { applyHeal, rejectHeal, requeueHealedTest } from '../services/healService.js';
+import { applyHeal, rejectHeal, requeueHealedTest, retryHealWithContext } from '../services/healService.js';
 import { addHealJob } from '../lib/queue.js';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
@@ -142,12 +142,17 @@ router.post('/approve-all-confident', wrap(async (req, res) => {
 
 router.post('/trigger/:runId', wrap(async (req, res) => {
   const { projectId, runId } = req.params;
+  const { runResultIds } = req.body as { runResultIds?: string[] };
 
   const run = await prisma.run.findFirst({ where: { id: runId, projectId } });
   if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
 
   const failedResults = await prisma.runResult.findMany({
-    where: { runId, status: 'FAILED' },
+    where: {
+      runId,
+      status: 'FAILED',
+      ...(runResultIds?.length ? { id: { in: runResultIds } } : {}),
+    },
     select: { id: true },
   });
 
@@ -171,7 +176,7 @@ router.post('/trigger/:runId', wrap(async (req, res) => {
   res.json({
     message: queued > 0
       ? `Queued ${queued} heal job${queued !== 1 ? 's' : ''}`
-      : 'All failed results already have heal jobs queued',
+      : 'All selected results already have heal jobs queued',
     count: queued,
   });
 }));
@@ -199,19 +204,58 @@ router.get('/:healId', wrap(async (req, res) => {
 }));
 
 // ── POST /heals/:healId/approve ────────────────────────────────────────────
-// Apply patched code + re-queue as INDIVIDUAL run
+// Apply patched code. Optional { rerun: true } queues a single INDIVIDUAL re-run.
 
 router.post('/:healId/approve', wrap(async (req, res) => {
   const { projectId, healId } = req.params;
+  const { rerun = false } = req.body as { rerun?: boolean };
 
   const heal = await prisma.heal.findFirst({ where: { id: healId, projectId } });
   if (!heal) { res.status(404).json({ error: 'Heal not found' }); return; }
   if (heal.status !== 'PENDING') { res.status(409).json({ error: 'Heal is not pending' }); return; }
 
   const opts = await applyHeal(healId);
-  const runId = await requeueHealedTest(opts);
 
-  res.json({ message: 'Heal approved and test re-queued', runId });
+  if (rerun) {
+    const runId = await requeueHealedTest(opts);
+    res.json({ message: 'Heal approved and test re-queued', runId });
+  } else {
+    res.json({ message: 'Heal approved — script updated' });
+  }
+}));
+
+// ── POST /heals/:healId/retry-with-context ────────────────────────────────
+// Re-run the patcher with user-supplied context and update the existing heal record.
+
+router.post('/:healId/retry-with-context', wrap(async (req, res) => {
+  const { projectId, healId } = req.params;
+  const { userContext } = req.body as { userContext?: string };
+
+  if (!userContext?.trim()) {
+    res.status(400).json({ error: 'userContext is required' });
+    return;
+  }
+
+  const heal = await prisma.heal.findFirst({ where: { id: healId, projectId } });
+  if (!heal) { res.status(404).json({ error: 'Heal not found' }); return; }
+  if (heal.status !== 'PENDING') { res.status(409).json({ error: 'Heal is not pending' }); return; }
+
+  await retryHealWithContext(healId, userContext);
+
+  const updated = await prisma.heal.findFirst({
+    where: { id: healId },
+    include: {
+      runResult: {
+        include: {
+          testCase: { select: { id: true, tcId: true, title: true } },
+          run: { select: { id: true, name: true, environment: true } },
+          script: { select: { id: true, filename: true } },
+        },
+      },
+    },
+  });
+
+  res.json(attachDiff(updated!));
 }));
 
 // ── POST /heals/:healId/reject ─────────────────────────────────────────────

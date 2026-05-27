@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
 import type { TestCase, Script } from '../../types';
+import { getToken } from '../../lib/auth';
 
 interface EditTCModalProps {
   tc: TestCase;
@@ -40,8 +40,7 @@ export default function EditTCModal({ tc, onSave, onClose }: EditTCModalProps) {
   const [status, setStatus] = useState<TestCase['status']>(tc.status);
   const [saving, setSaving] = useState(false);
   const [newStep, setNewStep] = useState('');
-  const { slug } = useParams<{ slug: string }>();
-  const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc.prerequisiteTcId ?? null);
+const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc.prerequisiteTcId ?? null);
   const [automatedTcs, setAutomatedTcs] = useState<Array<{ id: string; tcId: string; title: string }>>([]);
   const [prereqSearch, setPrereqSearch] = useState('');
   const [prereqOpen, setPrereqOpen] = useState(false);
@@ -61,9 +60,8 @@ export default function EditTCModal({ tc, onSave, onClose }: EditTCModalProps) {
 
   // Fetch TCs that have a script (automated) for the prerequisite picker
   useEffect(() => {
-    if (!slug) return;
-    fetch(`/api/projects/${slug}/scripts`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    fetch(`/api/projects/${tc.projectId}/scripts`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then((r) => r.json())
       .then((data: { scripts: Script[] }) => {
@@ -76,7 +74,7 @@ export default function EditTCModal({ tc, onSave, onClose }: EditTCModalProps) {
         setAutomatedTcs(tcs.filter((t) => { if (seen.has(t.id)) return false; seen.add(t.id); return true; }));
       })
       .catch(() => {}); // silently ignore — picker just stays empty
-  }, [slug, tc.id]);
+  }, [tc.id, tc.projectId]);
 
   // Close prerequisite dropdown on outside click
   useEffect(() => {

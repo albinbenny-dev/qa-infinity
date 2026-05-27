@@ -1,10 +1,14 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — @langchain/core types are resolved inside Docker; ignore locally
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { addScriptGenJob } from '../lib/queue.js';
+import { createLLM } from '../lib/llm.js';
 import {
   saveScript,
   readScript,
@@ -13,6 +17,7 @@ import {
   exportZip,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
+import { generateContextGuide } from '../lib/contextGuide.js';
 
 const router = Router({ mergeParams: true });
 
@@ -444,9 +449,10 @@ router.post(
       }
 
       const content = req.file.buffer.toString('utf-8');
-      const filename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
       const projectId = req.project.id;
       const testCaseId = (req.body?.testCaseId as string | undefined) || null;
+
+      let filename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
 
       if (testCaseId) {
         const tc = await prisma.testCase.findFirst({ where: { id: testCaseId, projectId } });
@@ -454,6 +460,8 @@ router.post(
           res.status(400).json({ error: 'Test case not found in this project' });
           return;
         }
+        // Rename to system-default convention for traceability
+        filename = buildSystemFilename(tc.tcId, tc.title, req.file.originalname);
         // Replace any existing script for this test case
         const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
         if (existing) {
@@ -488,13 +496,177 @@ router.post(
   },
 );
 
-// ── GET /prompt-guide — download the external LLM prompt guide ────────────────
+// ── GET /prompt-guide — static generic LLM prompt guide (kept for compat) ────
 
 router.get('/prompt-guide', (_req: Request, res: Response) => {
   res.setHeader('Content-Disposition', 'attachment; filename="qa-infinity-script-prompt-guide.md"');
   res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
   res.send(PROMPT_GUIDE_CONTENT);
 });
+
+// ── GET /context-guide — project-specific dynamic guide ───────────────────
+
+router.get('/context-guide', async (req: Request, res: Response) => {
+  try {
+    const project = req.project;
+    const content = await generateContextGuide(
+      project.id,
+      project.name,
+      project.baseUrl ?? 'http://localhost:3000',
+    );
+    const safeName = (project.slug ?? project.id).replace(/[^a-zA-Z0-9-]/g, '-');
+    res.setHeader('Content-Disposition', `attachment; filename="qa-infinity-guide-${safeName}.md"`);
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.send(content);
+  } catch (err) {
+    console.error('[scripts] GET /context-guide', err);
+    res.status(500).json({ error: 'Failed to generate context guide' });
+  }
+});
+
+// ── POST /upload-with-extract — upload script + auto-create TC from it ────
+
+function buildSystemFilename(tcId: string, title: string, originalname: string): string {
+  const ext = originalname.toLowerCase().endsWith('.spec.js') ? '.spec.js' : '.spec.ts';
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  return `${tcId}-${slug}${ext}`;
+}
+
+async function nextTcId(projectId: string, projectSlug: string): Promise<string> {
+  const count = await prisma.testCase.count({ where: { projectId } });
+  const prefix = projectSlug.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+  return `TC-${prefix}-${String(count + 1).padStart(3, '0')}`;
+}
+
+async function extractTCFromScript(scriptContent: string, projectId: string): Promise<{
+  title: string;
+  description: string;
+  steps: string[];
+  expectedResult: string;
+  type: 'UI' | 'API' | 'SIT';
+  useCaseTag: string | null;
+}> {
+  const llm = createLLM({ temperature: 0, agentName: 'script-extract', projectId });
+  const capped = scriptContent.slice(0, 8000);
+
+  const response = await llm.invoke([
+    new SystemMessage(
+      `You are a QA engineer. Extract test case details from a Playwright TypeScript test script.
+Output ONLY a JSON object — no markdown fences, no explanation:
+{
+  "title": "concise test case title (from describe/test name, 5-10 words)",
+  "description": "one sentence describing what is tested",
+  "steps": ["user action in plain English", "..."],
+  "expectedResult": "what the final assertions verify, in plain English",
+  "type": "UI",
+  "useCaseTag": null
+}
+Rules:
+- steps: translate code into human-readable user actions, not TypeScript syntax
+- type: "UI" for browser tests, "API" for pure API, "SIT" for system integration
+- useCaseTag: functional area if clear (e.g. "Login", "Primary Sales", "Dashboard"), otherwise null`,
+    ),
+    new HumanMessage(`Script:\n\`\`\`typescript\n${capped}\n\`\`\``),
+  ]);
+
+  const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+  const cleaned = raw.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim();
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      title: String(parsed.title || 'Imported Test Case').slice(0, 200),
+      description: String(parsed.description || '').slice(0, 500),
+      steps: Array.isArray(parsed.steps) ? parsed.steps.map(String).filter(Boolean) : [],
+      expectedResult: String(parsed.expectedResult || 'Script executes without errors').slice(0, 1000),
+      type: (['UI', 'API', 'SIT'] as const).includes(parsed.type) ? parsed.type : 'UI',
+      useCaseTag: parsed.useCaseTag ? String(parsed.useCaseTag).slice(0, 120) : null,
+    };
+  } catch {
+    // Fallback: derive title from filename if LLM output is unparseable
+    return {
+      title: 'Imported Test Case',
+      description: 'Imported from external script',
+      steps: ['Execute the imported Playwright script'],
+      expectedResult: 'Script executes without errors',
+      type: 'UI',
+      useCaseTag: null,
+    };
+  }
+}
+
+router.post(
+  '/upload-with-extract',
+  (req: Request, res: Response, next: NextFunction) => {
+    scriptUpload.single('file')(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        res.status(400).json({ error: `Upload error: ${err.message}` });
+        return;
+      }
+      if (err instanceof Error) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      next();
+    });
+  },
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: 'No file uploaded. Use multipart/form-data with field "file"' });
+        return;
+      }
+
+      const projectId = req.project.id;
+      const content = req.file.buffer.toString('utf-8');
+
+      // Extract TC details from script via LLM
+      const extracted = await extractTCFromScript(content, projectId);
+
+      // Generate a unique tcId
+      const tcId = await nextTcId(projectId, req.project.slug ?? projectId);
+
+      // Rename to system-default convention using extracted TC info
+      const filename = buildSystemFilename(tcId, extracted.title, req.file.originalname);
+
+      // Create the test case in DRAFT status
+      const testCase = await prisma.testCase.create({
+        data: {
+          projectId,
+          tcId,
+          title: extracted.title,
+          description: extracted.description,
+          steps: JSON.stringify(extracted.steps),
+          expectedResult: extracted.expectedResult,
+          type: extracted.type,
+          tags: '[]',
+          useCaseTag: extracted.useCaseTag,
+          status: 'DRAFT',
+          priority: 'MEDIUM',
+          sourceRef: `Imported from ${req.file.originalname}`,
+        },
+      });
+
+      // Save script file and link to the created TC
+      saveScript(projectId, filename, content);
+
+      const script = await prisma.script.create({
+        data: {
+          projectId,
+          testCaseId: testCase.id,
+          filename,
+          content,
+          isCustomUpload: true,
+        },
+      });
+
+      res.status(201).json({ testCase, script });
+    } catch (err) {
+      console.error('[scripts] POST /upload-with-extract', err);
+      res.status(500).json({ error: 'Upload and extraction failed' });
+    }
+  },
+);
 
 // ── GET /export/zip ────────────────────────────────────────────────────────
 

@@ -5,6 +5,9 @@ export interface User {
   globalRole: 'SUPER_ADMIN' | 'USER';
 }
 
+/** Project-level role assigned to a ProjectMember */
+export type ProjectRole = 'ADMIN' | 'QA_ENGINEER' | 'VIEWER';
+
 export interface AuthResponse {
   token: string;
   user: User;
@@ -20,9 +23,12 @@ export interface Project {
   reqLibraryPath?: string;
   createdAt: string;
   createdBy: string;
+  /** The authenticated user's role in this project (injected by GET /projects) */
+  myRole?: ProjectRole | null;
   _count?: {
     testCases: number;
     members: number;
+    runs?: number;
   };
   members?: ProjectMember[];
   envConfigs?: EnvConfig[];
@@ -436,4 +442,28 @@ export interface UseCaseSummary {
   color: string;
   pages: string[];
   tcCount: number;
+}
+
+// ── Agentic Browser Trace ──────────────────────────────────────────────────
+
+export interface AgentTraceStep {
+  stepNumber: number;
+  toolName: string;
+  stepDescription?: string;
+  success: boolean;
+  errorMessage?: string;
+}
+
+export interface AgentTrace {
+  id: string;
+  projectId: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'BLOCKED';
+  testGoal: string;
+  menuContext?: string | null;
+  targetUrl?: string | null;
+  stepCount: number;
+  currentStep?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
 }

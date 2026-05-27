@@ -2,7 +2,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { createLLM } from '../lib/llm.js';
 import { prisma } from '../lib/prisma.js';
 import { readScript } from '../services/scriptFileService.js';
-import type { LoginInstructions, NavNode, PageLocators } from '../types/scanner.js';
+import type { LoginInstructions, NavNode, PageLocators, AgentLearning } from '../types/scanner.js';
 
 export interface HealContext {
   /** SELECTOR | FLOW | API_SCHEMA */
@@ -58,7 +58,7 @@ const SYSTEM_PROMPT_BASE = `You are a senior QA automation engineer.
 Generate a production-ready Playwright TypeScript test using @playwright/test
 for the target application (baseUrl: {BASE_URL}).
 Page Object Model pattern required. Import POMs from ./pages/.
-Locator priority: getByRole > getByLabel > getByTestId > CSS > XPath.
+Locator priority: getByTestId > getByRole > getByLabel > CSS. Never use XPath.
 Return ONLY raw TypeScript — no markdown fences, no explanations.
 
 {PLATFORM_CONTEXT}
@@ -87,7 +87,7 @@ or note in a comment that the value must be replaced — do not invent a placeho
 
 ### Heal History — learn from past failures
 If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
-- SELECTOR heals: the listed selector was unstable. Prefer getByRole/getByLabel/getByTestId over it.
+- SELECTOR heals: the listed selector was unstable. Prefer getByTestId/getByRole/getByLabel over it.
 - FLOW heals: timing or navigation was wrong. Add explicit waits, waitForResponse, or waitForLoadState.
 - API_SCHEMA heals: response shape changed. Validate only stable fields; avoid brittle assertions.
 Absorb these patterns so you do not regenerate scripts that will need the same fix.
@@ -113,7 +113,7 @@ Generate a production-ready Playwright TypeScript test using @playwright/test
 for the target application (baseUrl: {BASE_URL}).
 Self-contained mode: do NOT import from ./pages/ or any local modules.
 All page interactions must be written inline in this single file.
-Locator priority: getByRole > getByLabel > getByTestId > CSS > XPath.
+Locator priority: getByTestId > getByRole > getByLabel > CSS. Never use XPath.
 Return ONLY raw TypeScript — no markdown fences, no explanations.
 
 {PLATFORM_CONTEXT}
@@ -142,7 +142,7 @@ or note in a comment that the value must be replaced — do not invent a placeho
 
 ### Heal History — learn from past failures
 If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
-- SELECTOR heals: the listed selector was unstable. Prefer getByRole/getByLabel/getByTestId over it.
+- SELECTOR heals: the listed selector was unstable. Prefer getByTestId/getByRole/getByLabel over it.
 - FLOW heals: timing or navigation was wrong. Add explicit waits, waitForResponse, or waitForLoadState.
 - API_SCHEMA heals: response shape changed. Validate only stable fields; avoid brittle assertions.
 Absorb these patterns so you do not regenerate scripts that will need the same fix.
@@ -165,7 +165,7 @@ export async function getProjectPlatformSection(
       '## Platform Context',
       '(No UI scan found for this project — run a UI scan from Project Settings > UI Scanner to enable real locators)',
       '',
-      'Locator priority: getByRole > getByLabel > getByTestId > CSS > XPath.',
+      'Locator priority: getByTestId > getByRole > getByLabel > CSS. Never use XPath.',
     ].join('\n');
   }
 
@@ -174,10 +174,14 @@ export async function getProjectPlatformSection(
   const locators = ctx.pageLocators
     ? (JSON.parse(ctx.pageLocators) as Record<string, PageLocators>)
     : {};
+  const learnings = ctx.agentLearnings
+    ? (JSON.parse(ctx.agentLearnings) as AgentLearning[])
+    : [];
 
   const loginSection = buildLoginSection(login);
   const navSection = buildNavSection(navMap, useCaseTag);
   const locatorSection = buildLocatorSection(locators, useCaseTag, navMap);
+  const learningsSection = buildLearningsSection(learnings, useCaseTag);
 
   const sections = [
     `## Platform Context — ${new Date().toISOString().split('T')[0]} (from UI scan)`,
@@ -191,6 +195,10 @@ export async function getProjectPlatformSection(
   }
 
   sections.push(loginSection, '', navSection, '', locatorSection);
+
+  if (learningsSection) {
+    sections.push('', learningsSection);
+  }
 
   return sections.join('\n');
 }
@@ -272,6 +280,36 @@ function buildLocatorSection(
     lines.push(`\n#### ${page.navLabel} (${page.urlPattern})`);
     for (const loc of page.locators.slice(0, 20)) {
       lines.push(`  - ${loc.semanticName}: \`${loc.selector}\``);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function buildLearningsSection(learnings: AgentLearning[], useCaseTag?: string | null): string {
+  if (learnings.length === 0) return '';
+
+  // Prefer learnings relevant to the use-case tag; fall back to all recent ones
+  const scoped = useCaseTag
+    ? learnings.filter(l => l.menuContext.toLowerCase().includes(useCaseTag.toLowerCase()))
+    : [];
+  const toShow = (scoped.length > 0 ? scoped : learnings).slice(-8);
+  if (toShow.every(l => l.verifiedLocators.length === 0 && l.verifiedFlow.length === 0)) return '';
+
+  const lines = [
+    '### Verified Selectors from Agent Traces',
+    'These selectors worked in live browser sessions. Use them first.',
+    'Format: selectorType=value → Playwright: testid=x → getByTestId("x"), role=x → getByRole("x"), label=x → getByLabel("x"), text=x → getByText("x"), css=x → locator("x")',
+  ];
+
+  for (const l of toShow) {
+    if (l.verifiedLocators.length === 0 && l.verifiedFlow.length === 0) continue;
+    lines.push(`\n#### ${l.menuContext}`);
+    for (const loc of l.verifiedLocators.slice(0, 12)) {
+      lines.push(`  - ${loc.semanticName}: ${loc.selector}`);
+    }
+    if (l.verifiedFlow.length > 0) {
+      lines.push(`  Flow: ${l.verifiedFlow.slice(0, 6).join(' → ')}`);
     }
   }
 

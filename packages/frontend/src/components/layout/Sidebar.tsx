@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useProjectStore } from '../../stores/projectStore';
+import { clearAuth } from '../../lib/auth';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
 import { useHealStats } from '../../hooks/useHeals';
 import { useSchedules } from '../../hooks/useRuns';
@@ -12,7 +15,16 @@ interface SidebarProps {
 export default function Sidebar({ slug }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { activeProject, projects, currentUser } = useProjectStore();
+  const qc = useQueryClient();
+  const { activeProject, projects, currentUser, setCurrentUser } = useProjectStore();
+  const [logoutHover, setLogoutHover] = useState(false);
+
+  function handleLogout() {
+    clearAuth();
+    setCurrentUser(null);
+    qc.clear();
+    navigate('/login', { replace: true });
+  }
   const projectId = activeProject?.id ?? '';
   const { data: healStats } = useHealStats(projectId || undefined);
   const { data: schedules = [] } = useSchedules(projectId || undefined);
@@ -167,6 +179,18 @@ export default function Sidebar({ slug }: SidebarProps) {
           <span className="nav-icon">💳</span>
           AI Usage
         </Link>
+        {currentUser?.globalRole === 'SUPER_ADMIN' && (
+          <Link
+            to="/admin/users"
+            className={`nav-item${location.pathname === '/admin/users' ? ' active' : ''}`}
+          >
+            <span className="nav-icon">👤</span>
+            User Management
+            <span className="nav-badge" style={{ marginLeft: 'auto', background: 'rgba(244,123,32,0.2)', color: 'var(--6d-orange)', fontSize: '8px', padding: '1px 5px' }}>
+              ADMIN
+            </span>
+          </Link>
+        )}
       </div>
 
       {/* Nav sections */}
@@ -215,10 +239,10 @@ export default function Sidebar({ slug }: SidebarProps) {
         )}
       </nav>
 
-      {/* User widget */}
+      {/* User widget + logout */}
       <div
         style={{
-          padding: '12px 10px',
+          padding: '10px 10px',
           borderTop: '1px solid var(--border)',
         }}
       >
@@ -226,12 +250,13 @@ export default function Sidebar({ slug }: SidebarProps) {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
-            padding: '8px 10px',
+            gap: '8px',
+            padding: '7px 8px',
             borderRadius: 'var(--radius)',
-            cursor: 'pointer',
+            background: 'transparent',
           }}
         >
+          {/* Avatar */}
           <div
             style={{
               width: '28px',
@@ -249,6 +274,8 @@ export default function Sidebar({ slug }: SidebarProps) {
           >
             {currentUser ? getInitials(currentUser.name) : 'U'}
           </div>
+
+          {/* Name + role */}
           <div style={{ flex: 1, overflow: 'hidden' }}>
             <div
               style={{
@@ -274,6 +301,31 @@ export default function Sidebar({ slug }: SidebarProps) {
               {currentUser?.globalRole === 'SUPER_ADMIN' ? 'Super Admin' : 'QA Engineer'}
             </div>
           </div>
+
+          {/* Logout button */}
+          <button
+            onClick={handleLogout}
+            onMouseEnter={() => setLogoutHover(true)}
+            onMouseLeave={() => setLogoutHover(false)}
+            title="Sign out"
+            style={{
+              flexShrink: 0,
+              width: '28px',
+              height: '28px',
+              borderRadius: '7px',
+              border: `1px solid ${logoutHover ? 'rgba(220,38,38,0.4)' : 'var(--border)'}`,
+              background: logoutHover ? 'rgba(220,38,38,0.10)' : 'transparent',
+              color: logoutHover ? 'var(--fail)' : 'var(--text-dim)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '13px',
+              transition: 'all 0.15s',
+            }}
+          >
+            ⏻
+          </button>
         </div>
       </div>
     </aside>

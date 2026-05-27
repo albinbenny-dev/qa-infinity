@@ -1,11 +1,14 @@
-import { useReducer, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useReducer, useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { io, type Socket } from 'socket.io-client';
 import { useProject, useRequirementDocs, useProjectEnvConfigs } from '../hooks/useProjects';
+import { useRBAC } from '../hooks/useRBAC';
 import {
   useGenerateTestCases,
   useSaveTestCases,
   useUploadFile,
   useParseSeedFile,
+  useStartAgentTrace,
 } from '../hooks/useTestCases';
 import { useProjectContext, useUpdateContext } from '../hooks/useScans';
 import { useAgentConfig, useOpenRouterUsage } from '../hooks/useUsage';
@@ -13,7 +16,12 @@ import InputQueue, { type InputQueueState, type SeedTC } from '../components/wri
 import GeneratedTCList from '../components/writer/GeneratedTCList';
 import DocsReference from '../components/writer/DocsReference';
 import { api } from '../lib/api';
-import type { TestCase } from '../types';
+import { getToken } from '../lib/auth';
+import type { TestCase, AgentTraceStep } from '../types';
+
+const SOCKET_URL = typeof window !== 'undefined'
+  ? `${window.location.protocol}//${window.location.host}`
+  : 'http://localhost:3000';
 
 interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'> {
   _tempId: string;
@@ -95,6 +103,7 @@ const initialInputState: InputQueueState = {
 export default function TestWriter() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const { canWrite } = useRBAC();
 
   const { data: project } = useProject(slug);
   const { data: docs = [] } = useRequirementDocs(project?.id);
@@ -113,6 +122,13 @@ export default function TestWriter() {
   const saveMutation = useSaveTestCases(project?.id ?? '');
   const uploadMutation = useUploadFile();
   const parseSeedFileMutation = useParseSeedFile(project?.id ?? '');
+  const startAgentTrace = useStartAgentTrace(project?.id ?? '');
+
+  const [activeAgentTraceId, setActiveAgentTraceId] = useState<string | null>(null);
+  const [agentSteps, setAgentSteps] = useState<AgentTraceStep[]>([]);
+  const [showAgentProgress, setShowAgentProgress] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const agentSocketRef = useRef<Socket | null>(null);
 
   const [state, dispatch] = useReducer(reducer, {
     inputState: initialInputState,
@@ -156,6 +172,54 @@ export default function TestWriter() {
     }
   }, [state.generatedTCs, context?.pendingTCDraft]);
 
+  // Connect to /projects namespace when an agent trace is active
+  useEffect(() => {
+    if (!activeAgentTraceId || !project?.id) return;
+
+    const token = getToken();
+    const socket = io(`${SOCKET_URL}/projects`, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+    });
+    agentSocketRef.current = socket;
+
+    socket.emit('joinProject', { projectId: project.id });
+
+    socket.on('agent-trace:step', (data: { agentTraceId: string; step: AgentTraceStep }) => {
+      if (data.agentTraceId !== activeAgentTraceId) return;
+      setAgentSteps((prev) => [...prev, data.step]);
+    });
+
+    socket.on('agent-trace:done', (data: {
+      agentTraceId: string;
+      testCases: Array<Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'>>;
+    }) => {
+      if (data.agentTraceId !== activeAgentTraceId) return;
+      setShowAgentProgress(false);
+      setActiveAgentTraceId(null);
+      const newTCs: GeneratedTC[] = data.testCases.map((tc, i) => ({
+        ...tc,
+        _tempId: `agent-${Date.now()}-${i}`,
+        steps: tc.steps ?? [],
+        tags: tc.tags ?? [],
+        priority: tc.priority ?? 'MEDIUM',
+      }));
+      dispatch({ type: 'APPEND_GENERATED', tcs: newTCs });
+    });
+
+    socket.on('agent-trace:failed', (data: { agentTraceId: string; error: string }) => {
+      if (data.agentTraceId !== activeAgentTraceId) return;
+      setShowAgentProgress(false);
+      setActiveAgentTraceId(null);
+      setAgentError(data.error ?? 'Agentic trace failed');
+    });
+
+    return () => {
+      socket.disconnect();
+      agentSocketRef.current = null;
+    };
+  }, [activeAgentTraceId, project?.id]);
+
   const hasScanDraft = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
 
   const inputCount = useMemo(() => {
@@ -168,6 +232,43 @@ export default function TestWriter() {
 
     const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes, seedTCs } = state.inputState;
 
+    const activeTypes = (Object.entries(testTypes) as ['UI' | 'API' | 'SIT', boolean][])
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+
+    if (!activeTypes.length) {
+      alert('Select at least one test type.');
+      return;
+    }
+
+    // Branch: agentic trace for any UI screen with the toggle enabled
+    const agenticScreen = uiScreenUrls.find((s) => s.agenticTrace);
+    if (agenticScreen) {
+      setAgentError(null);
+      setAgentSteps([]);
+      setShowAgentProgress(true);
+
+      const seedSteps = seedTCs.flatMap((tc) => tc.steps);
+      try {
+        const { agentTraceId } = await startAgentTrace.mutateAsync({
+          targetUrl: agenticScreen.url,
+          menuContext: agenticScreen.menuContext ?? agenticScreen.url,
+          username: agenticScreen.username,
+          password: agenticScreen.password,
+          additionalContext: additionalContext || undefined,
+          seedSteps: seedSteps.length > 0 ? seedSteps : undefined,
+          testTypes: activeTypes,
+        });
+        setActiveAgentTraceId(agentTraceId);
+      } catch (err) {
+        console.error('[TestWriter] Agent trace start failed:', err);
+        setShowAgentProgress(false);
+        setAgentError((err as Error)?.message ?? 'Failed to start agentic trace');
+      }
+      return;
+    }
+
+    // Normal generate flow
     const inputs: { type: string; content: string; label: string }[] = [];
 
     for (const story of jiraStories) {
@@ -191,15 +292,6 @@ export default function TestWriter() {
 
     if (!inputs.length && !seedTCs.length) {
       alert('Add at least one input source or seed test case before generating.');
-      return;
-    }
-
-    const activeTypes = (Object.entries(testTypes) as ['UI' | 'API' | 'SIT', boolean][])
-      .filter(([, v]) => v)
-      .map(([k]) => k);
-
-    if (!activeTypes.length) {
-      alert('Select at least one test type.');
       return;
     }
 
@@ -229,7 +321,7 @@ export default function TestWriter() {
     } catch (err) {
       console.error('[TestWriter] Generate failed:', err);
     }
-  }, [project, state.inputState, generateMutation]);
+  }, [project, state.inputState, generateMutation, startAgentTrace]);
 
   const handleSave = useCallback(
     async (tcs: GeneratedTC[]) => {
@@ -358,6 +450,73 @@ export default function TestWriter() {
         </div>
       </div>
 
+      {/* Agent trace error banner */}
+      {agentError && (
+        <div style={{
+          margin: '0 24px',
+          padding: '10px 14px',
+          background: 'var(--rose-dim)',
+          border: '1px solid rgba(220,38,38,0.3)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12px',
+          color: 'var(--rose)',
+          flexShrink: 0,
+        }}>
+          <span>⚠</span>
+          <span style={{ flex: 1 }}>Agentic trace failed — {agentError}</span>
+          <button
+            onClick={() => setAgentError(null)}
+            style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+          >✕</button>
+        </div>
+      )}
+
+      {/* Agent trace progress panel */}
+      {showAgentProgress && (
+        <div style={{
+          margin: '0 24px',
+          padding: '14px 16px',
+          background: 'rgba(139,92,246,0.08)',
+          border: '1px solid rgba(139,92,246,0.3)',
+          borderRadius: 'var(--radius)',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: agentSteps.length > 0 ? '10px' : 0 }}>
+            <span style={{ fontSize: '16px' }}>🤖</span>
+            <span style={{ flex: 1, fontWeight: 600, color: '#a78bfa', fontSize: '13px' }}>
+              Claude is tracing your UI...
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Step {agentSteps.length}</span>
+          </div>
+          {agentSteps.length > 0 && (
+            <div style={{
+              maxHeight: '120px',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+            }}>
+              {agentSteps.map((step, i) => (
+                <div key={i} style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px',
+                  fontSize: '11px',
+                  color: step.success === false ? 'var(--rose)' : 'var(--text-mid)',
+                }}>
+                  <span style={{ flexShrink: 0, marginTop: '1px' }}>{step.success === false ? '✗' : '✓'}</span>
+                  <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>[{step.toolName}]</span>
+                  <span>{step.stepDescription ?? step.toolName}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Error banner */}
       {generateMutation.isError && (
         <div style={{
@@ -455,7 +614,8 @@ export default function TestWriter() {
           onUploadFile={handleUploadFile}
           onParseSeedFile={handleParseSeedFile}
           onGenerate={handleGenerate}
-          isGenerating={generateMutation.isPending}
+          isGenerating={generateMutation.isPending || showAgentProgress}
+          canGenerate={canWrite}
           inputCount={inputCount}
           envConfigs={envConfigs}
           projectId={project?.id}

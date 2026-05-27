@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import projectsRouter from './projects.js';
 import authRouter from './auth.js';
 import testCasesRouter from './testCases.js';
@@ -11,8 +11,17 @@ import chatRouter from './chat.js';
 import scansRouter from './scans.js';
 import suitesRouter from './suites.js';
 import adminRouter from './admin.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = Router();
+
+// ── Global JWT guard — all routes except /api/auth/* ──────────────────────
+// Individual routers that already call verifyToken will get a no-op second
+// pass (token is still valid), so this is safe to add globally.
+router.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/auth/')) return next();
+  return (verifyToken as RequestHandler)(req, res, next);
+});
 
 // ── Mounted routers ────────────────────────────────────────────────────────
 router.use('/projects', projectsRouter);

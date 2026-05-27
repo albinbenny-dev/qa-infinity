@@ -12,6 +12,7 @@ import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCa
 import { useTriggerHeal } from '../hooks/useHeals';
 import { useRunSocket } from '../hooks/useRunSocket';
 import { useExecutionStore } from '../stores/executionStore';
+import { useRBAC } from '../hooks/useRBAC';
 import type { TestCase } from '../types';
 
 
@@ -217,6 +218,7 @@ function JobQueuePanel({ runs, watchedRunId, onSelect }: {
 
 export default function Execution() {
   const { slug } = useParams<{ slug: string }>();
+  const { canWrite } = useRBAC();
   const navigate = useNavigate();
 
   const { data: project } = useProject(slug);
@@ -496,7 +498,7 @@ export default function Execution() {
     hasTriggeredHealRef.current = true;
     setHealTriggered(true);
     try {
-      const result = await triggerHeal.mutateAsync(activeRunId);
+      const result = await triggerHeal.mutateAsync({ runId: activeRunId });
       toast.success(`Heal queued for ${result.count} failed test${result.count !== 1 ? 's' : ''}`);
     } catch (err) {
       hasTriggeredHealRef.current = false;
@@ -613,7 +615,7 @@ export default function Execution() {
               <div style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', flexShrink: 0 }}>W</span>
               <Stepper value={parallelWorkers} onChange={updateWorkers} max={16} />
-              <button
+              {canWrite && <button
                 onClick={handleRunNow}
                 disabled={isRunning || createRun.isPending || selectedTcIds.size === 0}
                 style={{
@@ -631,7 +633,7 @@ export default function Execution() {
                 }}
               >
                 {isRunning ? '⏳ Running…' : createRun.isPending ? '⏳ Starting…' : `▶ Run ${selectedTcIds.size}`}
-              </button>
+              </button>}
             </div>
 
             {/* Progress bar while running */}

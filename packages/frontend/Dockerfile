@@ -8,11 +8,11 @@ WORKDIR /app
 # Copy manifests only so source changes don't bust the install layer
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/frontend/package.json ./packages/frontend/
-RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,id=pnpm-frontend,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY packages/frontend ./packages/frontend
-RUN pnpm --filter @qa-infinity/frontend build
+RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm --filter @qa-infinity/frontend build
 
 # ── Stage 2: Serve ─────────────────────────────────────────────────────────
 FROM nginx:alpine

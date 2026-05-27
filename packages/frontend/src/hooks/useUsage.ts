@@ -70,6 +70,7 @@ export interface AgentConfigRow {
   label: string;
   description: string;
   enabled: boolean;
+  settings: Record<string, unknown> | null;
 }
 
 export function useAgentConfig() {
@@ -99,6 +100,20 @@ export function useStandardMode() {
   return useMutation({
     mutationFn: async (enable: boolean) => {
       const res = await api.post<{ ok: boolean; standardMode: boolean }>('/admin/agents/standard-mode', { enable });
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-config'] }),
+  });
+}
+
+export function useUpdateAgentSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ agentName, settings }: { agentName: string; settings: Record<string, unknown> }) => {
+      const res = await api.patch<{ agentName: string; settings: Record<string, unknown> | null }>(
+        `/admin/agents/${agentName}/settings`,
+        settings,
+      );
       return res.data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-config'] }),

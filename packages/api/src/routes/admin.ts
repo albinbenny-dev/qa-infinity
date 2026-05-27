@@ -1,10 +1,120 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
+import bcrypt from 'bcrypt';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
-import { KNOWN_AGENTS, STANDARD_MODE_DISABLED } from '../lib/agentConfig.js';
+import { KNOWN_AGENTS, STANDARD_MODE_DISABLED, DEFAULT_HEALING_SETTINGS } from '../lib/agentConfig.js';
 
 const router = Router();
 router.use(verifyToken as RequestHandler);
+
+// ── SUPER_ADMIN guard ──────────────────────────────────────────────────────
+function requireSuperAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (req.user.globalRole !== 'SUPER_ADMIN') {
+    res.status(403).json({ error: 'SUPER_ADMIN role is required for this action' });
+    return;
+  }
+  next();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USER MANAGEMENT ROUTES (SUPER_ADMIN only)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /admin/users — list all users
+router.get('/users', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        globalRole: true,
+        createdAt: true,
+        _count: { select: { memberships: true } },
+      },
+    });
+    res.json({ users });
+  } catch (err) { next(err); }
+});
+
+// PUT /admin/users/:uid/role — change a user's global role
+router.put('/users/:uid/role', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { uid } = req.params;
+    const { globalRole } = req.body as { globalRole: string };
+
+    if (!['SUPER_ADMIN', 'USER'].includes(globalRole)) {
+      res.status(400).json({ error: 'globalRole must be "SUPER_ADMIN" or "USER"' });
+      return;
+    }
+
+    // Prevent demoting yourself
+    if (uid === req.user.id && globalRole !== 'SUPER_ADMIN') {
+      res.status(400).json({ error: 'You cannot demote your own SUPER_ADMIN role' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: uid },
+      data: { globalRole },
+      select: { id: true, email: true, name: true, globalRole: true },
+    });
+    res.json({ user: updated });
+  } catch (err) { next(err); }
+});
+
+// POST /admin/users/:uid/reset-password — set a new password for a user
+router.post('/users/:uid/reset-password', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { uid } = req.params;
+    const { newPassword } = req.body as { newPassword: string };
+
+    if (!newPassword || newPassword.length < 8) {
+      res.status(400).json({ error: 'newPassword must be at least 8 characters' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({ where: { id: uid }, data: { passwordHash } });
+
+    res.json({ ok: true, message: 'Password has been reset successfully' });
+  } catch (err) { next(err); }
+});
+
+// DELETE /admin/users/:uid — delete a user
+router.delete('/users/:uid', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { uid } = req.params;
+
+    // Prevent deleting yourself
+    if (uid === req.user.id) {
+      res.status(400).json({ error: 'You cannot delete your own account' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    await prisma.user.delete({ where: { id: uid } });
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
 
 // ── GET /admin/usage ───────────────────────────────────────────────────────
 // OpenRouter key info: credit balance, usage, rate limit.
@@ -111,19 +221,31 @@ router.get('/usage/trend', async (req: Request, res: Response, next: NextFunctio
 });
 
 // ── GET /admin/agents ─────────────────────────────────────────────────────
-// Returns every known agent with its enabled flag (defaults to true if not yet set).
+// Returns every known agent with its enabled flag and settings.
 
 router.get('/agents', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rows = await prisma.agentConfig.findMany();
-    const configMap = new Map(rows.map((r) => [r.agentName, r.enabled]));
+    const configMap = new Map(rows.map((r) => [r.agentName, r]));
 
-    const agents = KNOWN_AGENTS.map((a) => ({
-      agentName: a.agentName,
-      label: a.label,
-      description: a.description,
-      enabled: configMap.get(a.agentName) ?? true,
-    }));
+    const agents = KNOWN_AGENTS.map((a) => {
+      const row = configMap.get(a.agentName);
+      let settings: Record<string, unknown> | null = null;
+      if (row?.settings) {
+        try { settings = JSON.parse(row.settings) as Record<string, unknown>; } catch { /* ignore */ }
+      }
+      // Inject defaults for healing-agent so the UI always has a value to display
+      if (a.agentName === 'healing-agent' && !settings) {
+        settings = DEFAULT_HEALING_SETTINGS as unknown as Record<string, unknown>;
+      }
+      return {
+        agentName: a.agentName,
+        label: a.label,
+        description: a.description,
+        enabled: row?.enabled ?? true,
+        settings,
+      };
+    });
 
     res.json({ agents });
   } catch (err) { next(err); }
@@ -149,6 +271,40 @@ router.patch('/agents/:agentName', async (req: Request, res: Response, next: Nex
     });
 
     res.json({ agentName: row.agentName, enabled: row.enabled });
+  } catch (err) { next(err); }
+});
+
+// ── PATCH /admin/agents/:agentName/settings ───────────────────────────────
+// Update agent-specific settings. Body is a settings object validated per agent.
+
+router.patch('/agents/:agentName/settings', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { agentName } = req.params;
+    const body = req.body as Record<string, unknown>;
+
+    if (agentName === 'healing-agent') {
+      const { selectorTraceThreshold } = body as { selectorTraceThreshold?: unknown };
+      if (
+        typeof selectorTraceThreshold !== 'number' ||
+        selectorTraceThreshold < 0 ||
+        selectorTraceThreshold > 100
+      ) {
+        res.status(400).json({ error: '`selectorTraceThreshold` must be a number between 0 and 100' });
+        return;
+      }
+    }
+
+    const row = await prisma.agentConfig.upsert({
+      where: { agentName },
+      create: { agentName, enabled: true, settings: JSON.stringify(body) },
+      update: { settings: JSON.stringify(body) },
+    });
+
+    let settings: Record<string, unknown> | null = null;
+    if (row.settings) {
+      try { settings = JSON.parse(row.settings) as Record<string, unknown>; } catch { /* ignore */ }
+    }
+    res.json({ agentName: row.agentName, settings });
   } catch (err) { next(err); }
 });
 

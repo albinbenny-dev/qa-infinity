@@ -83,6 +83,42 @@ export function useUploadScript(projectId: string) {
   });
 }
 
+export interface UploadWithExtractResult {
+  testCase: {
+    id: string;
+    tcId: string;
+    title: string;
+    status: string;
+    type: string;
+    useCaseTag: string | null;
+  };
+  script: {
+    id: string;
+    filename: string;
+    testCaseId: string;
+  };
+}
+
+export function useUploadScriptWithExtract(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post<UploadWithExtractResult>(
+        `/projects/${projectId}/scripts/upload-with-extract`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60_000 },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+      qc.invalidateQueries({ queryKey: ['testCases', projectId] });
+    },
+  });
+}
+
 export function scriptExportUrl(projectId: string, ids?: string[]): string {
   const base = `/api/projects/${projectId}/scripts/export/zip`;
   if (ids?.length) return `${base}?ids=${ids.join(',')}`;

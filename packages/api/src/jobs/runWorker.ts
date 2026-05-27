@@ -3,7 +3,6 @@ import fs from 'fs';
 import path from 'path';
 import { prisma } from '../lib/prisma.js';
 import { emitToRun } from '../lib/socket.js';
-import { addHealJob } from '../lib/queue.js';
 import type { RunJobPayload } from '../lib/queue.js';
 import { generateReport } from '../services/reportService.js';
 import { isAgentEnabled } from '../lib/agentConfig.js';
@@ -80,10 +79,17 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     `▶ Starting run · ${total} script${total !== 1 ? 's' : ''}${skippedTcIds.length > 0 ? ` · ${skippedTcIds.length} skipped (no script)` : ''} · ${parallelWorkers} workers · ${browser} · headed`
   );
 
-  // ── 2. Check for cancellation ────────────────────────────────────────────
+  // ── 2. Check for cancellation / already-terminal state ──────────────────
+  // A stalled BullMQ job may be retried after a server restart. If the run is
+  // already in a terminal state (CANCELLED by startup cleanup, or previously
+  // completed), exit immediately so the heal loop doesn't restart.
   const currentRun = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
-  if (currentRun?.status === 'CANCELLED') {
-    emitLog(runId, 'warn', '■ Run cancelled before starting');
+  if (
+    currentRun?.status === 'CANCELLED' ||
+    currentRun?.status === 'PASSED' ||
+    currentRun?.status === 'FAILED'
+  ) {
+    emitLog(runId, 'warn', `■ Run already in terminal state (${currentRun.status}) — skipping`);
     emitToRun(runId, 'run:complete', { passed: 0, failed: 0, skipped: 0, duration: 0 });
     return;
   }
@@ -305,27 +311,11 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     data: { status: runFinalStatus, completedAt: new Date() },
   });
 
-  // ── 6. Queue heal jobs for failures (skipped if run was cancelled or healing disabled) ──
-  const healingEnabled = await isAgentEnabled('healing-agent');
-  if (totalFailed > 0 && healingEnabled) {
-    const failedResults = await prisma.runResult.findMany({
-      where: { runId, status: 'FAILED' },
-      select: { id: true },
-    });
-    if (failedResults.length > 0) {
-      emitLog(runId, 'info',
-        `⚡ Queueing heal analysis for ${failedResults.length} failed test${failedResults.length !== 1 ? 's' : ''}…`,
-      );
-    }
-    for (const r of failedResults) {
-      try {
-        await addHealJob({ runResultId: r.id, projectId });
-      } catch (err) {
-        emitLog(runId, 'warn', `⚠ Could not queue heal job: ${(err as Error).message}`);
-      }
-    }
-  } else if (totalFailed > 0 && !healingEnabled) {
-    emitLog(runId, 'info', `⊘ Healing Agent is disabled — skipping heal analysis for ${totalFailed} failure${totalFailed !== 1 ? 's' : ''}`);
+  // ── 6. Log failures — healing is triggered manually from the Healing tab ──
+  if (totalFailed > 0) {
+    emitLog(runId, 'info',
+      `⚡ ${totalFailed} failed test${totalFailed !== 1 ? 's' : ''} — visit the Healing tab to analyse and fix`,
+    );
   }
 
   emitLog(runId, 'info',

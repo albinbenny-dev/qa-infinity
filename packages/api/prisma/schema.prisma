@@ -54,6 +54,7 @@ model Project {
   chatMemories    ChatMemory[]
   uiScans         UIScan[]
   projectContext  ProjectContext?
+  agentTraces     AgentTrace[]
 
   @@index([createdBy])
 }
@@ -247,19 +248,21 @@ model Suite {
 }
 
 model Heal {
-  id           String   @id @default(cuid())
+  id           String      @id @default(cuid())
   projectId    String
   runResultId  String
-  type         String   // "SELECTOR" | "FLOW" | "API_SCHEMA"
+  type         String      // "SELECTOR" | "FLOW" | "API_SCHEMA"
   originalCode String
   patchedCode  String
   confidence   Int
-  summary      String?  // AI explanation from patcher chain
-  status       String   @default("PENDING")  // "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPLIED"
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  runResult    RunResult @relation(fields: [runResultId], references: [id], onDelete: Cascade)
+  summary      String?     // AI explanation from patcher chain
+  status       String      @default("PENDING")  // "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPLIED" | "EXHAUSTED"
+  agentTraceId String?     @unique // set when a live browser trace was run to diagnose the failure
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runResult    RunResult   @relation(fields: [runResultId], references: [id], onDelete: Cascade)
+  agentTrace   AgentTrace? @relation("HealTrace", fields: [agentTraceId], references: [id])
 
   @@index([projectId])
   @@index([projectId, status])
@@ -333,14 +336,37 @@ model ProjectContext {
   useCaseSummary     String?  // JSON: UseCaseSummary[]
   customInstructions String?  // Free-text guidance for scanner & agents
   pendingTCDraft     String?  // JSON: GeneratedTestCase[] awaiting review in Test Writer
+  agentLearnings     String?  // JSON: AgentLearning[] — verified locators/flows per menu from agentic traces
   lastScanId         String?
   updatedAt          DateTime @updatedAt
   project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
+model AgentTrace {
+  id           String    @id @default(cuid())
+  projectId    String
+  // "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "BLOCKED"
+  status       String    @default("QUEUED")
+  testGoal     String
+  menuContext  String?
+  targetUrl    String?
+  stepCount    Int       @default(0)
+  currentStep  String?
+  actionLog    String?   // JSON: RecordedAction[]
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  heal         Heal?     @relation("HealTrace")  // back-ref: set when trace was spawned by healing agent
+
+  @@index([projectId])
+  @@index([projectId, status])
+}
+
 model AgentConfig {
   agentName String   @id
   enabled   Boolean  @default(true)
+  settings  String?  // JSON: agent-specific settings (e.g. {"selectorTraceThreshold":60} for healing-agent)
   updatedAt DateTime @updatedAt
 }
 

@@ -68,3 +68,44 @@ export interface ScanJobPayload {
   generateTCs: boolean;
   triggeredBy: string;
 }
+
+// ── Agentic Browser Trace types ────────────────────────────────────────────
+
+export type SelectorType = 'css' | 'text' | 'role' | 'label' | 'testid' | 'placeholder';
+
+export interface RecordedAction {
+  stepNumber: number;
+  toolName: string;
+  selector?: string;
+  selectorType?: SelectorType;
+  value?: string;
+  path?: string;
+  direction?: string;
+  timeoutMs?: number;
+  expectedText?: string;
+  stepDescription?: string;
+  success: boolean;
+  errorMessage?: string;
+  timestampMs: number;
+}
+
+export interface AgentFinishData {
+  testTitle: string;
+  expectedResult: string;
+  status: 'success' | 'blocked';
+  blockedReason?: string;
+}
+
+export interface BrowserAgentResult {
+  actions: RecordedAction[];
+  finish: AgentFinishData;
+  totalSteps: number;
+}
+
+export interface AgentLearning {
+  menuContext: string;
+  targetUrl: string;
+  verifiedLocators: { semanticName: string; selector: string; type: string }[];
+  verifiedFlow: string[];
+  tracedAt: string;
+}

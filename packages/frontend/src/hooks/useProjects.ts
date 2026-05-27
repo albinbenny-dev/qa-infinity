@@ -157,6 +157,44 @@ export function useProjectMembers(projectId: string | undefined) {
   });
 }
 
+export function useAddMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ email, role }: { email: string; role: string }) => {
+      const res = await api.post<{ member: ProjectMember }>(`/projects/${projectId}/members`, { email, role });
+      return res.data.member;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+}
+
+export function useRemoveMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      await api.delete(`/projects/${projectId}/members/${userId}`);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+}
+
+export function useUpdateMemberRole(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const res = await api.put<{ member: ProjectMember }>(`/projects/${projectId}/members/${userId}`, { role });
+      return res.data.member;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+}
+
 export function useRequirementDocs(projectId: string | undefined) {
   return useQuery({
     queryKey: ['req-docs', projectId],

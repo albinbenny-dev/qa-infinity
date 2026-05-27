@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
+import { useRBAC } from '../hooks/useRBAC';
 import {
   useSchedules,
   useCreateSchedule,
@@ -796,23 +797,25 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds, onSave, onCancel: 
 
 // ── Suite card (left column) ───────────────────────────────────────────────
 
-function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPending }: {
+function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPending, canWrite = true }: {
   suite: Suite;
   isSelected: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onRunNow: () => void;
   runNowPending: boolean;
+  canWrite?: boolean;
 }) {
   const tcIds = useMemo(() => parseTcIds(suite.testCaseIds), [suite.testCaseIds]);
 
   return (
-    <div onClick={onEdit} style={{
+    <div onClick={canWrite ? onEdit : undefined} style={{
       background: 'var(--surface)',
       border: `1px solid ${isSelected ? 'var(--cyan)' : 'var(--border)'}`,
       borderRadius: 8, padding: '0 12px', height: 44,
       display: 'flex', alignItems: 'center', gap: 10,
-      cursor: 'pointer', boxShadow: isSelected ? '0 0 0 2px rgba(34,211,238,0.1)' : 'var(--shadow-card)',
+      cursor: canWrite ? 'pointer' : 'default',
+      boxShadow: isSelected ? '0 0 0 2px rgba(34,211,238,0.1)' : 'var(--shadow-card)',
       borderLeft: `3px solid ${isSelected ? 'var(--cyan)' : '#2A9D8F'}`,
       transition: 'border-color 0.15s',
     }}>
@@ -821,16 +824,18 @@ function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPendin
         <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{suite.name}</span>
       </div>
       <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>{tcIds.length} test{tcIds.length !== 1 ? 's' : ''}</span>
-      <div style={{ display: 'flex', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-        <button disabled={runNowPending} onClick={onRunNow} style={{
-          padding: '4px 10px', borderRadius: 5,
-          background: 'rgba(42,157,143,0.1)', border: '1px solid rgba(42,157,143,0.25)',
-          color: 'var(--pass)', cursor: runNowPending ? 'not-allowed' : 'pointer',
-          fontSize: 10, fontWeight: 700, opacity: runNowPending ? 0.6 : 1, whiteSpace: 'nowrap',
-        }}>{runNowPending ? '⏳…' : '▶ Run'}</button>
-        <button onClick={onEdit} style={{ padding: '4px 10px', borderRadius: 5, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>Edit</button>
-        <button onClick={onDelete} style={{ padding: '4px 10px', borderRadius: 5, background: 'transparent', border: '1px solid rgba(220,38,38,0.2)', color: 'var(--fail)', cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>Delete</button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+          <button disabled={runNowPending} onClick={onRunNow} style={{
+            padding: '4px 10px', borderRadius: 5,
+            background: 'rgba(42,157,143,0.1)', border: '1px solid rgba(42,157,143,0.25)',
+            color: 'var(--pass)', cursor: runNowPending ? 'not-allowed' : 'pointer',
+            fontSize: 10, fontWeight: 700, opacity: runNowPending ? 0.6 : 1, whiteSpace: 'nowrap',
+          }}>{runNowPending ? '⏳…' : '▶ Run'}</button>
+          <button onClick={onEdit} style={{ padding: '4px 10px', borderRadius: 5, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>Edit</button>
+          <button onClick={onDelete} style={{ padding: '4px 10px', borderRadius: 5, background: 'transparent', border: '1px solid rgba(220,38,38,0.2)', color: 'var(--fail)', cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>Delete</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -904,21 +909,22 @@ function RunNowPanel({ suites, testCases, scriptedTcIds, envConfigs, projectId, 
 
 // ── Schedule card ──────────────────────────────────────────────────────────
 
-function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onToggle, runNowPending }: {
+function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onToggle, runNowPending, canWrite = true }: {
   schedule: Schedule; isSelected: boolean;
   onEdit: () => void; onRunNow: () => void; onDelete: () => void; onToggle: () => void;
-  runNowPending: boolean;
+  runNowPending: boolean; canWrite?: boolean;
 }) {
   const tcIds = useMemo(() => parseTcIds(schedule.testCaseIds), [schedule.testCaseIds]);
   const emails = useMemo(() => { try { return JSON.parse(schedule.emailRecipients) as string[]; } catch { return []; } }, [schedule.emailRecipients]);
   const freq = useMemo(() => parseCronToFreq(schedule.cronExpression), [schedule.cronExpression]);
 
   return (
-    <div onClick={onEdit} style={{
+    <div onClick={canWrite ? onEdit : undefined} style={{
       background: 'var(--surface)',
       border: `1px solid ${isSelected ? 'var(--cyan)' : 'var(--border)'}`,
       borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10,
-      cursor: 'pointer', boxShadow: isSelected ? '0 0 0 2px rgba(34,211,238,0.1)' : 'var(--shadow-card)',
+      cursor: canWrite ? 'pointer' : 'default',
+      boxShadow: isSelected ? '0 0 0 2px rgba(34,211,238,0.1)' : 'var(--shadow-card)',
       position: 'relative', overflow: 'hidden', transition: 'border-color 0.15s',
     }}>
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, borderRadius: '10px 10px 0 0', background: schedule.isActive ? 'linear-gradient(90deg,#2563AB,#0A2A57)' : 'var(--border)' }} />
@@ -930,10 +936,17 @@ function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onTogg
             <span>⏰</span><span>{freqToHuman(freq)}</span>
           </div>
         </div>
-        <button onClick={e => { e.stopPropagation(); onToggle(); }} title={schedule.isActive ? 'Pause' : 'Activate'}
-          style={{ width: 38, height: 21, borderRadius: 100, border: 'none', cursor: 'pointer', background: schedule.isActive ? 'var(--cyan)' : 'var(--border)', position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
-          <div style={{ position: 'absolute', top: 2.5, left: schedule.isActive ? 19 : 2.5, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
-        </button>
+        {/* Active/Pause toggle — Viewers see read-only state indicator */}
+        {canWrite ? (
+          <button onClick={e => { e.stopPropagation(); onToggle(); }} title={schedule.isActive ? 'Pause' : 'Activate'}
+            style={{ width: 38, height: 21, borderRadius: 100, border: 'none', cursor: 'pointer', background: schedule.isActive ? 'var(--cyan)' : 'var(--border)', position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
+            <div style={{ position: 'absolute', top: 2.5, left: schedule.isActive ? 19 : 2.5, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
+          </button>
+        ) : (
+          <div style={{ width: 38, height: 21, borderRadius: 100, background: schedule.isActive ? 'var(--cyan)' : 'var(--border)', position: 'relative', flexShrink: 0, opacity: 0.6 }}>
+            <div style={{ position: 'absolute', top: 2.5, left: schedule.isActive ? 19 : 2.5, width: 16, height: 16, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -943,16 +956,18 @@ function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onTogg
         {!schedule.isActive && <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(100,116,139,0.12)', color: 'var(--text-dim)' }}>PAUSED</span>}
       </div>
 
-      <div style={{ display: 'flex', gap: 6, borderTop: '1px solid var(--border)', paddingTop: 10 }} onClick={e => e.stopPropagation()}>
-        <button disabled={runNowPending} onClick={onRunNow} style={{
-          flex: 1, padding: '5px 0', borderRadius: 6,
-          background: 'rgba(42,157,143,0.1)', border: '1px solid rgba(42,157,143,0.25)',
-          color: 'var(--pass)', cursor: runNowPending ? 'not-allowed' : 'pointer',
-          fontSize: 11, fontWeight: 700, opacity: runNowPending ? 0.6 : 1,
-        }}>{runNowPending ? '⏳ Queuing…' : '▶ Run Now'}</button>
-        <button onClick={onEdit} style={{ padding: '5px 12px', borderRadius: 6, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Edit</button>
-        <button onClick={onDelete} style={{ padding: '5px 12px', borderRadius: 6, background: 'transparent', border: '1px solid rgba(220,38,38,0.2)', color: 'var(--fail)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Delete</button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', gap: 6, borderTop: '1px solid var(--border)', paddingTop: 10 }} onClick={e => e.stopPropagation()}>
+          <button disabled={runNowPending} onClick={onRunNow} style={{
+            flex: 1, padding: '5px 0', borderRadius: 6,
+            background: 'rgba(42,157,143,0.1)', border: '1px solid rgba(42,157,143,0.25)',
+            color: 'var(--pass)', cursor: runNowPending ? 'not-allowed' : 'pointer',
+            fontSize: 11, fontWeight: 700, opacity: runNowPending ? 0.6 : 1,
+          }}>{runNowPending ? '⏳ Queuing…' : '▶ Run Now'}</button>
+          <button onClick={onEdit} style={{ padding: '5px 12px', borderRadius: 6, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Edit</button>
+          <button onClick={onDelete} style={{ padding: '5px 12px', borderRadius: 6, background: 'transparent', border: '1px solid rgba(220,38,38,0.2)', color: 'var(--fail)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Delete</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1113,6 +1128,7 @@ type PageMode = 'idle' | 'create' | 'edit' | 'run-now' | 'suite-create' | 'suite
 export default function Scheduler() {
   const { slug } = useParams<{ slug: string }>();
   const projectId = slug!;
+  const { canWrite } = useRBAC();
 
   const [mode, setMode] = useState<PageMode>('idle');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1274,27 +1290,31 @@ export default function Scheduler() {
         ]}
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
-            <TbBtn
-              variant="ghost"
-              onClick={() => setMode(mode === 'run-now' ? 'idle' : 'run-now')}
-              style={{ background: mode === 'run-now' ? 'rgba(42,157,143,0.18)' : 'rgba(42,157,143,0.1)', color: 'var(--pass)', border: '1px solid rgba(42,157,143,0.25)' }}
-            >
-              ▶ Quick Run
-            </TbBtn>
-            <TbBtn
-              variant="ghost"
-              onClick={() => { setMode('suite-create'); setEditingSuiteId(null); }}
-              style={{ background: 'rgba(42,157,143,0.08)', color: 'var(--emerald)', border: '1px solid rgba(42,157,143,0.2)' }}
-            >
-              📦 New Suite
-            </TbBtn>
-            <TbBtn
-              variant="primary"
-              onClick={() => { setMode('create'); setEditingId(null); setEditingSuiteId(null); }}
-              style={{ background: 'linear-gradient(90deg,#2563AB,#0A2A57)', color: '#fff', border: 'none' }}
-            >
-              + New Schedule
-            </TbBtn>
+            {canWrite && (
+              <>
+                <TbBtn
+                  variant="ghost"
+                  onClick={() => setMode(mode === 'run-now' ? 'idle' : 'run-now')}
+                  style={{ background: mode === 'run-now' ? 'rgba(42,157,143,0.18)' : 'rgba(42,157,143,0.1)', color: 'var(--pass)', border: '1px solid rgba(42,157,143,0.25)' }}
+                >
+                  ▶ Quick Run
+                </TbBtn>
+                <TbBtn
+                  variant="ghost"
+                  onClick={() => { setMode('suite-create'); setEditingSuiteId(null); }}
+                  style={{ background: 'rgba(42,157,143,0.08)', color: 'var(--emerald)', border: '1px solid rgba(42,157,143,0.2)' }}
+                >
+                  📦 New Suite
+                </TbBtn>
+                <TbBtn
+                  variant="primary"
+                  onClick={() => { setMode('create'); setEditingId(null); setEditingSuiteId(null); }}
+                  style={{ background: 'linear-gradient(90deg,#2563AB,#0A2A57)', color: '#fff', border: 'none' }}
+                >
+                  + New Schedule
+                </TbBtn>
+              </>
+            )}
           </div>
         }
       />
@@ -1328,7 +1348,9 @@ export default function Scheduler() {
                   <div style={{ fontSize: 28, marginBottom: 10 }}>⏰</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 5 }}>No schedules yet</div>
                   <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 16, lineHeight: 1.65 }}>Create recurring test runs on a daily,<br />weekly, or custom schedule.</div>
-                  <button onClick={() => setMode('create')} style={{ padding: '7px 18px', borderRadius: 7, background: 'linear-gradient(90deg,#2563AB,#0A2A57)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>+ Create First Schedule</button>
+                  {canWrite && (
+                    <button onClick={() => setMode('create')} style={{ padding: '7px 18px', borderRadius: 7, background: 'linear-gradient(90deg,#2563AB,#0A2A57)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>+ Create First Schedule</button>
+                  )}
                 </div>
               ) : (
                 schedules.map(schedule => (
@@ -1341,6 +1363,7 @@ export default function Scheduler() {
                     onDelete={() => handleDeleteSchedule(schedule.id)}
                     onToggle={() => handleToggle(schedule)}
                     runNowPending={runNowId === schedule.id && runNowPending}
+                    canWrite={canWrite}
                   />
                 ))
               )}
@@ -1353,12 +1376,14 @@ export default function Scheduler() {
                   📦 Suites
                   {suites.length > 0 && <span style={{ fontSize: 10, background: 'rgba(42,157,143,0.12)', color: 'var(--pass)', padding: '1px 7px', borderRadius: 100, fontWeight: 700 }}>{suites.length}</span>}
                 </h2>
-                <button
-                  onClick={() => { setMode('suite-create'); setEditingSuiteId(null); setEditingId(null); }}
-                  style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'rgba(42,157,143,0.08)', border: '1px solid rgba(42,157,143,0.2)', color: 'var(--pass)' }}
-                >
-                  + New Suite
-                </button>
+                {canWrite && (
+                  <button
+                    onClick={() => { setMode('suite-create'); setEditingSuiteId(null); setEditingId(null); }}
+                    style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'rgba(42,157,143,0.08)', border: '1px solid rgba(42,157,143,0.2)', color: 'var(--pass)' }}
+                  >
+                    + New Suite
+                  </button>
+                )}
               </div>
 
               {suitesLoading ? (
@@ -1370,7 +1395,9 @@ export default function Scheduler() {
                   <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 14, lineHeight: 1.6 }}>
                     Group test cases into named suites — then load them instantly when configuring a run or schedule.
                   </div>
-                  <button onClick={() => { setMode('suite-create'); setEditingSuiteId(null); }} style={{ padding: '6px 16px', borderRadius: 7, background: 'linear-gradient(90deg,#2A9D8F,#1d7a6c)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>📦 Create First Suite</button>
+                  {canWrite && (
+                    <button onClick={() => { setMode('suite-create'); setEditingSuiteId(null); }} style={{ padding: '6px 16px', borderRadius: 7, background: 'linear-gradient(90deg,#2A9D8F,#1d7a6c)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>📦 Create First Suite</button>
+                  )}
                 </div>
               ) : (() => {
                 const SUITE_LIMIT = 5;
@@ -1388,6 +1415,7 @@ export default function Scheduler() {
                         onDelete={() => handleDeleteSuite(suite.id)}
                         onRunNow={() => handleSuiteRunNow(suite)}
                         runNowPending={suiteRunNowId === suite.id}
+                        canWrite={canWrite}
                       />
                     ))}
                     {overflow.length > 0 && (
@@ -1421,6 +1449,7 @@ export default function Scheduler() {
                                 onDelete={() => handleDeleteSuite(suite.id)}
                                 onRunNow={() => handleSuiteRunNow(suite)}
                                 runNowPending={suiteRunNowId === suite.id}
+                                canWrite={canWrite}
                               />
                             ))}
                           </div>

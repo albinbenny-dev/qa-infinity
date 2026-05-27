@@ -94,6 +94,48 @@ function classifyFromError(msg: string): HealType {
   return 'FLOW';
 }
 
+// ── Trace decision ─────────────────────────────────────────────────────────
+
+export interface TraceDecision {
+  needed: boolean;
+  reason: string;
+}
+
+/**
+ * Decides whether the healing agent should launch a live browser trace to
+ * diagnose the failure, or whether static analysis (DOM snapshot / error msg)
+ * is sufficient.
+ *
+ * Rules:
+ *  MISSING_MODULE → no trace  (structural code issue, browser can't help)
+ *  API_SCHEMA     → no trace  (network-level issue)
+ *  FLOW           → always trace (need to observe live navigation/timing and detect missing steps)
+ *  SELECTOR       → always trace (live DOM gives exact element roles and accessible names)
+ */
+export function needsAgentTrace(
+  classResult: ClassifierResult,
+  _selectorTraceThreshold = 60,
+): TraceDecision {
+  if (classResult.type === 'MISSING_MODULE') {
+    return { needed: false, reason: 'Module import issue — no browser trace needed.' };
+  }
+  if (classResult.type === 'API_SCHEMA') {
+    return { needed: false, reason: 'API/network issue — browser trace not applicable.' };
+  }
+  if (classResult.type === 'FLOW') {
+    return {
+      needed: true,
+      reason: 'Flow failure — live trace will diagnose navigation, timing, or missing prerequisite steps.',
+    };
+  }
+  // SELECTOR: always trace — live DOM gives exact element roles and accessible names,
+  // which static snapshots cannot reliably provide for dynamic apps.
+  return {
+    needed: true,
+    reason: 'Selector failure — live trace will capture real DOM selectors and exact element names.',
+  };
+}
+
 // ── Chain B: Patcher ────────────────────────────────────────────────────────
 
 export interface PatcherInput {
@@ -101,6 +143,7 @@ export interface PatcherInput {
   errorMessage: string;
   originalScript: string;
   domSnapshot?: string;
+  agentTraceContext?: string; // live browser trace summary (overrides domSnapshot when present)
   projectName: string;
   baseUrl?: string | null;
 }
@@ -119,7 +162,15 @@ Selector priority (highest → lowest):
   3. page.getByLabel('…')           — form labels
   4. page.locator('.css-class')     — stable CSS class (last resort)
   Never use XPath or positional CSS selectors like nth-child.
-If a DOM snapshot is provided, use it to identify the correct selectors.
+If an AGENT TRACE is provided, it shows a live browser session that reproduced the failure.
+  Use trace-derived selectors and flow observations as the primary context — they reflect the
+  actual live state of the app and are more reliable than a static DOM snapshot.
+  IMPORTANT: If the trace includes steps that are ABSENT from the original script (e.g., a
+  login flow, an extra navigation, a modal dismissal), INSERT those missing steps into the
+  patched script at the correct position before the failing step. The trace represents the
+  complete working path — the script must replicate every step the trace took, not just fix
+  selectors. Never omit a step the trace performed successfully.
+If only a DOM snapshot is provided, use it to identify the correct selectors.
 The project name and base URL are provided in the user message — use them as context.
 Keep all test logic, describe blocks, and assertions intact.
 Explain changes in plain English.
@@ -158,7 +209,9 @@ export async function runPatcher(input: PatcherInput): Promise<PatcherResult> {
     `Base URL: ${input.baseUrl ?? 'http://localhost:3000'}`,
     `Failure type: ${input.type}`,
     `Error: ${input.errorMessage}`,
-    input.domSnapshot
+    input.agentTraceContext
+      ? `\nAGENT TRACE (live browser session that reproduced the failure):\n${input.agentTraceContext.slice(0, 4000)}`
+      : input.domSnapshot
       ? `\nDOM SNAPSHOT (interactive elements):\n${input.domSnapshot.slice(0, 3000)}`
       : '',
     `\nORIGINAL SCRIPT:\n${input.originalScript}`,

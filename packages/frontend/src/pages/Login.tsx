@@ -3,15 +3,38 @@ import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { setAuth } from '../lib/auth';
 import { useProjectStore } from '../stores/projectStore';
+import { useAuthConfig } from '../hooks/useAuthConfig';
+import GoogleAuthButton from '../components/ui/GoogleAuthButton';
 import type { AuthResponse } from '../types';
 import toast from 'react-hot-toast';
 
 export default function Login() {
   const navigate = useNavigate();
   const { setCurrentUser } = useProjectStore();
+  const { data: authConfig } = useAuthConfig();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  // ── Google SSO handler ─────────────────────────────────────────────────────
+  async function handleGoogleCredential(credential: string) {
+    setGoogleLoading(true);
+    try {
+      const res = await api.post<AuthResponse>('/auth/google', { credential });
+      setAuth(res.data.token, res.data.user);
+      setCurrentUser(res.data.user);
+      toast.success(`Welcome, ${res.data.user.name}!`);
+      navigate('/projects', { replace: true });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        'Google sign-in failed. Please try again.';
+      toast.error(msg);
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -48,7 +71,7 @@ export default function Login() {
       {/* Left panel — brand */}
       <div
         style={{
-          flex: '0 0 45%',
+          flex: '0 0 50%',
           background: 'linear-gradient(160deg, #06224A 0%, #0A2A57 50%, #2563AB 100%)',
           display: 'flex',
           flexDirection: 'column',
@@ -99,7 +122,7 @@ export default function Login() {
             fontWeight: 800,
             color: '#fff',
             letterSpacing: '-0.5px',
-            marginBottom: '8px',
+            marginBottom: '6px',
             textAlign: 'center',
           }}
         >
@@ -108,45 +131,58 @@ export default function Login() {
 
         <p
           style={{
-            fontSize: '14px',
-            color: 'rgba(255,255,255,0.7)',
-            marginBottom: '6px',
-            textAlign: 'center',
-          }}
-        >
-          Smart <em style={{ color: '#FFB347', fontStyle: 'italic' }}>Ideas</em>, Delivered.
-        </p>
-
-        <p
-          style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: '11px',
+            fontSize: '10px',
             color: 'rgba(255,255,255,0.45)',
             letterSpacing: '2px',
             textTransform: 'uppercase',
-            marginBottom: '40px',
+            marginBottom: '36px',
             textAlign: 'center',
           }}
         >
           Autonomous QA Automation Platform
         </p>
 
-        {/* Feature list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', maxWidth: '300px' }}>
+        {/* Feature list — colourful per-feature icons */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', maxWidth: '300px' }}>
           {[
-            { icon: '✍', label: 'AI Test Case Generation', sub: 'From Jira, PRD, HLD, API specs' },
-            { icon: '⌨', label: 'Playwright Script Authoring', sub: 'Full TypeScript + Page Object Models' },
-            { icon: '▶', label: 'Automated Test Execution', sub: 'Parallel, scheduled, or ad-hoc runs' },
-            { icon: '⟳', label: 'Intelligent Self-Healing', sub: 'Auto-fix selector & flow drift' },
+            {
+              label: 'AI Test Case Generation',
+              sub: 'From Jira, PRD, HLD, API specs',
+              icon: '🤖',
+              bg: 'rgba(139,92,246,0.28)',
+              border: 'rgba(139,92,246,0.55)',
+            },
+            {
+              label: 'Playwright Script Authoring',
+              sub: 'Full TypeScript + Page Object Models',
+              icon: '⌨',
+              bg: 'rgba(34,211,238,0.22)',
+              border: 'rgba(34,211,238,0.50)',
+            },
+            {
+              label: 'Automated Test Execution',
+              sub: 'Parallel, scheduled, or ad-hoc runs',
+              icon: '▶',
+              bg: 'rgba(244,123,32,0.28)',
+              border: 'rgba(244,123,32,0.55)',
+            },
+            {
+              label: 'Intelligent Self-Healing',
+              sub: 'Auto-fix selector & flow drift',
+              icon: '🩹',
+              bg: 'rgba(42,157,143,0.28)',
+              border: 'rgba(42,157,143,0.55)',
+            },
           ].map((f) => (
             <div key={f.label} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div
                 style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '8px',
-                  background: 'rgba(255,255,255,0.10)',
-                  border: '1px solid rgba(255,255,255,0.14)',
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '10px',
+                  background: f.bg,
+                  border: `1.5px solid ${f.border}`,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -158,7 +194,7 @@ export default function Login() {
               </div>
               <div>
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>{f.label}</div>
-                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontFamily: 'var(--font-mono)' }}>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.50)', fontFamily: 'var(--font-mono)' }}>
                   {f.sub}
                 </div>
               </div>
@@ -187,14 +223,14 @@ export default function Login() {
           alignItems: 'center',
           justifyContent: 'center',
           padding: '40px',
-          background: 'var(--bg)',
+          background: '#fff',
         }}
       >
         <div
           style={{
             width: '100%',
             maxWidth: '400px',
-            background: 'var(--surface)',
+            background: '#fff',
             borderRadius: '16px',
             border: '1px solid var(--border)',
             padding: '40px',
@@ -302,6 +338,59 @@ export default function Login() {
             </button>
           </form>
 
+          {/* ── Google SSO ──────────────────────────────────────────────── */}
+          {authConfig?.googleEnabled && (
+            <>
+              {/* OR divider */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  margin: '20px 0 16px',
+                }}
+              >
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--text-dim)',
+                    fontFamily: 'var(--font-mono)',
+                    letterSpacing: '1px',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  or
+                </span>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              </div>
+
+              <GoogleAuthButton
+                clientId={authConfig.googleClientId!}
+                onCredential={handleGoogleCredential}
+                text="signin_with"
+                loading={googleLoading}
+              />
+
+              {authConfig.allowedDomains.length > 0 && (
+                <p
+                  style={{
+                    marginTop: 10,
+                    textAlign: 'center',
+                    fontSize: 11,
+                    color: 'var(--text-dim)',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  Restricted to{' '}
+                  <strong style={{ color: 'var(--cyan)' }}>
+                    {authConfig.allowedDomains.join(', ')}
+                  </strong>
+                </p>
+              )}
+            </>
+          )}
+
           <div
             style={{
               marginTop: '24px',
@@ -321,7 +410,7 @@ export default function Login() {
 
           <div
             style={{
-              marginTop: '24px',
+              marginTop: '20px',
               padding: '12px',
               background: 'var(--surface2)',
               borderRadius: 'var(--radius)',
@@ -337,7 +426,7 @@ export default function Login() {
                 textAlign: 'center',
               }}
             >
-              6D Technologies · Airtel Ventas QA Lab
+              6D Technologies · QA Infinity
             </p>
           </div>
         </div>

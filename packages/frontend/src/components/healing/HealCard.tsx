@@ -4,9 +4,13 @@ import DiffViewer from './DiffViewer';
 
 interface HealCardProps {
   heal: HealProposal;
-  onApprove: () => void;
+  onApprove: (rerun: boolean) => void;
   onReject: () => void;
+  onRetryWithContext?: (context: string) => void;
   busy: boolean;
+  retrying?: boolean;
+  /** When false (Viewer role), hides approve/reject action buttons */
+  canWrite?: boolean;
 }
 
 const TYPE_META = {
@@ -52,14 +56,24 @@ function ConfBar({ value }: { value: number }) {
   );
 }
 
-export default function HealCard({ heal, onApprove, onReject, busy }: HealCardProps) {
+export default function HealCard({ heal, onApprove, onReject, onRetryWithContext, busy, retrying, canWrite = true }: HealCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [showContext, setShowContext] = useState(false);
+  const [contextText, setContextText] = useState('');
   const rail = railColor(heal.confidence);
   const typeMeta = TYPE_META[heal.type];
   const tcId = heal.runResult?.testCase.tcId ?? '—';
   const tcName = heal.runResult?.testCase.title ?? 'Unknown Test';
   const errorMsg = heal.runResult?.errorMessage;
   const diff = heal.lineDiff ?? [];
+  const isBusy = busy || retrying;
+
+  function handleSubmitContext() {
+    if (!contextText.trim() || !onRetryWithContext) return;
+    onRetryWithContext(contextText.trim());
+    setShowContext(false);
+    setContextText('');
+  }
 
   return (
     <div
@@ -213,52 +227,180 @@ export default function HealCard({ heal, onApprove, onReject, busy }: HealCardPr
         <ConfBar value={heal.confidence} />
       </div>
 
+      {/* Context input */}
+      {showContext && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            padding: '8px 10px',
+            background: 'var(--surface2)',
+            border: '1px solid rgba(37,99,171,0.3)',
+            borderRadius: 7,
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Describe what you know about this failure
+          </div>
+          <textarea
+            autoFocus
+            value={contextText}
+            onChange={(e) => setContextText(e.target.value)}
+            placeholder="e.g. 'the Create Project modal was renamed last week', 'login flow changed — the Submit button now says Sign In'"
+            rows={3}
+            style={{
+              width: '100%',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 5,
+              color: 'var(--text)',
+              fontSize: 11,
+              fontFamily: 'var(--font-ui)',
+              padding: '6px 8px',
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmitContext();
+              if (e.key === 'Escape') { setShowContext(false); setContextText(''); }
+            }}
+          />
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => { setShowContext(false); setContextText(''); }}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 5,
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                color: 'var(--text-dim)',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              disabled={!contextText.trim() || isBusy}
+              onClick={handleSubmitContext}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 5,
+                background: 'rgba(37,99,171,0.18)',
+                border: '1px solid rgba(37,99,171,0.4)',
+                color: 'var(--cyan)',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: !contextText.trim() || isBusy ? 'not-allowed' : 'pointer',
+                opacity: !contextText.trim() || isBusy ? 0.5 : 1,
+              }}
+            >
+              {retrying ? 'Re-analyzing…' : 'Re-analyze with Context'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div
         className="heal-actions"
         style={{ display: 'flex', gap: 6, alignItems: 'center' }}
       >
-        <button
-          className="hb-approve"
-          disabled={busy}
-          onClick={(e) => { e.stopPropagation(); onApprove(); }}
-          style={{
-            flex: 1,
-            padding: '6px 0',
-            borderRadius: 6,
-            border: '1px solid rgba(42,157,143,0.35)',
-            background: 'rgba(42,157,143,0.12)',
-            color: 'var(--pass)',
-            fontWeight: 700,
-            fontSize: 11,
-            cursor: busy ? 'not-allowed' : 'pointer',
-            opacity: busy ? 0.6 : 1,
-            transition: 'opacity 0.15s',
-          }}
-        >
-          ✓ Approve
-        </button>
+        {/* Write actions — Approve/Reject hidden for Viewers */}
+        {canWrite && <>
+          <button
+            className="hb-approve-rerun"
+            disabled={isBusy}
+            onClick={(e) => { e.stopPropagation(); onApprove(true); }}
+            style={{
+              flex: 2,
+              padding: '6px 0',
+              borderRadius: 6,
+              border: '1px solid rgba(42,157,143,0.35)',
+              background: 'rgba(42,157,143,0.12)',
+              color: 'var(--pass)',
+              fontWeight: 700,
+              fontSize: 11,
+              cursor: isBusy ? 'not-allowed' : 'pointer',
+              opacity: isBusy ? 0.6 : 1,
+              transition: 'opacity 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ✓ Approve & Re-run
+          </button>
 
-        <button
-          className="hb-reject"
-          disabled={busy}
-          onClick={(e) => { e.stopPropagation(); onReject(); }}
-          style={{
-            flex: 1,
-            padding: '6px 0',
-            borderRadius: 6,
-            border: '1px solid rgba(220,38,38,0.3)',
-            background: 'rgba(220,38,38,0.08)',
-            color: 'var(--fail)',
-            fontWeight: 700,
-            fontSize: 11,
-            cursor: busy ? 'not-allowed' : 'pointer',
-            opacity: busy ? 0.6 : 1,
-            transition: 'opacity 0.15s',
-          }}
-        >
-          ✕ Reject
-        </button>
+          <button
+            className="hb-approve-only"
+            disabled={isBusy}
+            onClick={(e) => { e.stopPropagation(); onApprove(false); }}
+            style={{
+              flex: 1,
+              padding: '6px 0',
+              borderRadius: 6,
+              border: '1px solid rgba(42,157,143,0.2)',
+              background: 'rgba(42,157,143,0.05)',
+              color: 'var(--pass)',
+              fontWeight: 600,
+              fontSize: 10,
+              cursor: isBusy ? 'not-allowed' : 'pointer',
+              opacity: isBusy ? 0.6 : 1,
+              transition: 'opacity 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Approve Only
+          </button>
+
+          <button
+            className="hb-reject"
+            disabled={isBusy}
+            onClick={(e) => { e.stopPropagation(); onReject(); }}
+            style={{
+              flex: 1,
+              padding: '6px 0',
+              borderRadius: 6,
+              border: '1px solid rgba(220,38,38,0.3)',
+              background: 'rgba(220,38,38,0.08)',
+              color: 'var(--fail)',
+              fontWeight: 700,
+              fontSize: 11,
+              cursor: isBusy ? 'not-allowed' : 'pointer',
+              opacity: isBusy ? 0.6 : 1,
+              transition: 'opacity 0.15s',
+            }}
+          >
+            ✕ Reject
+          </button>
+
+          {onRetryWithContext && (
+            <button
+              className="hb-context"
+              disabled={isBusy}
+              onClick={(e) => { e.stopPropagation(); setShowContext((p) => !p); }}
+              title="Add context to improve the heal suggestion"
+              style={{
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: showContext
+                  ? '1px solid rgba(37,99,171,0.5)'
+                  : '1px solid var(--border)',
+                background: showContext ? 'rgba(37,99,171,0.12)' : 'transparent',
+                color: showContext ? 'var(--cyan)' : 'var(--text-dim)',
+                fontWeight: 600,
+                fontSize: 11,
+                cursor: isBusy ? 'not-allowed' : 'pointer',
+                opacity: isBusy ? 0.6 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              💬
+            </button>
+          )}
+        </>}
 
         <button
           className="hb-view"

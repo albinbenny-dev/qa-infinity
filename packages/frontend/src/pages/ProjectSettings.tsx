@@ -9,6 +9,9 @@ import Topbar, { TbBtn } from '../components/layout/Topbar';
 import {
   useProjectEnvConfigs,
   useProjectMembers,
+  useAddMember,
+  useRemoveMember,
+  useUpdateMemberRole,
   useRequirementDocs,
   useUploadReqDoc,
   useToggleReqDoc,
@@ -19,6 +22,7 @@ import {
   useDeleteEnvConfig,
 } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
+import { useRBAC } from '../hooks/useRBAC';
 import { PROJECT_GRADIENTS, getInitials } from '../lib/utils';
 import {
   useScans,
@@ -411,8 +415,15 @@ function EnvironmentsTab() {
 // ── Members tab ────────────────────────────────────────────────────────────
 function MembersTab() {
   const { activeProject } = useProjectStore();
-  const { data: members = [] } = useProjectMembers(activeProject?.id);
-  const [inviteEmail, setInviteEmail] = useState('');
+  const { data: members = [], isLoading } = useProjectMembers(activeProject?.id);
+  const addMember        = useAddMember(activeProject?.id ?? '');
+  const removeMember     = useRemoveMember(activeProject?.id ?? '');
+  const updateRole       = useUpdateMemberRole(activeProject?.id ?? '');
+
+  const [inviteEmail, setInviteEmail]   = useState('');
+  const [inviteRole, setInviteRole]     = useState<'ADMIN' | 'QA_ENGINEER' | 'VIEWER'>('QA_ENGINEER');
+  const [removingId, setRemovingId]     = useState<string | null>(null);
+  const [changingRole, setChangingRole] = useState<string | null>(null); // userId being role-changed
 
   const ROLE_COLORS: Record<string, string> = {
     ADMIN: 'badge-cyan',
@@ -420,12 +431,48 @@ function MembersTab() {
     VIEWER: 'badge-draft',
   };
 
+  async function handleAddMember() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    try {
+      await addMember.mutateAsync({ email, role: inviteRole });
+      setInviteEmail('');
+      setInviteRole('QA_ENGINEER');
+      toast.success(`${email} added to project as ${inviteRole.replace('_', ' ')}.`);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } };
+      toast.error(axiosErr.response?.data?.error ?? 'Failed to add member.');
+    }
+  }
+
+  async function handleRemove(userId: string) {
+    try {
+      await removeMember.mutateAsync(userId);
+      setRemovingId(null);
+      toast.success('Member removed from project.');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } };
+      toast.error(axiosErr.response?.data?.error ?? 'Failed to remove member.');
+    }
+  }
+
+  async function handleRoleChange(userId: string, role: string) {
+    try {
+      await updateRole.mutateAsync({ userId, role });
+      setChangingRole(null);
+      toast.success('Role updated.');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } };
+      toast.error(axiosErr.response?.data?.error ?? 'Failed to update role.');
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div className="card">
         <div className="card-header">
           <div className="card-title">Project Members</div>
-          <span className="badge badge-draft">{members.length} members</span>
+          <span className="badge badge-draft">{members.length} {members.length === 1 ? 'member' : 'members'}</span>
         </div>
         <table className="data-table">
           <thead>
@@ -437,19 +484,16 @@ function MembersTab() {
             </tr>
           </thead>
           <tbody>
-            {members.length === 0 ? (
+            {isLoading ? (
               <tr>
-                <td
-                  colSpan={4}
-                  style={{
-                    textAlign: 'center',
-                    padding: '24px',
-                    color: 'var(--text-dim)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '11px',
-                  }}
-                >
-                  No members yet. Invite your team below.
+                <td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                  Loading members…
+                </td>
+              </tr>
+            ) : members.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                  No members yet. Add your team below.
                 </td>
               </tr>
             ) : (
@@ -459,17 +503,10 @@ function MembersTab() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <div
                         style={{
-                          width: '28px',
-                          height: '28px',
-                          borderRadius: '50%',
+                          width: '28px', height: '28px', borderRadius: '50%',
                           background: 'linear-gradient(135deg, var(--violet), var(--cyan))',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          color: '#fff',
-                          flexShrink: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '10px', fontWeight: 700, color: '#fff', flexShrink: 0,
                         }}
                       >
                         {getInitials(m.user.name)}
@@ -479,15 +516,56 @@ function MembersTab() {
                   </td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>{m.user.email}</td>
                   <td>
-                    <span className={`badge ${ROLE_COLORS[m.role] ?? 'badge-draft'}`}>{m.role}</span>
+                    {changingRole === m.userId ? (
+                      <select
+                        className="input-field"
+                        defaultValue={m.role}
+                        autoFocus
+                        onChange={(e) => void handleRoleChange(m.userId, e.target.value)}
+                        onBlur={() => setChangingRole(null)}
+                        style={{ fontSize: '11px', padding: '3px 8px', width: '140px', fontFamily: 'var(--font-ui)' }}
+                      >
+                        <option value="ADMIN">ADMIN</option>
+                        <option value="QA_ENGINEER">QA_ENGINEER</option>
+                        <option value="VIEWER">VIEWER</option>
+                      </select>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`badge ${ROLE_COLORS[m.role] ?? 'badge-draft'}`}
+                        title="Click to change role"
+                        onClick={() => setChangingRole(m.userId)}
+                        style={{ cursor: 'pointer', border: 'none', background: 'none' }}
+                      >
+                        {m.role} ✎
+                      </button>
+                    )}
                   </td>
                   <td>
-                    <button
-                      className="tb-btn tb-btn-ghost"
-                      style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
-                    >
-                      Remove
-                    </button>
+                    {removingId === m.userId ? (
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--fail)' }}>Remove?</span>
+                        <button
+                          className="tb-btn tb-btn-ghost"
+                          style={{ padding: '3px 8px', fontSize: '10px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
+                          onClick={() => void handleRemove(m.userId)}
+                          disabled={removeMember.isPending}
+                        >Yes</button>
+                        <button
+                          className="tb-btn tb-btn-ghost"
+                          style={{ padding: '3px 8px', fontSize: '10px' }}
+                          onClick={() => setRemovingId(null)}
+                        >No</button>
+                      </div>
+                    ) : (
+                      <button
+                        className="tb-btn tb-btn-ghost"
+                        style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--rose)', borderColor: 'rgba(220,38,38,0.3)' }}
+                        onClick={() => setRemovingId(m.userId)}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))
@@ -496,40 +574,59 @@ function MembersTab() {
         </table>
       </div>
 
-      {/* Invite form */}
+      {/* Add member form */}
       <div className="card">
         <div className="card-header">
-          <div className="card-title">Invite by Email</div>
+          <div className="card-title">Add Member by Email</div>
         </div>
-        <div className="card-body" style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
-            <label style={LABEL_STYLE}>Email Address</label>
-            <input
-              className="input-field"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="colleague@company.com"
-              type="email"
-              style={{ fontFamily: 'var(--font-ui)' }}
-            />
+        <div className="card-body">
+          <p style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginBottom: '12px', lineHeight: 1.5 }}>
+            The user must have a registered account before they can be added to a project.
+          </p>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={LABEL_STYLE}>Email Address</label>
+              <input
+                className="input-field"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleAddMember(); }}
+                placeholder="colleague@company.com"
+                type="email"
+                style={{ fontFamily: 'var(--font-ui)' }}
+              />
+            </div>
+            <div style={{ width: '150px' }}>
+              <label style={LABEL_STYLE}>Role</label>
+              <select
+                className="input-field"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}
+                style={{ fontFamily: 'var(--font-ui)', fontSize: '13px' }}
+              >
+                <option value="ADMIN">Admin</option>
+                <option value="QA_ENGINEER">QA Engineer</option>
+                <option value="VIEWER">Viewer</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleAddMember()}
+              disabled={!inviteEmail.trim() || addMember.isPending}
+              style={{
+                padding: '8px 16px',
+                background: inviteEmail.trim() ? 'var(--cyan)' : 'var(--surface3)',
+                border: 'none', borderRadius: '6px',
+                color: inviteEmail.trim() ? '#fff' : 'var(--text-dim)',
+                fontSize: '12px', fontWeight: 600,
+                cursor: inviteEmail.trim() && !addMember.isPending ? 'pointer' : 'default',
+                fontFamily: 'var(--font-ui)', flexShrink: 0,
+                opacity: addMember.isPending ? 0.6 : 1,
+              }}
+            >
+              {addMember.isPending ? 'Adding…' : '+ Add Member'}
+            </button>
           </div>
-          <button
-            type="button"
-            style={{
-              padding: '8px 16px',
-              background: 'var(--cyan)',
-              border: 'none',
-              borderRadius: '6px',
-              color: '#fff',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              fontFamily: 'var(--font-ui)',
-              flexShrink: 0,
-            }}
-          >
-            Send Invite
-          </button>
         </div>
       </div>
     </div>
@@ -1795,7 +1892,15 @@ export default function ProjectSettings() {
   const { slug } = useParams<{ slug: string }>();
   const { activeProject } = useProjectStore();
   const navigate = useNavigate();
+  const { canManageMembers, canDeleteProject } = useRBAC();
   const [activeTab, setActiveTab] = useState('details');
+
+  // Filter tabs: Members and Danger Zone are Admin-only
+  const visibleTabs = TABS.filter((t) => {
+    if (t.value === 'members') return canManageMembers;
+    if (t.value === 'danger')  return canDeleteProject;
+    return true;
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -1845,7 +1950,7 @@ export default function ProjectSettings() {
               marginBottom: '24px',
             }}
           >
-            {TABS.map((t) => (
+            {visibleTabs.map((t) => (
               <Tabs.Trigger
                 key={t.value}
                 value={t.value}

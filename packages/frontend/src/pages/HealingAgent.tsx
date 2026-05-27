@@ -121,7 +121,7 @@ function TriggerModal({ projectId, onClose }: { projectId: string; onClose: () =
 
   async function handleTrigger(run: RunListItem) {
     try {
-      const res = await trigger(run.id);
+      const res = await trigger({ runId: run.id });
       toast.success(`Queued ${res.count} heal job${res.count !== 1 ? 's' : ''} for "${run.name}"`);
       onClose();
     } catch (e) {

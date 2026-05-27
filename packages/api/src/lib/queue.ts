@@ -55,6 +55,7 @@ export async function addRunJob(payload: RunJobPayload): Promise<void> {
 
 export async function addHealJob(payload: HealJobPayload): Promise<void> {
   await healQueue.add('heal', payload, {
+    jobId: `heal-${payload.runResultId}`,  // Deduplicate — same RunResult is never healed twice
     attempts: 2,
     backoff: { type: 'exponential', delay: 5000 },
     removeOnComplete: 200,
@@ -115,5 +116,32 @@ export async function addScriptVerifyJob(payload: ScriptVerifyJobPayload): Promi
     attempts: 1,
     removeOnComplete: 200,
     removeOnFail: 100,
+  });
+}
+
+// ── Agentic Browser Trace queue ────────────────────────────────────────────
+
+export const agentScanQueue = new Queue('agent-scans', { connection });
+
+export interface AgentScanJobPayload {
+  agentTraceId: string;
+  projectId: string;
+  baseUrl: string;
+  targetUrl: string;
+  menuContext: string;
+  username: string;
+  password: string;
+  testGoal: string;
+  seedSteps?: string[];
+  additionalContext?: string;
+  testTypes?: string[];
+}
+
+export async function addAgentScanJob(payload: AgentScanJobPayload): Promise<void> {
+  await agentScanQueue.add('agent-scan', payload, {
+    jobId: payload.agentTraceId,
+    attempts: 1,
+    removeOnComplete: 50,
+    removeOnFail: 20,
   });
 }

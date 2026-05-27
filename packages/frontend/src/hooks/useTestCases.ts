@@ -242,6 +242,32 @@ export function useBulkAddTag(projectId: string) {
   });
 }
 
+// ── Agentic Browser Trace ──────────────────────────────────────────────────
+
+export interface AgentTraceRequest {
+  targetUrl: string;
+  menuContext: string;
+  username?: string;
+  password?: string;
+  additionalContext?: string;
+  seedSteps?: string[];
+  testTypes?: ('UI' | 'API' | 'SIT')[];
+  envConfigId?: string;
+}
+
+export function useStartAgentTrace(projectId: string) {
+  return useMutation({
+    mutationFn: async (req: AgentTraceRequest) => {
+      const res = await api.post<{ agentTraceId: string }>(
+        `/projects/${projectId}/test-cases/agent-trace`,
+        req,
+        { timeout: 15_000 },
+      );
+      return res.data;
+    },
+  });
+}
+
 export function useUploadFile() {
   return useMutation({
     mutationFn: async (file: File) => {

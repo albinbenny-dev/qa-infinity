@@ -318,7 +318,6 @@ export default function TCListPanel({
               tc={tc}
               isSelected={selectedIds.has(tc.id)}
               isRunning={runningTcIds.has(tc.id)}
-              hasScript={scriptedTcIds.has(tc.id)}
               runDisabled={isRunning}
               onToggle={() => onToggleTc(tc.id)}
               onRun={() => onRunIndividual(tc)}
@@ -483,7 +482,6 @@ function UseCaseGroupRow({
           tc={tc}
           isSelected={selectedIds.has(tc.id)}
           isRunning={runningTcIds.has(tc.id)}
-          hasScript={scriptedTcIds.has(tc.id)}
           runDisabled={isRunning}
           onToggle={() => onToggleTc(tc.id)}
           onRun={() => onRunIndividual(tc)}
@@ -497,13 +495,12 @@ function UseCaseGroupRow({
 
 // ── TC row ────────────────────────────────────────────────────────────────
 function TCRow({
-  tc, isSelected, isRunning, hasScript, runDisabled,
+  tc, isSelected, isRunning, runDisabled,
   onToggle, onRun, onView, indent = false,
 }: {
   tc: TestCase;
   isSelected: boolean;
   isRunning: boolean;
-  hasScript: boolean;
   runDisabled: boolean;
   onToggle: () => void;
   onRun: () => void;
@@ -511,12 +508,6 @@ function TCRow({
   indent?: boolean;
 }) {
   const chip = TYPE_CHIP[tc.type] ?? { bg: 'var(--surface3)', color: 'var(--text-dim)' };
-
-  const lastStatus = tc.lastRun?.status;
-  const lastStatusColor = lastStatus === 'PASSED' ? 'var(--pass)'
-    : lastStatus === 'FAILED' ? 'var(--fail)'
-    : lastStatus === 'RUNNING' ? '#60a5fa'
-    : 'var(--text-dim)';
 
   return (
     <div
@@ -583,22 +574,6 @@ function TCRow({
         background: chip.bg, color: chip.color, flexShrink: 0,
       }}>
         {tc.type}
-      </span>
-
-      {/* Last run status */}
-      <span style={{
-        fontFamily: 'var(--font-mono)', fontSize: 9,
-        color: lastStatusColor, flexShrink: 0, width: 46, textAlign: 'right',
-      }}>
-        {lastStatus ?? '—'}
-      </span>
-
-      {/* Script indicator */}
-      <span style={{
-        fontSize: 9, width: 14, textAlign: 'center', flexShrink: 0,
-        color: hasScript ? 'var(--emerald)' : 'var(--text-dim)',
-      }} title={hasScript ? 'Has script' : 'No script'}>
-        {hasScript ? '⌨' : '○'}
       </span>
 
       {/* Run / Stop button */}

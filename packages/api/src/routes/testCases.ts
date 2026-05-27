@@ -15,6 +15,8 @@ import {
   readReferenceTCs,
   type UISnapshot,
 } from '../services/inputAdapters.js';
+import { addAgentScanJob } from '../lib/queue.js';
+import type { AgentLearning, RecordedAction } from '../types/scanner.js';
 import { z } from 'zod';
 
 function mimeFromPath(filePath: string): string {
@@ -218,13 +220,24 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       const scanDate = projectCtx.updatedAt.toISOString().split('T')[0];
       const navLines = navMap.slice(0, 20).map((n) => `  - ${n.label}: ${n.url}`).join('\n');
       const useCaseLines = useCases.map((u) => `  - ${u.name}`).join('\n');
+      const learningLines = (() => {
+        if (!projectCtx.agentLearnings) return '';
+        const learnings = JSON.parse(projectCtx.agentLearnings) as AgentLearning[];
+        if (learnings.length === 0) return '';
+        const lines = learnings.slice(-5).map(l =>
+          `  - ${l.menuContext} (${l.targetUrl}): ${l.verifiedFlow.join(' → ')}`,
+        ).join('\n');
+        return `\nVerified UI flows from agentic traces (use these locators/steps directly):\n${lines}`;
+      })();
+
       projectContextSummary = [
         `Scan date: ${scanDate}`,
         `Navigation (${navMap.length} pages):`,
         navLines || '  (none)',
         `Known use cases:`,
         useCaseLines || '  (none)',
-      ].join('\n');
+        learningLines,
+      ].filter(Boolean).join('\n');
     }
 
     // Build heal insights — teach the writer agent which failure patterns to avoid
@@ -304,8 +317,17 @@ router.get('/use-cases', async (req: Request, res: Response, next: NextFunction)
 
 router.get('/export/excel', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const { useCaseTag: ucFilter, ids: idsParam } = req.query as Record<string, string>;
+
+    const where: Record<string, unknown> = { projectId: req.project.id };
+    if (ucFilter) where['useCaseTag'] = ucFilter;
+    if (idsParam) {
+      const ids = idsParam.split(',').filter(Boolean);
+      if (ids.length > 0) where['id'] = { in: ids };
+    }
+
     const tcs = await prisma.testCase.findMany({
-      where: { projectId: req.project.id },
+      where,
       orderBy: [{ useCaseTag: 'asc' }, { tcId: 'asc' }],
     });
 
@@ -352,7 +374,10 @@ router.get('/export/excel', async (req: Request, res: Response, next: NextFuncti
     }
 
     // Row 1 — title banner
-    w1('A1', `TEST CASE LIBRARY — ${req.project.name.toUpperCase()}`,
+    let exportTitle = `TEST CASE LIBRARY — ${req.project.name.toUpperCase()}`;
+    if (ucFilter) exportTitle = `${req.project.name.toUpperCase()} · ${ucFilter.toUpperCase()}`;
+    else if (idsParam) exportTitle = `${req.project.name.toUpperCase()} · SELECTED (${tcs.length} TCs)`;
+    w1('A1', exportTitle,
       { ...bgS(COL.navyDark), font: { color: { rgb: COL.white }, bold: true, sz: 14 }, ...aC });
     mg1(0, 0, 0, 5);
 
@@ -471,7 +496,9 @@ router.get('/export/excel', async (req: Request, res: Response, next: NextFuncti
     XLSXStyle.utils.book_append_sheet(wb, ws2 as XLSXStyle.WorkSheet, 'Test Cases');
     const buf = XLSXStyle.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 
-    const filename = `${req.project.slug}-test-cases-${Date.now()}.xlsx`;
+    let filename = `${req.project.slug}-test-cases-${Date.now()}.xlsx`;
+    if (ucFilter) filename = `${req.project.slug}-${ucFilter.replace(/\s+/g, '-')}-${Date.now()}.xlsx`;
+    else if (idsParam) filename = `${req.project.slug}-selected-${Date.now()}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buf);
@@ -979,6 +1006,133 @@ router.patch('/:tcId/hints', async (req: Request, res: Response, next: NextFunct
       data: { generationHints: hints?.trim() || null },
     });
     res.json({ id: updated.id, generationHints: updated.generationHints });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /agent-trace — start agentic browser trace ───────────────────────
+
+const AgentTraceSchema = z.object({
+  targetUrl: z.string().min(1),
+  menuContext: z.string().min(1),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  additionalContext: z.string().optional(),
+  seedSteps: z.array(z.string()).optional(),
+  testTypes: z.array(z.enum(['UI', 'API', 'SIT'])).optional(),
+  envConfigId: z.string().optional(),
+});
+
+router.post('/agent-trace', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = AgentTraceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const { targetUrl, menuContext, additionalContext, seedSteps, envConfigId } = parsed.data;
+    let { username, password } = parsed.data;
+    const projectId = req.project.id;
+
+    // Resolve credentials from envConfig if provided
+    if (envConfigId) {
+      const envConfig = await prisma.envConfig.findFirst({ where: { id: envConfigId, projectId } });
+      if (envConfig) {
+        username = username ?? envConfig.username ?? '';
+        password = password ?? envConfig.password ?? '';
+      }
+    }
+
+    // Resolve base URL from project or envConfig
+    let baseUrl = req.project.baseUrl ?? '';
+    if (envConfigId) {
+      const envConfig = await prisma.envConfig.findFirst({ where: { id: envConfigId, projectId } });
+      if (envConfig?.baseUrl) baseUrl = envConfig.baseUrl;
+    }
+    if (!baseUrl) {
+      res.status(422).json({ error: 'No baseUrl configured for this project. Set one in Project Settings.' });
+      return;
+    }
+
+    // Require login instructions
+    const projectContext = await prisma.projectContext.findUnique({ where: { projectId } });
+    if (!projectContext?.loginInstructions) {
+      res.status(422).json({
+        error: 'No login instructions found. Run a UI Scan first so the system can detect your login form.',
+      });
+      return;
+    }
+
+    const testGoal = `Trace the "${menuContext}" menu at ${targetUrl}`;
+
+    const agentTrace = await prisma.agentTrace.create({
+      data: { projectId, testGoal, menuContext, targetUrl, status: 'QUEUED' },
+    });
+
+    await addAgentScanJob({
+      agentTraceId: agentTrace.id,
+      projectId,
+      baseUrl,
+      targetUrl,
+      menuContext,
+      username: username ?? '',
+      password: password ?? '',
+      testGoal,
+      seedSteps,
+      additionalContext,
+      testTypes: parsed.data.testTypes,
+    });
+
+    res.status(201).json({ agentTraceId: agentTrace.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /agent-trace — list recent traces for project ─────────────────────
+
+router.get('/agent-trace', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const traces = await prisma.agentTrace.findMany({
+      where: { projectId: req.project.id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        status: true,
+        testGoal: true,
+        menuContext: true,
+        targetUrl: true,
+        stepCount: true,
+        currentStep: true,
+        errorMessage: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    });
+    res.json(traces);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /agent-trace/:traceId — single trace with action log ──────────────
+
+router.get('/agent-trace/:traceId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const trace = await prisma.agentTrace.findFirst({
+      where: { id: req.params['traceId'], projectId: req.project.id },
+    });
+    if (!trace) {
+      res.status(404).json({ error: 'Agent trace not found' });
+      return;
+    }
+    res.json({
+      ...trace,
+      actionLog: trace.actionLog ? (JSON.parse(trace.actionLog) as RecordedAction[]) : [],
+    });
   } catch (err) {
     next(err);
   }

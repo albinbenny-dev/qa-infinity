@@ -7,12 +7,14 @@ import Topbar, { TbBtn } from '../components/layout/Topbar';
 import FileTree from '../components/scripts/FileTree';
 import EditorTabs from '../components/scripts/EditorTabs';
 import { useProject } from '../hooks/useProjects';
+import { useRBAC } from '../hooks/useRBAC';
 import { useTestCases, useUseCases } from '../hooks/useTestCases';
 import {
   useScripts,
   useSaveScriptContent,
   useDeleteScript,
   useUploadScript,
+  useUploadScriptWithExtract,
 } from '../hooks/useScripts';
 import { useScriptJobs } from '../hooks/useScriptJobs';
 import { useExecutionStore } from '../stores/executionStore';
@@ -713,6 +715,8 @@ function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProp
 
 // ── ImportScriptModal ────────────────────────────────────────────────────────
 
+type ImportMode = 'create' | 'link' | 'standalone';
+
 interface ImportScriptModalProps {
   projectId: string;
   testCases: TestCase[];
@@ -721,12 +725,16 @@ interface ImportScriptModalProps {
 }
 
 function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: ImportScriptModalProps) {
+  const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  const [importMode, setImportMode] = useState<ImportMode>(preSelectedTcId ? 'link' : 'create');
   const [selectedTcId, setSelectedTcId] = useState(preSelectedTcId ?? '');
   const [file, setFile] = useState<File | null>(null);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadScript(projectId);
+  const uploadWithExtract = useUploadScriptWithExtract(projectId);
 
   const filteredTCs = useMemo(() => {
     const q = search.toLowerCase();
@@ -739,15 +747,21 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
     if (!file) { toast.error('Select a .spec.ts or .spec.js file first'); return; }
     setBusy(true);
     try {
-      await upload.mutateAsync({ file, testCaseId: selectedTcId || undefined });
-      const linked = selectedTcId
-        ? testCases.find((tc) => tc.id === selectedTcId)
-        : null;
-      toast.success(linked
-        ? `Imported and linked to ${linked.tcId}`
-        : `Imported ${file.name}`
-      );
-      onClose();
+      if (importMode === 'create') {
+        const result = await uploadWithExtract.mutateAsync(file);
+        toast.success(
+          `Test case ${result.testCase.tcId} created from script!`,
+          { duration: 6000 },
+        );
+        onClose();
+        navigate(`/projects/${slug}/tc-library`);
+      } else {
+        const tcId = importMode === 'link' ? (selectedTcId || undefined) : undefined;
+        await upload.mutateAsync({ file, testCaseId: tcId });
+        const linked = tcId ? testCases.find((tc) => tc.id === tcId) : null;
+        toast.success(linked ? `Imported and linked to ${linked.tcId}` : `Imported ${file.name}`);
+        onClose();
+      }
     } catch {
       toast.error('Import failed');
     }
@@ -760,6 +774,12 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
     fontSize: 11, outline: 'none', boxSizing: 'border-box', fontFamily: 'var(--font-ui)',
   };
 
+  const MODE_OPTS: { value: ImportMode; label: string; desc: string }[] = [
+    { value: 'create', label: 'Create TC from script', desc: 'QA Infinity extracts the test case automatically' },
+    { value: 'link',   label: 'Link to existing TC',  desc: 'Choose a TC from your library' },
+    { value: 'standalone', label: 'Import standalone', desc: 'No TC — custom script only' },
+  ];
+
   return (
     <div style={MODAL_OVERLAY} onClick={onClose}>
       <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
@@ -769,6 +789,37 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
         </div>
 
         <div style={MODAL_BODY}>
+          {/* Mode selector */}
+          <div>
+            <span style={LABEL_STYLE}>Import Mode</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {MODE_OPTS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setImportMode(opt.value)}
+                  style={{
+                    flex: 1, padding: '7px 6px', borderRadius: 6, cursor: 'pointer',
+                    fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                    border: importMode === opt.value ? '1px solid rgba(139,92,246,0.6)' : '1px solid var(--border)',
+                    background: importMode === opt.value ? 'rgba(139,92,246,0.12)' : 'transparent',
+                    color: importMode === opt.value ? 'var(--violet)' : 'var(--text-dim)',
+                    transition: 'all 0.15s', textAlign: 'center',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '5px 0 0', lineHeight: 1.5 }}>
+              {MODE_OPTS.find(o => o.value === importMode)?.desc}
+              {importMode === 'create' && (
+                <span style={{ color: 'var(--violet)', marginLeft: 4 }}>
+                  — TC will be created in DRAFT status for review in TC Library.
+                </span>
+              )}
+            </p>
+          </div>
+
           {/* File picker */}
           <div>
             <span style={LABEL_STYLE}>Script File <span style={{ color: '#f87171', fontWeight: 400 }}>*</span></span>
@@ -794,8 +845,8 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
             />
           </div>
 
-          {/* TC selector */}
-          <div>
+          {/* TC selector — only shown in 'link' mode */}
+          {importMode === 'link' && <div>
             <span style={LABEL_STYLE}>Link to Test Case <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span></span>
             <input
               type="text"
@@ -844,7 +895,7 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
                 Any existing script for this test case will be replaced.
               </p>
             )}
-          </div>
+          </div>}
         </div>
 
         <div style={MODAL_FOOTER}>
@@ -856,12 +907,16 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
               padding: '7px 18px', borderRadius: 6, border: 'none',
               cursor: !file || busy ? 'not-allowed' : 'pointer',
               fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
-              background: 'linear-gradient(135deg, var(--violet), var(--cyan))',
+              background: importMode === 'create'
+                ? 'linear-gradient(135deg, var(--violet), var(--emerald))'
+                : 'linear-gradient(135deg, var(--violet), var(--cyan))',
               opacity: !file || busy ? 0.55 : 1,
               transition: 'opacity 0.15s',
             }}
           >
-            {busy ? 'Importing…' : '⬆ Import'}
+            {busy
+              ? (importMode === 'create' ? 'Extracting TC…' : 'Importing…')
+              : (importMode === 'create' ? '⬆ Import & Create TC' : '⬆ Import')}
           </button>
         </div>
       </div>
@@ -875,6 +930,7 @@ export default function Scripts() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { canWrite } = useRBAC();
 
   const { data: project } = useProject(slug);
   const projectId = project?.id;
@@ -1331,7 +1387,7 @@ export default function Scripts() {
       {showImportModal && projectId && (
         <ImportScriptModal
           projectId={projectId}
-          testCases={allTCs}
+          testCases={allTCs.filter((tc) => !scriptedTcIds.has(tc.id))}
           preSelectedTcId={importPreTcId}
           onClose={() => setShowImportModal(false)}
         />
@@ -1383,28 +1439,30 @@ export default function Scripts() {
               </span>
               🩹 Generate with Heal
             </button>
-            <TbBtn variant="ghost" onClick={() => handleOpenImport()}>
-              ⬆ Import Script
-            </TbBtn>
+            {canWrite && (
+              <TbBtn variant="ghost" onClick={() => handleOpenImport()}>
+                ⬆ Import Script
+              </TbBtn>
+            )}
             <TbBtn
               variant="ghost"
               onClick={async () => {
                 if (!projectId) return;
                 try {
-                  const res = await api.get(`/projects/${projectId}/scripts/prompt-guide`, { responseType: 'blob' });
+                  const res = await api.get(`/projects/${projectId}/scripts/context-guide`, { responseType: 'blob' });
                   const url = URL.createObjectURL(new Blob([res.data as BlobPart], { type: 'text/markdown' }));
                   const a = document.createElement('a');
                   a.href = url;
-                  a.download = 'qa-infinity-script-prompt-guide.md';
+                  a.download = `qa-infinity-guide-${slug ?? projectId}.md`;
                   a.click();
                   URL.revokeObjectURL(url);
                 } catch {
-                  toast.error('Failed to download prompt guide');
+                  toast.error('Failed to download script guide');
                 }
               }}
-              title="Download the external LLM prompt guide for manual script generation"
+              title="Download project-specific guide for Claude Desktop — use when credits are exhausted"
             >
-              📋 Prompt Guide
+              📋 Script Guide
             </TbBtn>
             <TbBtn variant="primary" onClick={handleSendToExecution}>
               → Send to Execution
@@ -1694,7 +1752,14 @@ export default function Scripts() {
                     padding: '10px 12px', borderTop: '1px solid var(--border)',
                     flexShrink: 0, background: 'var(--surface2)',
                   }}>
-                    {tcSelected.size > 0 ? (
+                    {!canWrite ? (
+                      <div style={{
+                        textAlign: 'center', fontSize: 10,
+                        color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', padding: '2px 0',
+                      }}>
+                        🔒 View Only — script generation requires QA Engineer role
+                      </div>
+                    ) : tcSelected.size > 0 ? (
                       <button
                         onClick={handleQueueGenerate}
                         disabled={isQueuing}
@@ -1731,34 +1796,36 @@ export default function Scripts() {
           {/* ── SCRIPTS TAB ── */}
           {leftTab === 'scripts' && (
             <>
-              <div style={{
-                padding: '8px 10px', borderBottom: '1px solid var(--border)',
-                flexShrink: 0, display: 'flex', gap: 6,
-              }}>
-                <button
-                  onClick={() => setLeftTab('tcs')}
-                  style={{
-                    flex: 1, padding: '6px 8px',
-                    background: 'linear-gradient(90deg, #FFB347, #F47B20)',
-                    border: 'none', borderRadius: 5, cursor: 'pointer',
-                    color: '#fff', fontWeight: 700, fontSize: 11,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                  }}
-                >
-                  + Generate
-                </button>
-                <button
-                  onClick={() => handleOpenImport()}
-                  style={{
-                    padding: '6px 8px', background: 'transparent',
-                    border: '1px solid var(--border)', borderRadius: 5,
-                    cursor: 'pointer', color: 'var(--text-mid)', fontSize: 11,
-                  }}
-                  title="Import .spec.ts and link to a test case"
-                >
-                  ⬆
-                </button>
-              </div>
+              {canWrite && (
+                <div style={{
+                  padding: '8px 10px', borderBottom: '1px solid var(--border)',
+                  flexShrink: 0, display: 'flex', gap: 6,
+                }}>
+                  <button
+                    onClick={() => setLeftTab('tcs')}
+                    style={{
+                      flex: 1, padding: '6px 8px',
+                      background: 'linear-gradient(90deg, #FFB347, #F47B20)',
+                      border: 'none', borderRadius: 5, cursor: 'pointer',
+                      color: '#fff', fontWeight: 700, fontSize: 11,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                    }}
+                  >
+                    + Generate
+                  </button>
+                  <button
+                    onClick={() => handleOpenImport()}
+                    style={{
+                      padding: '6px 8px', background: 'transparent',
+                      border: '1px solid var(--border)', borderRadius: 5,
+                      cursor: 'pointer', color: 'var(--text-mid)', fontSize: 11,
+                    }}
+                    title="Import .spec.ts and link to a test case"
+                  >
+                    ⬆
+                  </button>
+                </div>
+              )}
 
               {scriptsLoading ? (
                 <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>
@@ -1768,6 +1835,7 @@ export default function Scripts() {
                   activeId={activeTabId}
                   onSelect={openTab}
                   onDelete={handleDelete}
+                  canDelete={canWrite}
                 />
               )}
             </>
@@ -1809,7 +1877,7 @@ export default function Scripts() {
                 borderBottom: '1px solid rgba(255,255,255,0.05)',
                 minHeight: 32,
               }}>
-                {activeScript?.testCaseId && (
+                {canWrite && activeScript?.testCaseId && (
                   <button
                     onClick={() => setShowRegenModal(true)}
                     title="Regenerate this script — provide correction context to guide the agent"

@@ -1,4 +1,4 @@
-import { useMemo, useReducer, useCallback, useState } from 'react';
+import React, { useMemo, useReducer, useCallback, useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
@@ -20,6 +20,7 @@ import { useExecutionStore } from '../stores/executionStore';
 import { useScripts } from '../hooks/useScripts';
 import { useCreateRun } from '../hooks/useRuns';
 import { useProjectStore } from '../stores/projectStore';
+import { useRBAC } from '../hooks/useRBAC';
 import { api } from '../lib/api';
 import type { TestCase } from '../types';
 
@@ -153,10 +154,24 @@ export default function TCLibrary() {
   const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
   const createRun = useCreateRun(projectId ?? '');
   const { activeProject } = useProjectStore();
+  const { canWrite } = useRBAC();
   const envConfigs = activeProject?.envConfigs ?? [];
   const defaultEnv = envConfigs.find(e => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
 
   const [editingTc, setEditingTc] = useState<TestCase | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!exportOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [exportOpen]);
 
   const allTCs: TestCase[] = tcData?.testCases ?? [];
 
@@ -210,21 +225,35 @@ export default function TCLibrary() {
   }
 
   // ── Excel export ──────────────────────────────────────────────────────────
-  async function handleExport() {
+  async function downloadExcel(params: Record<string, string>, filename: string) {
     if (!projectId) return;
+    setExportOpen(false);
     try {
-      const res = await api.get(`/projects/${projectId}/test-cases/export/excel`, {
-        responseType: 'blob',
-      });
+      const query = new URLSearchParams(params).toString();
+      const res = await api.get(
+        `/projects/${projectId}/test-cases/export/excel${query ? `?${query}` : ''}`,
+        { responseType: 'blob' },
+      );
       const url = URL.createObjectURL(res.data as Blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${slug}-test-cases.xlsx`;
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
       toast.error('Export failed');
     }
+  }
+
+  function handleExportAll() {
+    downloadExcel({}, `${slug}-test-cases.xlsx`);
+  }
+  function handleExportByUseCase(tag: string) {
+    downloadExcel({ useCaseTag: tag }, `${slug}-${tag.replace(/\s+/g, '-')}.xlsx`);
+  }
+  function handleExportSelected() {
+    const ids = Array.from(selectedIds).join(',');
+    downloadExcel({ ids }, `${slug}-selected.xlsx`);
   }
 
   // ── Run handlers ─────────────────────────────────────────────────────────
@@ -326,6 +355,22 @@ export default function TCLibrary() {
 
   const sendBtnEnabled = selectedIds.size > 0;
 
+  const dropdownItemStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    width: '100%',
+    padding: '8px 12px',
+    background: 'none',
+    border: 'none',
+    color: 'var(--text)',
+    fontSize: '12px',
+    fontFamily: 'var(--font-mono)',
+    cursor: 'pointer',
+    textAlign: 'left',
+    transition: 'background 0.1s',
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* Topbar */}
@@ -337,20 +382,82 @@ export default function TCLibrary() {
         ]}
         actions={
           <>
-            <TbBtn variant="ghost" onClick={handleExport}>
-              📤 Export Excel
-            </TbBtn>
-            <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/writer`)}>
-              + Generate More
-            </TbBtn>
-            <TbBtn
-              variant="primary"
-              disabled={!sendBtnEnabled}
-              style={!sendBtnEnabled ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
-              onClick={handleSendToExecution}
-            >
-              ▶ Send to Execution ({selectedIds.size})
-            </TbBtn>
+            {/* Export dropdown */}
+            <div ref={exportRef} style={{ position: 'relative' }}>
+              <TbBtn variant="ghost" onClick={() => setExportOpen((o) => !o)}>
+                📤 Export Excel ▾
+              </TbBtn>
+              {exportOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    right: 0,
+                    minWidth: '220px',
+                    background: 'var(--surface2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                    zIndex: 200,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {/* Export All */}
+                  <button
+                    onClick={handleExportAll}
+                    style={dropdownItemStyle}
+                  >
+                    <span style={{ opacity: 0.7 }}>📋</span> Export All ({allTCs.length} TCs)
+                  </button>
+
+                  {/* Export Selected */}
+                  {selectedIds.size > 0 && (
+                    <button
+                      onClick={handleExportSelected}
+                      style={dropdownItemStyle}
+                    >
+                      <span style={{ opacity: 0.7 }}>✅</span> Export Selected ({selectedIds.size})
+                    </button>
+                  )}
+
+                  {/* Divider + by use case */}
+                  {useCases.length > 0 && (
+                    <>
+                      <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+                      <div style={{ padding: '5px 12px 3px', fontSize: '9px', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                        By Use Case
+                      </div>
+                      <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                        {useCases.map((uc) => (
+                          <button
+                            key={uc}
+                            onClick={() => handleExportByUseCase(uc)}
+                            style={dropdownItemStyle}
+                          >
+                            <span style={{ opacity: 0.7 }}>📂</span> {uc}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            {canWrite && (
+              <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/writer`)}>
+                + Generate More
+              </TbBtn>
+            )}
+            {canWrite && (
+              <TbBtn
+                variant="primary"
+                disabled={!sendBtnEnabled}
+                style={!sendBtnEnabled ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
+                onClick={handleSendToExecution}
+              >
+                ▶ Send to Execution ({selectedIds.size})
+              </TbBtn>
+            )}
           </>
         }
       />

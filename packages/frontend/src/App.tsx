@@ -2,6 +2,7 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import GlobalProjects from './pages/GlobalProjects';
 import ProjectSettings from './pages/ProjectSettings';
 import TestWriter from './pages/TestWriter';
@@ -14,7 +15,9 @@ import Reports from './pages/Reports';
 import Scheduler from './pages/Scheduler';
 import Chat from './pages/Chat';
 import Usage from './pages/Usage';
+import UserManagement from './pages/UserManagement';
 import { isAuthenticated } from './lib/auth';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 // ── Protected route ────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -60,13 +63,15 @@ export default function App() {
     <Routes>
       {/* Auth pages — no shell */}
       <Route path="/login"    element={<Login />} />
-      <Route path="/register" element={<PlaceholderScreen title="Register" />} />
+      <Route path="/register" element={<Register />} />
 
-      {/* All protected pages — wrapped in AppShell */}
+      {/* All protected pages — wrapped in AppShell + ErrorBoundary */}
       <Route
         element={
           <ProtectedRoute>
-            <AppShell />
+            <ErrorBoundary>
+              <AppShell />
+            </ErrorBoundary>
           </ProtectedRoute>
         }
       >
@@ -86,6 +91,7 @@ export default function App() {
         <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />
         <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
         <Route path="/usage"                       element={<Usage />} />
+        <Route path="/admin/users"                 element={<UserManagement />} />
       </Route>
 
       {/* Root redirect */}

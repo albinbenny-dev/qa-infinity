@@ -4,6 +4,7 @@ import BrandBanner from './BrandBanner';
 import Sidebar from './Sidebar';
 import ChatWidget from '../chat/ChatWidget';
 import ScanNotificationManager from '../scan/ScanNotificationManager';
+import HealNotificationManager from '../healing/HealNotificationManager';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProjects } from '../../hooks/useProjects';
 
@@ -26,8 +27,9 @@ export default function AppShell() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      {/* Global scan background listener — fires notifications regardless of active page */}
+      {/* Global background listeners — fire notifications regardless of active page */}
       <ScanNotificationManager />
+      <HealNotificationManager />
 
       {/* Fixed top banner */}
       <BrandBanner />

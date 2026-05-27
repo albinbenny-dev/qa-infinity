@@ -1,7 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
+} from 'recharts';
 import Topbar from '../components/layout/Topbar';
-import { useOpenRouterUsage, useAgentUsage, useAgentConfig, useToggleAgent, useStandardMode } from '../hooks/useUsage';
+import { useOpenRouterUsage, useAgentUsage, useAgentConfig, useToggleAgent, useStandardMode, useUpdateAgentSettings, useUsageTrend } from '../hooks/useUsage';
 import type { AgentUsageRow, AgentConfigRow } from '../hooks/useUsage';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -38,7 +41,8 @@ const AGENT_LABEL: Record<string, string> = {
   'chat-agent': 'Chat Agent',
   'reports-agent': 'Reports Agent',
   'ui-context-agent': 'UI Context Agent',
-  'unknown': 'Unknown',
+  'browser-agent': 'Browser Agent',
+  'ui-scanner': 'UI Scanner',
 };
 
 // All agent names we always want visible in the usage table (in preferred display order).
@@ -46,10 +50,11 @@ const ALL_KNOWN_AGENTS = [
   'writer-agent',
   'healing-agent',
   'ui-context-agent',
+  'browser-agent',
+  'ui-scanner',
   'script-agent',
   'reports-agent',
   'chat-agent',
-  'unknown',
 ];
 
 const AGENT_ICON: Record<string, string> = {
@@ -59,7 +64,8 @@ const AGENT_ICON: Record<string, string> = {
   'chat-agent': '💬',
   'reports-agent': '📊',
   'ui-context-agent': '🔍',
-  'unknown': '?',
+  'browser-agent': '🌐',
+  'ui-scanner': '🖥',
 };
 
 const AGENT_COLOR: Record<string, string> = {
@@ -69,7 +75,8 @@ const AGENT_COLOR: Record<string, string> = {
   'chat-agent': 'var(--emerald)',
   'reports-agent': 'var(--amber)',
   'ui-context-agent': 'var(--sky)',
-  'unknown': 'var(--text-dim)',
+  'browser-agent': 'var(--pass)',
+  'ui-scanner': 'var(--violet)',
 };
 
 // ── Credit Gauge ───────────────────────────────────────────────────────────
@@ -249,10 +256,62 @@ function RangeTab({ days, active, onClick }: { days: number; active: boolean; on
   );
 }
 
+// ── Healing Agent threshold control ───────────────────────────────────────
+
+function HealingAgentThreshold({ serverValue }: { serverValue: number }) {
+  const [value, setValue] = useState(serverValue);
+  const update = useUpdateAgentSettings();
+
+  useEffect(() => setValue(serverValue), [serverValue]);
+
+  function commit(v: number) {
+    const clamped = Math.min(100, Math.max(0, v));
+    setValue(clamped);
+    if (clamped !== serverValue) {
+      update.mutate({ agentName: 'healing-agent', settings: { selectorTraceThreshold: clamped } });
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 10, color: 'var(--text-dim)', flex: 1, lineHeight: 1.4 }}>
+        Selector trace threshold
+        <span style={{ display: 'block', fontSize: 9, color: 'var(--text-dim)', opacity: 0.7, marginTop: 1 }}>
+          SELECTOR heals below this confidence trigger a live browser trace
+        </span>
+      </span>
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step={5}
+        value={value}
+        onChange={(e) => setValue(Number(e.target.value))}
+        onBlur={(e) => commit(Number(e.target.value))}
+        onKeyDown={(e) => e.key === 'Enter' && commit(value)}
+        style={{
+          width: 46, padding: '3px 6px',
+          borderRadius: 5,
+          border: '1px solid var(--border)',
+          background: 'var(--surface3)',
+          color: 'var(--text)',
+          fontSize: 11, fontFamily: 'var(--font-mono)',
+          textAlign: 'right',
+          outline: 'none',
+        }}
+      />
+      <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>%</span>
+      {update.isPending && (
+        <span style={{ fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>saving…</span>
+      )}
+    </div>
+  );
+}
+
 // ── Agent Config Panel ─────────────────────────────────────────────────────
 
 // Agents disabled in Standard Mode (writer-agent stays ON — seed TCs still work)
-const STANDARD_MODE_AGENTS = ['healing-agent', 'ui-context-agent', 'ui-scanner', 'reports-agent'];
+const STANDARD_MODE_AGENTS = ['healing-agent', 'ui-context-agent', 'ui-scanner', 'browser-agent', 'reports-agent'];
 
 function AgentConfigPanel() {
   const { data: agents, isLoading } = useAgentConfig();
@@ -372,12 +431,156 @@ function AgentConfigPanel() {
               );
             })}
           </div>
+          {/* Healing Agent settings card */}
+          {(() => {
+            const healRow = (agents ?? []).find(r => r.agentName === 'healing-agent');
+            if (!healRow) return null;
+            const threshold = (healRow.settings?.selectorTraceThreshold as number | undefined) ?? 60;
+            return (
+              <div style={{ margin: '0 12px 8px', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface2, rgba(255,255,255,0.02))' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--fail)', marginBottom: 8 }}>
+                  Healing Agent Settings
+                </div>
+                <HealingAgentThreshold serverValue={threshold} />
+              </div>
+            );
+          })()}
           <div style={{ padding: '8px 16px 12px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-dim)' }}>
-            ⚡ <strong>Standard Mode</strong>: Writer Agent stays ON. Healing, UI Context, UI Scanner, and Reports AI are OFF. Script and Chat Agents remain on in both modes.
-            &nbsp;&nbsp;✦ <strong>Full Mode</strong>: All agents on — Jira stories, UI scans, document uploads, healing, and AI reports all work.
+            ⚡ <strong>Standard Mode</strong>: Writer Agent stays ON. Healing, UI Context, UI Scanner, Browser Agent, and Reports AI are OFF. Script and Chat Agents remain on in both modes.
+            &nbsp;&nbsp;✦ <strong>Full Mode</strong>: All agents on — Jira stories, UI scans, agent scans, document uploads, healing, and AI reports all work.
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Daily Usage Chart ──────────────────────────────────────────────────────
+
+function buildDayRange(days: number): string[] {
+  const result: string[] = [];
+  const now = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    result.push(d.toISOString().slice(0, 10));
+  }
+  return result;
+}
+
+function fmtTick(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  if (days <= 7) return d.toLocaleDateString('en', { weekday: 'short' });
+  if (days <= 30) return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+}
+
+function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const tokens = payload[0].value;
+  const d = new Date((label ?? '') + 'T12:00:00');
+  const niceDateStr = d.toLocaleDateString('en', { weekday: 'long', month: 'long', day: 'numeric' });
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 8,
+      padding: '10px 14px',
+      boxShadow: 'var(--shadow-card)',
+      fontSize: 12,
+    }}>
+      <div style={{ color: 'var(--text-dim)', marginBottom: 4 }}>{niceDateStr}</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#F47B20', fontSize: 15 }}>
+        {fmtK(tokens)} tokens
+      </div>
+    </div>
+  );
+}
+
+function DailyUsageChart({ days }: { days: number }) {
+  const { data: trend, isLoading } = useUsageTrend(days);
+
+  const chartData = useMemo(() => {
+    const dayRange = buildDayRange(days);
+    const dataMap = new Map((trend ?? []).map((t) => [t.date, t.tokens]));
+    return dayRange.map((date) => ({ date, tokens: dataMap.get(date) ?? 0 }));
+  }, [trend, days]);
+
+  const maxTokens = useMemo(() => Math.max(...chartData.map((d) => d.tokens), 1), [chartData]);
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Show every Nth tick to avoid crowding
+  const tickInterval = days <= 7 ? 0 : days <= 30 ? 3 : 7;
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+      <div style={{ height: 3, background: 'linear-gradient(90deg, #F47B20, var(--amber))' }} />
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Daily Token Usage</span>
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+          last {days} days · {fmtK(chartData.reduce((s, d) => s + d.tokens, 0))} total tokens
+        </span>
+      </div>
+      <div style={{ padding: '16px 8px 8px' }}>
+        {isLoading ? (
+          <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+            Loading…
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }} barCategoryGap="20%">
+              <CartesianGrid vertical={false} stroke="var(--border)" strokeOpacity={0.5} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}
+                interval={tickInterval}
+                tickFormatter={(v) => fmtTick(v as string, days)}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}
+                tickFormatter={(v) => fmtK(v as number)}
+                width={40}
+              />
+              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+              <Bar dataKey="tokens" radius={[3, 3, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry) => (
+                  <Cell
+                    key={entry.date}
+                    fill={entry.tokens === 0
+                      ? 'var(--surface3)'
+                      : entry.tokens === maxTokens
+                      ? '#F47B20'
+                      : entry.date === todayStr
+                      ? 'var(--amber)'
+                      : 'rgba(244,123,32,0.55)'}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+      <div style={{ padding: '4px 16px 10px', display: 'flex', gap: 16, fontSize: 10, color: 'var(--text-dim)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: '#F47B20', display: 'inline-block' }} />
+          Peak day
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--amber)', display: 'inline-block' }} />
+          Today
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: 'rgba(244,123,32,0.55)', display: 'inline-block' }} />
+          Active days
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--surface3)', display: 'inline-block' }} />
+          No activity
+        </span>
+      </div>
     </div>
   );
 }
@@ -406,14 +609,15 @@ export default function Usage() {
         lastUsed: null,
       }
     );
-    // Append any agents returned by the API that aren't in our known list
-    const extra = apiAgents.filter((a) => !ALL_KNOWN_AGENTS.includes(a.agentName));
+    // Append any agents returned by the API that aren't in our known list (exclude legacy 'unknown' entries)
+    const extra = apiAgents.filter((a) => !ALL_KNOWN_AGENTS.includes(a.agentName) && a.agentName !== 'unknown');
     return [...ordered, ...extra];
   }, [agentData]);
 
   function handleRefresh() {
     void qc.invalidateQueries({ queryKey: ['openrouter-usage'] });
     void qc.invalidateQueries({ queryKey: ['agent-usage', days] });
+    void qc.invalidateQueries({ queryKey: ['usage-trend', days] });
   }
 
   const lastUpdated = dataUpdatedAt
@@ -505,6 +709,9 @@ export default function Usage() {
             />
           )}
         </div>
+
+        {/* ── Daily usage chart ────────────────────────────────────── */}
+        <DailyUsageChart days={days} />
 
         {/* ── Agent config toggles ──────────────────────────────────── */}
         <AgentConfigPanel />
