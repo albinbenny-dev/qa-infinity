@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import path from 'path';
+import fs from 'fs';
 import * as xlsx from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import { prisma } from '../lib/prisma.js';
@@ -17,6 +18,7 @@ import {
 } from '../services/inputAdapters.js';
 import { addAgentScanJob } from '../lib/queue.js';
 import type { AgentLearning, RecordedAction } from '../types/scanner.js';
+import { saveScript } from '../services/scriptFileService.js';
 import { z } from 'zod';
 
 function mimeFromPath(filePath: string): string {
@@ -83,6 +85,8 @@ const SaveTestCasesSchema = z.object({
       sourceRef: z.string().optional(),
       generationHints: z.string().optional(),
       status: z.enum(['DRAFT', 'APPROVED', 'DEPRECATED']).optional().default('DRAFT'),
+      /** Pre-generated Playwright script from agent trace — saved alongside the TC */
+      scriptContent: z.string().optional(),
     }),
   ).min(1),
 });
@@ -869,6 +873,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
 // ── POST / — save batch ────────────────────────────────────────────────────
 
+function buildTraceScriptFilename(tcId: string, title: string): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  return `${tcId}-${slug}.spec.ts`;
+}
+
 router.post('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = SaveTestCasesSchema.safeParse(req.body);
@@ -878,14 +887,15 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     const slug = req.project.slug;
-    const baseCount = await prisma.testCase.count({ where: { projectId: req.project.id } });
+    const projectId = req.project.id;
+    const baseCount = await prisma.testCase.count({ where: { projectId } });
     const prefix = slug.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
 
     const created = await prisma.$transaction(
       parsed.data.testCases.map((tc, i) =>
         prisma.testCase.create({
           data: {
-            projectId: req.project.id,
+            projectId,
             tcId: `TC-${prefix}-${String(baseCount + i + 1).padStart(3, '0')}`,
             title: tc.title,
             description: tc.description,
@@ -902,6 +912,41 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
         }),
       ),
     );
+
+    // Auto-save pre-generated scripts from agent traces (happy-path TC only)
+    for (let i = 0; i < parsed.data.testCases.length; i++) {
+      const tcInput = parsed.data.testCases[i];
+      const savedTc = created[i];
+      if (!tcInput.scriptContent?.trim()) continue;
+
+      const filename = buildTraceScriptFilename(savedTc.tcId, savedTc.title);
+      try {
+        saveScript(projectId, filename, tcInput.scriptContent);
+        const script = await prisma.script.create({
+          data: {
+            projectId,
+            testCaseId: savedTc.id,
+            filename,
+            content: tcInput.scriptContent,
+            isCustomUpload: false,
+            verificationStatus: 'NOT_VERIFIED',
+          },
+        });
+        await prisma.scriptJob.create({
+          data: {
+            projectId,
+            testCaseId: savedTc.id,
+            scriptId: script.id,
+            phase: 'GENERATED',
+            withHeal: false,
+            createdBy: req.user.id,
+          },
+        });
+      } catch (scriptErr) {
+        // Non-fatal: TC is saved, script creation failure is logged but doesn't block the response
+        console.error(`[testCases] Failed to auto-save script for ${savedTc.tcId}:`, (scriptErr as Error).message);
+      }
+    }
 
     res.status(201).json({ testCases: created.map(parseTCFields), count: created.length });
   } catch (err) {
@@ -1074,6 +1119,7 @@ router.post('/agent-trace', async (req: Request, res: Response, next: NextFuncti
     await addAgentScanJob({
       agentTraceId: agentTrace.id,
       projectId,
+      projectName: req.project.name,
       baseUrl,
       targetUrl,
       menuContext,
@@ -1133,6 +1179,31 @@ router.get('/agent-trace/:traceId', async (req: Request, res: Response, next: Ne
       ...trace,
       actionLog: trace.actionLog ? (JSON.parse(trace.actionLog) as RecordedAction[]) : [],
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /agent-trace/:traceId/video — download the .webm recording ────────
+
+router.get('/agent-trace/:traceId/video', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const trace = await prisma.agentTrace.findFirst({
+      where: { id: req.params['traceId'], projectId: req.project.id },
+      select: { videoPath: true, menuContext: true },
+    });
+    if (!trace?.videoPath) {
+      res.status(404).json({ error: 'Recording not available for this trace' });
+      return;
+    }
+    if (!fs.existsSync(trace.videoPath)) {
+      res.status(404).json({ error: 'Recording file missing on disk' });
+      return;
+    }
+    const label = (trace.menuContext ?? 'trace').replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40);
+    res.setHeader('Content-Type', 'video/webm');
+    res.setHeader('Content-Disposition', `attachment; filename="agent-trace-${label}.webm"`);
+    fs.createReadStream(trace.videoPath).pipe(res);
   } catch (err) {
     next(err);
   }

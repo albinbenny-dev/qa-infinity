@@ -131,6 +131,7 @@ router.post('/generate', async (req: Request, res: Response) => {
           phase: 'QUEUED',
           withHeal,
           maxHealAttempts: 2,
+          createdBy: req.user.id,
         },
       });
 
@@ -171,9 +172,10 @@ router.get('/jobs', async (req: Request, res: Response) => {
     const where = activeOnly
       ? {
           projectId,
+          createdBy: req.user.id,
           phase: { in: ['QUEUED', 'GENERATING', 'GENERATED', 'QUEUED_VERIFY', 'VERIFYING', 'HEALING'] },
         }
-      : { projectId };
+      : { projectId, createdBy: req.user.id };
 
     const jobs = await prisma.scriptJob.findMany({
       where,
@@ -207,6 +209,7 @@ router.delete('/jobs/finished', async (req: Request, res: Response) => {
     await prisma.scriptJob.deleteMany({
       where: {
         projectId,
+        createdBy: req.user.id,
         phase: { in: ['VERIFIED', 'GENERATED', 'MANUAL_REVIEW', 'FAILED'] },
       },
     });
@@ -222,7 +225,7 @@ router.delete('/jobs/finished', async (req: Request, res: Response) => {
 router.delete('/jobs/all', async (req: Request, res: Response) => {
   try {
     const projectId = req.project.id;
-    await prisma.scriptJob.deleteMany({ where: { projectId } });
+    await prisma.scriptJob.deleteMany({ where: { projectId, createdBy: req.user.id } });
     res.json({ ok: true });
   } catch (err) {
     console.error('[scripts] DELETE /jobs/all', err);
@@ -242,7 +245,7 @@ router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
     };
 
     const existingJob = await prisma.scriptJob.findFirst({
-      where: { id: req.params.jobId, projectId },
+      where: { id: req.params.jobId, projectId, createdBy: req.user.id },
     });
     if (!existingJob) {
       res.status(404).json({ error: 'Script job not found' });
@@ -278,6 +281,7 @@ router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
         phase: 'QUEUED',
         withHeal: useHeal,
         maxHealAttempts: existingJob.maxHealAttempts,
+        createdBy: req.user.id,
       },
     });
 
@@ -538,7 +542,7 @@ async function nextTcId(projectId: string, projectSlug: string): Promise<string>
   return `TC-${prefix}-${String(count + 1).padStart(3, '0')}`;
 }
 
-async function extractTCFromScript(scriptContent: string, projectId: string): Promise<{
+async function extractTCFromScript(scriptContent: string, projectId: string, projectName?: string): Promise<{
   title: string;
   description: string;
   steps: string[];
@@ -546,7 +550,7 @@ async function extractTCFromScript(scriptContent: string, projectId: string): Pr
   type: 'UI' | 'API' | 'SIT';
   useCaseTag: string | null;
 }> {
-  const llm = createLLM({ temperature: 0, agentName: 'script-extract', projectId });
+  const llm = createLLM({ temperature: 0, agentName: 'script-extract', projectId, projectName });
   const capped = scriptContent.slice(0, 8000);
 
   const response = await llm.invoke([
@@ -621,7 +625,7 @@ router.post(
       const content = req.file.buffer.toString('utf-8');
 
       // Extract TC details from script via LLM
-      const extracted = await extractTCFromScript(content, projectId);
+      const extracted = await extractTCFromScript(content, projectId, req.project.name);
 
       // Generate a unique tcId
       const tcId = await nextTcId(projectId, req.project.slug ?? projectId);

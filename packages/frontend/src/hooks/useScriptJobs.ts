@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { getToken } from '../lib/auth';
 import { api } from '../lib/api';
+import { useProjectStore } from '../stores/projectStore';
 import type { ScriptJob } from '../types';
 
 const SOCKET_URL = typeof window !== 'undefined'
@@ -16,6 +17,10 @@ interface UseScriptJobsReturn {
 }
 
 export function useScriptJobs(projectId: string | undefined): UseScriptJobsReturn {
+  const { currentUser } = useProjectStore();
+  const currentUserId = currentUser?.id;
+  const currentUserIdRef = useRef(currentUserId);
+  useEffect(() => { currentUserIdRef.current = currentUserId; }, [currentUserId]);
   const [jobs, setJobs] = useState<ScriptJob[]>([]);
   const socketRef = useRef<Socket | null>(null);
 
@@ -52,6 +57,9 @@ export function useScriptJobs(projectId: string | undefined): UseScriptJobsRetur
     });
 
     socket.on('script-job:update', (job: ScriptJob) => {
+      // Ignore jobs that belong to another user
+      const uid = currentUserIdRef.current;
+      if (job.createdBy && uid && job.createdBy !== uid) return;
       setJobs((prev) => {
         const idx = prev.findIndex((j) => j.id === job.id);
         if (idx === -1) return [job, ...prev];

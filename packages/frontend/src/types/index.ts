@@ -169,6 +169,7 @@ export interface ScriptJob {
   projectId: string;
   testCaseId: string;
   scriptId?: string | null;
+  createdBy?: string | null;
   phase: ScriptJobPhase;
   withHeal: boolean;
   healAttempts: number;
@@ -260,6 +261,13 @@ export interface AgentStatus {
   detail: string;
 }
 
+export interface TopSuiteEntry {
+  name: string;
+  runCount: number;
+  lastRunStatuses: string[];
+  successRate: number;
+}
+
 export interface DashboardData {
   stats: ProjectStats;
   trend: RunTrendPoint[];
@@ -276,6 +284,8 @@ export interface DashboardData {
     _count: { results: number };
   }>;
   agentStatuses: AgentStatus[];
+  topSuites: TopSuiteEntry[];
+  projectTokens: number;
 }
 
 export interface AIAnalysis {

@@ -159,6 +159,7 @@ model ScriptJob {
   projectId       String
   testCaseId      String
   scriptId        String?
+  createdBy       String?   // userId who initiated this job (null for legacy rows)
   phase           String    @default("QUEUED")    // "QUEUED" | "GENERATING" | "GENERATED" | "QUEUED_VERIFY" | "VERIFYING" | "HEALING" | "VERIFIED" | "MANUAL_REVIEW" | "FAILED"
   withHeal        Boolean   @default(false)
   healAttempts    Int       @default(0)
@@ -174,6 +175,7 @@ model ScriptJob {
   @@index([projectId])
   @@index([projectId, phase])
   @@index([projectId, createdAt])
+  @@index([projectId, createdBy])
 }
 
 model Run {
@@ -256,7 +258,7 @@ model Heal {
   patchedCode  String
   confidence   Int
   summary      String?     // AI explanation from patcher chain
-  status       String      @default("PENDING")  // "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPLIED" | "EXHAUSTED"
+  status       String      @default("PENDING")  // "IN_PROGRESS" | "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPLIED" | "EXHAUSTED"
   agentTraceId String?     @unique // set when a live browser trace was run to diagnose the failure
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -353,6 +355,7 @@ model AgentTrace {
   stepCount    Int       @default(0)
   currentStep  String?
   actionLog    String?   // JSON: RecordedAction[]
+  videoPath    String?   // absolute path to the .webm recording on disk
   errorMessage String?
   createdAt    DateTime  @default(now())
   completedAt  DateTime?
@@ -374,6 +377,7 @@ model LlmCall {
   id               String   @id @default(cuid())
   agentName        String   // "script-agent" | "healing-agent" | "writer-agent" | "chat-agent" | "reports-agent" | "ui-context-agent"
   projectId        String?
+  projectName      String?
   model            String
   promptTokens     Int      @default(0)
   completionTokens Int      @default(0)
