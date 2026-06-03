@@ -27,6 +27,7 @@ function attachDiff<T extends { originalCode: string; patchedCode: string }>(hea
 
 // ── GET /heals ─────────────────────────────────────────────────────────────
 // List heals, optional ?status= and ?type= filters, includes lineDiff
+// IN_PROGRESS heals are excluded by default (not yet actionable proposals)
 
 router.get('/', wrap(async (req, res) => {
   const { projectId } = req.params;
@@ -35,7 +36,7 @@ router.get('/', wrap(async (req, res) => {
   const heals = await prisma.heal.findMany({
     where: {
       projectId,
-      ...(status ? { status } : {}),
+      ...(status ? { status } : { status: { not: 'IN_PROGRESS' } }),
       ...(type ? { type } : {}),
       ...(runId ? { runResult: { runId } } : {}),
     },
@@ -138,7 +139,9 @@ router.post('/approve-all-confident', wrap(async (req, res) => {
 }));
 
 // ── POST /heals/trigger/:runId ─────────────────────────────────────────────
-// Enqueue heal jobs for all FAILED results in a run (idempotent — skips already-healed results)
+// Enqueue heal jobs for all FAILED results in a run.
+// Skips results that already have an active/pending heal.
+// Re-triggers results whose previous heal was REJECTED or EXHAUSTED (deletes old record first).
 
 router.post('/trigger/:runId', wrap(async (req, res) => {
   const { projectId, runId } = req.params;
@@ -153,31 +156,40 @@ router.post('/trigger/:runId', wrap(async (req, res) => {
       status: 'FAILED',
       ...(runResultIds?.length ? { id: { in: runResultIds } } : {}),
     },
-    select: { id: true },
+    select: { id: true, testCase: { select: { title: true } } },
   });
 
   if (failedResults.length === 0) {
-    res.json({ message: 'No failed results to heal', count: 0 });
+    res.json({ message: 'No failed results to heal', count: 0, queued: [] });
     return;
   }
 
-  let queued = 0;
+  const queuedItems: Array<{ runResultId: string; tcTitle: string }> = [];
+
   for (const r of failedResults) {
     const existing = await prisma.heal.findFirst({ where: { runResultId: r.id } });
-    if (existing) continue;
+    if (existing) {
+      // Allow re-trigger only for terminal failure states
+      if (['REJECTED', 'EXHAUSTED'].includes(existing.status)) {
+        await prisma.heal.delete({ where: { id: existing.id } });
+      } else {
+        continue; // IN_PROGRESS, PENDING, APPROVED, AUTO_APPLIED — don't re-run
+      }
+    }
     try {
       await addHealJob({ runResultId: r.id, projectId });
-      queued++;
+      queuedItems.push({ runResultId: r.id, tcTitle: r.testCase?.title ?? 'Test' });
     } catch (err) {
       console.error(`[heals] failed to queue heal job for runResult ${r.id}:`, (err as Error).message);
     }
   }
 
   res.json({
-    message: queued > 0
-      ? `Queued ${queued} heal job${queued !== 1 ? 's' : ''}`
+    message: queuedItems.length > 0
+      ? `Queued ${queuedItems.length} heal job${queuedItems.length !== 1 ? 's' : ''}`
       : 'All selected results already have heal jobs queued',
-    count: queued,
+    count: queuedItems.length,
+    queued: queuedItems,
   });
 }));
 

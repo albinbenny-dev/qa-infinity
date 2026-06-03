@@ -55,6 +55,7 @@ model Project {
   uiScans         UIScan[]
   projectContext  ProjectContext?
   agentTraces     AgentTrace[]
+  resources       ProjectResource[]
 
   @@index([createdBy])
 }
@@ -139,6 +140,7 @@ model Script {
   testCaseId         String?
   filename           String
   content            String
+  scriptType         String      @default("PLAYWRIGHT")     // "PLAYWRIGHT" | "ROBOT"
   isCustomUpload     Boolean     @default(false)
   isGolden           Boolean     @default(false)           // marked as a reference example for few-shot generation
   verificationStatus String      @default("NOT_VERIFIED")  // "NOT_VERIFIED" | "VERIFIED" | "MANUAL_REVIEW"
@@ -371,6 +373,19 @@ model AgentConfig {
   enabled   Boolean  @default(true)
   settings  String?  // JSON: agent-specific settings (e.g. {"selectorTraceThreshold":60} for healing-agent)
   updatedAt DateTime @updatedAt
+}
+
+model ProjectResource {
+  id           String   @id @default(cuid())
+  projectId    String
+  filename     String
+  originalName String
+  size         Int
+  uploadedAt   DateTime @default(now())
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, filename])
+  @@index([projectId])
 }
 
 model LlmCall {

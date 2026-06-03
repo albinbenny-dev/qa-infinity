@@ -9,6 +9,7 @@ import {
   useUploadFile,
   useParseSeedFile,
   useStartAgentTrace,
+  useDuplicateTestCase,
 } from '../hooks/useTestCases';
 import { useProjectContext, useUpdateContext } from '../hooks/useScans';
 import { useAgentConfig, useOpenRouterUsage } from '../hooks/useUsage';
@@ -23,9 +24,13 @@ const SOCKET_URL = typeof window !== 'undefined'
   ? `${window.location.protocol}//${window.location.host}`
   : 'http://localhost:3000';
 
+const draftKey = (slug: string) => `qai-writer-draft-${slug}`;
+
 interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'> {
   _tempId: string;
   sourceRef?: string;
+  /** Pre-generated Playwright script from agent trace — present only on happy-path TC */
+  scriptContent?: string;
 }
 
 type WriterAction =
@@ -120,6 +125,7 @@ export default function TestWriter() {
   const creditsAvailable = !usageData || usageData.remaining === null || usageData.remaining > 0;
   const generateMutation = useGenerateTestCases(project?.id ?? '');
   const saveMutation = useSaveTestCases(project?.id ?? '');
+  const duplicateMutation = useDuplicateTestCase(project?.id ?? '');
   const uploadMutation = useUploadFile();
   const parseSeedFileMutation = useParseSeedFile(project?.id ?? '');
   const startAgentTrace = useStartAgentTrace(project?.id ?? '');
@@ -128,7 +134,12 @@ export default function TestWriter() {
   const [agentSteps, setAgentSteps] = useState<AgentTraceStep[]>([]);
   const [showAgentProgress, setShowAgentProgress] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  // completedTraceId keeps the socket alive after done so the video-ready event can arrive
+  const [completedTraceId, setCompletedTraceId] = useState<string | null>(null);
+  const [traceVideoReady, setTraceVideoReady] = useState(false);
   const agentSocketRef = useRef<Socket | null>(null);
+  // socketTraceId is the last active or recently-completed trace — drives the socket effect
+  const socketTraceId = activeAgentTraceId ?? completedTraceId;
 
   const [state, dispatch] = useReducer(reducer, {
     inputState: initialInputState,
@@ -138,6 +149,8 @@ export default function TestWriter() {
 
   // Track whether we have loaded the scan draft into state
   const draftLoadedRef = useRef(false);
+  // Track whether we have loaded the localStorage draft into state
+  const localDraftLoadedRef = useRef(false);
 
   // Load pending scan draft into writer state on first availability
   useEffect(() => {
@@ -162,6 +175,32 @@ export default function TestWriter() {
     dispatch({ type: 'APPEND_GENERATED', tcs: draftTCs });
   }, [context?.pendingTCDraft]);
 
+  // Restore persisted (non-scan) draft TCs from localStorage once per slug
+  useEffect(() => {
+    if (!slug || localDraftLoadedRef.current) return;
+    localDraftLoadedRef.current = true;
+    try {
+      const raw = localStorage.getItem(draftKey(slug));
+      if (raw) {
+        const tcs: GeneratedTC[] = JSON.parse(raw);
+        if (tcs.length) dispatch({ type: 'APPEND_GENERATED', tcs });
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+  }, [slug]);
+
+  // Sync non-scan TCs to localStorage so they survive navigation
+  useEffect(() => {
+    if (!slug) return;
+    const persistable = state.generatedTCs.filter((tc) => !tc._tempId.startsWith('scan-'));
+    if (persistable.length) {
+      localStorage.setItem(draftKey(slug), JSON.stringify(persistable));
+    } else {
+      localStorage.removeItem(draftKey(slug));
+    }
+  }, [state.generatedTCs, slug]);
+
   // Once all scan-sourced TCs have been handled (saved/deleted), clear the DB draft
   useEffect(() => {
     if (!draftLoadedRef.current) return;
@@ -172,9 +211,11 @@ export default function TestWriter() {
     }
   }, [state.generatedTCs, context?.pendingTCDraft]);
 
-  // Connect to /projects namespace when an agent trace is active
+  // Connect to /projects namespace while a trace is active OR recently completed
+  // (socketTraceId stays non-null until the user dismisses the completed trace,
+  //  allowing the agent-trace:video-ready event to arrive after context.close())
   useEffect(() => {
-    if (!activeAgentTraceId || !project?.id) return;
+    if (!socketTraceId || !project?.id) return;
 
     const token = getToken();
     const socket = io(`${SOCKET_URL}/projects`, {
@@ -192,10 +233,12 @@ export default function TestWriter() {
 
     socket.on('agent-trace:done', (data: {
       agentTraceId: string;
-      testCases: Array<Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'>>;
+      testCases: Array<Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'> & { scriptContent?: string }>;
     }) => {
       if (data.agentTraceId !== activeAgentTraceId) return;
       setShowAgentProgress(false);
+      setCompletedTraceId(data.agentTraceId);
+      setTraceVideoReady(false);
       setActiveAgentTraceId(null);
       const newTCs: GeneratedTC[] = data.testCases.map((tc, i) => ({
         ...tc,
@@ -203,6 +246,7 @@ export default function TestWriter() {
         steps: tc.steps ?? [],
         tags: tc.tags ?? [],
         priority: tc.priority ?? 'MEDIUM',
+        scriptContent: tc.scriptContent,
       }));
       dispatch({ type: 'APPEND_GENERATED', tcs: newTCs });
     });
@@ -214,11 +258,15 @@ export default function TestWriter() {
       setAgentError(data.error ?? 'Agentic trace failed');
     });
 
+    socket.on('agent-trace:video-ready', () => {
+      setTraceVideoReady(true);
+    });
+
     return () => {
       socket.disconnect();
       agentSocketRef.current = null;
     };
-  }, [activeAgentTraceId, project?.id]);
+  }, [socketTraceId, project?.id]);
 
   const hasScanDraft = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
 
@@ -247,6 +295,8 @@ export default function TestWriter() {
       setAgentError(null);
       setAgentSteps([]);
       setShowAgentProgress(true);
+      setCompletedTraceId(null);
+      setTraceVideoReady(false);
 
       const seedSteps = seedTCs.flatMap((tc) => tc.steps);
       try {
@@ -349,13 +399,22 @@ export default function TestWriter() {
       try {
         const { _tempId: _, ...rest } = tc;
         await saveMutation.mutateAsync([{ ...rest, status: 'APPROVED' as const }]);
+        // Sync localStorage before navigating — the component unmounts before the
+        // effect can run, so the approved TC would otherwise reappear on next visit.
+        const remaining = state.generatedTCs.filter((t) => t._tempId !== tc._tempId);
+        const persistable = remaining.filter((t) => !t._tempId.startsWith('scan-'));
+        if (persistable.length) {
+          localStorage.setItem(draftKey(slug ?? ''), JSON.stringify(persistable));
+        } else {
+          localStorage.removeItem(draftKey(slug ?? ''));
+        }
         dispatch({ type: 'DELETE_GENERATED', tempId: tc._tempId });
         navigate(`/projects/${slug}/tc-library`);
       } catch (err) {
         console.error('[TestWriter] Approve failed:', err);
       }
     },
-    [project, saveMutation, slug, navigate],
+    [project, saveMutation, slug, navigate, state.generatedTCs],
   );
 
   const handleToggleDoc = useCallback(
@@ -449,6 +508,70 @@ export default function TestWriter() {
           </button>
         </div>
       </div>
+
+      {/* Agent trace recording ready banner */}
+      {completedTraceId && (
+        <div style={{
+          margin: '0 24px',
+          padding: '10px 14px',
+          background: 'rgba(139,92,246,0.06)',
+          border: '1px solid rgba(139,92,246,0.25)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12px',
+          color: 'var(--text-mid)',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: '14px' }}>🎬</span>
+          <span style={{ flex: 1 }}>
+            {traceVideoReady ? 'Browser recording is ready.' : 'Saving browser recording…'}
+          </span>
+          {traceVideoReady && (
+            <button
+              onClick={async () => {
+                try {
+                  const token = getToken();
+                  const res = await fetch(
+                    `/api/projects/${slug}/test-cases/agent-trace/${completedTraceId}/video`,
+                    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+                  );
+                  if (!res.ok) throw new Error(`Server returned ${res.status}`);
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `agent-trace-${completedTraceId}.webm`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                } catch (err) {
+                  console.error('[download-video] Failed:', err);
+                }
+              }}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 'var(--radius)',
+                background: 'rgba(139,92,246,0.15)',
+                border: '1px solid rgba(139,92,246,0.4)',
+                color: '#a78bfa',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Download .webm
+            </button>
+          )}
+          <button
+            onClick={() => { setCompletedTraceId(null); setTraceVideoReady(false); }}
+            style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+          >✕</button>
+        </div>
+      )}
 
       {/* Agent trace error banner */}
       {agentError && (
@@ -636,6 +759,7 @@ export default function TestWriter() {
           onDelete={(tempId) => dispatch({ type: 'DELETE_GENERATED', tempId })}
           onDeleteSelected={() => dispatch({ type: 'DELETE_SELECTED' })}
           onApprove={handleApprove}
+          onDuplicate={(tc) => duplicateMutation.mutate(tc as unknown as TestCase)}
           isSaving={saveMutation.isPending}
         />
 

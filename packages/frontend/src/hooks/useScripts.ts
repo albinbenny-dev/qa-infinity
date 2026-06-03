@@ -25,10 +25,10 @@ export function useScripts(projectId: string | undefined) {
 export function useGenerateScripts(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (testCaseIds: string[]) => {
+    mutationFn: async ({ testCaseIds, scriptMode = 'ROBOT' }: { testCaseIds: string[]; scriptMode?: 'PLAYWRIGHT' | 'ROBOT' }) => {
       const res = await api.post<GenerateResponse>(
         `/projects/${projectId}/scripts/generate`,
-        { testCaseIds },
+        { testCaseIds, scriptMode },
         { timeout: 180_000 },
       );
       return res.data;
@@ -70,7 +70,7 @@ export function useUploadScript(projectId: string) {
       const formData = new FormData();
       formData.append('file', file);
       if (testCaseId) formData.append('testCaseId', testCaseId);
-      const res = await api.post<Script>(
+      const res = await api.post<Script & { converted?: boolean }>(
         `/projects/${projectId}/scripts/upload`,
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' } },
@@ -105,7 +105,7 @@ export function useUploadScriptWithExtract(projectId: string) {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await api.post<UploadWithExtractResult>(
+      const res = await api.post<UploadWithExtractResult & { converted?: boolean }>(
         `/projects/${projectId}/scripts/upload-with-extract`,
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60_000 },
@@ -123,4 +123,34 @@ export function scriptExportUrl(projectId: string, ids?: string[]): string {
   const base = `/api/projects/${projectId}/scripts/export/zip`;
   if (ids?.length) return `${base}?ids=${ids.join(',')}`;
   return base;
+}
+
+export interface ImportRobotResult {
+  id: string;
+  filename: string;
+  scriptType: 'ROBOT';
+  converted: boolean;
+  originalLibrary: 'SeleniumLibrary' | 'Browser';
+  testCaseId: string | null;
+  createdAt: string;
+}
+
+export function useImportRobotScript(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, testCaseId }: { file: File; testCaseId?: string }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (testCaseId) formData.append('testCaseId', testCaseId);
+      const res = await api.post<ImportRobotResult>(
+        `/projects/${projectId}/scripts/import-robot`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60_000 },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+    },
+  });
 }

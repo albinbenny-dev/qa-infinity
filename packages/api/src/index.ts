@@ -15,6 +15,7 @@ import { startScanWorker } from './jobs/scanWorker.js';
 import { startScriptGenWorker } from './jobs/scriptGenWorker.js';
 import { startScriptVerifyWorker } from './jobs/scriptVerifyWorker.js';
 import { startAgentScanWorker } from './jobs/agentScanWorker.js';
+import { startRetentionSchedule } from './jobs/retentionWorker.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -167,5 +168,8 @@ httpServer.listen(PORT, () => {
 
     // Load saved schedules from DB
     void loadSchedules();
+
+    // Start nightly data-retention sweep
+    startRetentionSchedule();
   })();
 });

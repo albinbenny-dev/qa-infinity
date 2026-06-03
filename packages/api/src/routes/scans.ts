@@ -307,12 +307,6 @@ router.patch('/context/current', wrap(async (req, res) => {
 
   const projectId = req.project.id;
 
-  const existing = await prisma.projectContext.findUnique({ where: { projectId } });
-  if (!existing) {
-    res.status(404).json({ error: 'No project context found — run a UI scan first' });
-    return;
-  }
-
   const updateData: Record<string, unknown> = {};
   if (parsed.data.loginInstructions !== undefined) {
     updateData.loginInstructions = JSON.stringify(parsed.data.loginInstructions as LoginInstructions);
@@ -324,9 +318,11 @@ router.patch('/context/current', wrap(async (req, res) => {
     updateData.pendingTCDraft = null;
   }
 
-  const updated = await prisma.projectContext.update({
+  // Upsert: create the context record if it doesn't exist yet (no scan required to set custom instructions)
+  const updated = await prisma.projectContext.upsert({
     where: { projectId },
-    data: updateData,
+    create: { projectId, ...updateData },
+    update: updateData,
   });
 
   res.json({

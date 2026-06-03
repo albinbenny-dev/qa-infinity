@@ -73,6 +73,24 @@ export interface AgentConfigRow {
   settings: Record<string, unknown> | null;
 }
 
+export interface ProjectUsageEntry {
+  projectId: string;
+  projectName: string;
+  totalTokens: number;
+}
+
+export function useUsageByProject() {
+  return useQuery({
+    queryKey: ['usage-by-project'],
+    queryFn: async () => {
+      const res = await api.get<{ byProject: ProjectUsageEntry[] }>('/admin/usage/by-project');
+      return res.data.byProject;
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+}
+
 export function useAgentConfig() {
   return useQuery({
     queryKey: ['agent-config'],

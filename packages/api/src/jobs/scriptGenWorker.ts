@@ -4,8 +4,57 @@ import { emitToProject } from '../lib/socket.js';
 import { addScriptVerifyJob } from '../lib/queue.js';
 import type { ScriptGenJobPayload } from '../lib/queue.js';
 import { runScriptAgent } from '../agents/scriptAgent.js';
-import { saveScript, savePOM, listPOMFiles, readScript } from '../services/scriptFileService.js';
+import { saveScript, savePOM, listPOMFiles, readScript, listResourceFiles, readResourceFile } from '../services/scriptFileService.js';
+import type { ResourceFileInfo } from '../agents/scriptAgent.js';
 import { isAgentEnabled } from '../lib/agentConfig.js';
+
+/**
+ * Post-generation lint for Robot Framework scripts.
+ * For each available resource file, checks if the script calls any of its keywords
+ * without importing it. Injects the missing Resource line into *** Settings ***.
+ */
+function lintRobotScript(content: string, resourceFiles: ResourceFileInfo[]): string {
+  let result = content;
+  for (const rf of resourceFiles) {
+    const resourceLine = `Resource    resources/${rf.filename}`;
+    if (result.includes(resourceLine)) continue; // already imported
+    // Check if any keyword from this resource is called in the script body
+    const called = rf.keywords.some((kw) => {
+      // Match keyword call at line start (after 4+ spaces indent, i.e. inside test/keyword body)
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`^[ \\t]{2,}${escaped}([ \\t]|$)`, 'm').test(result);
+    });
+    if (!called) continue;
+    // Inject after the last existing Library/Resource line in *** Settings ***
+    result = result.replace(
+      /((?:^Library[^\n]*\n|^Resource[^\n]*\n)+)/m,
+      `$1${resourceLine}\n`,
+    );
+    // Fallback: inject at end of *** Settings *** block if no Library/Resource found
+    if (!result.includes(resourceLine)) {
+      result = result.replace(
+        /(\*\*\* Settings \*\*\*[^\n]*\n)/,
+        `$1${resourceLine}\n`,
+      );
+    }
+  }
+  return result;
+}
+
+function extractRobotKeywords(content: string): string[] {
+  const keywords: string[] = [];
+  let inKeywords = false;
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('*** Keywords ***')) { inKeywords = true; continue; }
+    if (trimmed.startsWith('***')) { inKeywords = false; continue; }
+    // Keyword names start at column 0, not indented (indented lines are steps/docs)
+    if (inKeywords && line.length > 0 && line[0] !== ' ' && line[0] !== '\t' && trimmed.length > 0 && !trimmed.startsWith('#')) {
+      keywords.push(trimmed);
+    }
+  }
+  return keywords;
+}
 
 function parseRedisUrl(url: string): { host: string; port: number; password?: string; db: number } {
   try {
@@ -37,7 +86,7 @@ async function emitJobUpdate(scriptJobId: string): Promise<void> {
 }
 
 async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
-  const { scriptJobId, projectId, testCaseId, withHeal, contextNote } = job.data;
+  const { scriptJobId, projectId, testCaseId, withHeal, contextNote, domSnippet, domRecording, failedStep, failedStepError, scriptMode = 'ROBOT' } = job.data;
 
   await prisma.scriptJob.update({
     where: { id: scriptJobId },
@@ -74,7 +123,17 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       return;
     }
 
-    const existingPOMs = listPOMFiles(projectId);
+    const existingPOMs = scriptMode === 'ROBOT' ? [] : listPOMFiles(projectId);
+    const resourceFiles: ResourceFileInfo[] | undefined = scriptMode === 'ROBOT'
+      ? listResourceFiles(projectId).map((f) => {
+          let keywords: string[] = [];
+          try {
+            const content = readResourceFile(projectId, f.filename);
+            keywords = extractRobotKeywords(content);
+          } catch { /* skip unreadable files */ }
+          return { filename: f.filename, keywords };
+        })
+      : undefined;
 
     // Fetch prerequisite TC's script content if set — used to ground the agent with a working setup example
     let prerequisiteScript: { tcId: string; title: string; scriptContent: string } | undefined;
@@ -140,12 +199,30 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       project: { id: project.id, name: project.name, baseUrl: project.baseUrl },
       existingPOMs,
       contextNote,
+      domSnippet,
+      domRecording,
+      failedStep,
+      failedStepError,
+      scriptMode,
+      resourceFiles,
       recentHeals: recentHeals.length > 0 ? recentHeals : undefined,
       prerequisiteScript,
     });
 
     const slug = tc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
-    const filename = `${tc.tcId}-${slug}.spec.ts`;
+    // Use content-derived type (not just requested mode) so an RF response never gets .spec.ts
+    const isRobotContent = result.scriptType === 'ROBOT' || result.specContent.trimStart().startsWith('*** Settings ***');
+    if (isRobotContent && result.scriptType !== 'ROBOT') {
+      (result as any).scriptType = 'ROBOT';
+    }
+    const filename = isRobotContent
+      ? `${tc.tcId}-${slug}.robot`
+      : `${tc.tcId}-${slug}.spec.ts`;
+
+    // Auto-inject missing Resource lines for any resource keywords called in the script
+    if (isRobotContent && resourceFiles && resourceFiles.length > 0) {
+      result.specContent = lintRobotScript(result.specContent, resourceFiles);
+    }
 
     saveScript(projectId, filename, result.specContent);
     if (result.pomContent && result.pomFilename) {
@@ -162,8 +239,9 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
           data: {
             filename,
             content: result.specContent,
-            verificationStatus: withHeal ? 'NOT_VERIFIED' : existing.verificationStatus,
-            suspectedIssue: withHeal ? null : existing.suspectedIssue,
+            scriptType: result.scriptType,
+            verificationStatus: (withHeal && scriptMode !== 'ROBOT') ? 'NOT_VERIFIED' : existing.verificationStatus,
+            suspectedIssue: (withHeal && scriptMode !== 'ROBOT') ? null : existing.suspectedIssue,
             updatedAt: new Date(),
           },
         })
@@ -173,11 +251,14 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
             testCaseId: tc.id,
             filename,
             content: result.specContent,
+            scriptType: result.scriptType,
             isCustomUpload: false,
           },
         });
 
-    if (withHeal) {
+    // Robot scripts skip the heal/verify pipeline — QAs review and edit directly
+    const runHeal = withHeal && scriptMode !== 'ROBOT';
+    if (runHeal) {
       await prisma.scriptJob.update({
         where: { id: scriptJobId },
         data: { scriptId: script.id, phase: 'QUEUED_VERIFY' },

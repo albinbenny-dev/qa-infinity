@@ -141,6 +141,7 @@ export interface Script {
   projectId: string;
   testCaseId?: string | null;
   filename: string;
+  scriptType?: 'PLAYWRIGHT' | 'ROBOT';
   isCustomUpload: boolean;
   isGolden?: boolean;
   verificationStatus?: 'NOT_VERIFIED' | 'VERIFIED' | 'MANUAL_REVIEW';
@@ -151,6 +152,16 @@ export interface Script {
   lastRunStatus?: 'PASSED' | 'FAILED' | 'RUNNING' | 'PENDING' | 'CANCELLED' | null;
   size?: number | null;
   modifiedAt?: string | null;
+}
+
+export interface ProjectResource {
+  id: string;
+  projectId: string;
+  filename: string;
+  originalName: string;
+  size: number;
+  uploadedAt: string;
+  resourcesDir?: string;
 }
 
 export type ScriptJobPhase =

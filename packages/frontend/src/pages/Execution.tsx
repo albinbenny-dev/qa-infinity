@@ -6,7 +6,7 @@ import LiveLog from '../components/execution/LiveLog';
 import TCListPanel from '../components/execution/TCListPanel';
 import { useProject } from '../hooks/useProjects';
 import { useProjectEnvConfigs } from '../hooks/useProjects';
-import { useTestCases, useUseCases } from '../hooks/useTestCases';
+import { useTestCases, useUseCases, useDuplicateTestCase } from '../hooks/useTestCases';
 import { useScripts } from '../hooks/useScripts';
 import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCancelRun, type RunListItem } from '../hooks/useRuns';
 import { useTriggerHeal } from '../hooks/useHeals';
@@ -238,6 +238,7 @@ export default function Execution() {
   const createIndividualRun = useCreateIndividualRun(projectId ?? '');
   const cancelRun = useCancelRun(projectId ?? '');
   const triggerHeal = useTriggerHeal(projectId ?? '');
+  const duplicateTc = useDuplicateTestCase(projectId ?? '');
 
   const { logs, stats, status: socketStatus, clearLogs, joinRun, leaveRun } = useRunSocket();
 
@@ -524,6 +525,15 @@ export default function Execution() {
     navigate(`/projects/${slug}/tc-library`);
   }
 
+  async function handleDuplicateTc(tc: TestCase) {
+    try {
+      await duplicateTc.mutateAsync(tc);
+      toast.success(`Duplicated "${tc.title}"`);
+    } catch {
+      toast.error('Failed to duplicate test case');
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -659,6 +669,7 @@ export default function Execution() {
             onRunGroup={handleRunGroup}
             onRunIndividual={handleRunIndividual}
             onViewTc={handleViewTc}
+            onDuplicateTc={handleDuplicateTc}
             isRunning={isRunning}
           />
         </div>

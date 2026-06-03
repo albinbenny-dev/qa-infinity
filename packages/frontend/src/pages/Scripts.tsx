@@ -5,9 +5,11 @@ import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import FileTree from '../components/scripts/FileTree';
+import ExecutionMonitor from '../components/scripts/ExecutionMonitor';
 import EditorTabs from '../components/scripts/EditorTabs';
-import { useProject } from '../hooks/useProjects';
+import { useProject, useProjectEnvConfigs } from '../hooks/useProjects';
 import { useRBAC } from '../hooks/useRBAC';
+import { useCreateIndividualRun, useRun } from '../hooks/useRuns';
 import { useTestCases, useUseCases } from '../hooks/useTestCases';
 import {
   useScripts,
@@ -16,9 +18,17 @@ import {
   useUploadScript,
   useUploadScriptWithExtract,
 } from '../hooks/useScripts';
+import {
+  useResources,
+  useUploadResource,
+  useResourceContent,
+  useSaveResource,
+  useDeleteResource,
+} from '../hooks/useResources';
 import { useScriptJobs } from '../hooks/useScriptJobs';
 import { useExecutionStore } from '../stores/executionStore';
 import { api } from '../lib/api';
+import { getToken } from '../lib/auth';
 import type { Script, TestCase, ScriptJob, ScriptJobPhase } from '../types';
 
 // ── Domain constants ────────────────────────────────────────────────────────
@@ -361,20 +371,55 @@ interface GenerateContextModalProps {
   count: number;
   withHeal: boolean;
   initialNote: string; // pre-populated from stored hints when count === 1
-  onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) => void;
+  singleTc?: { id: string; tcId: string; title: string; projectId: string; prerequisiteTcId?: string | null };
+  onConfirm: (opts: { withHeal: boolean; contextNote: string; domRecording: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; prerequisiteTcId?: string | null }) => void;
   onClose: () => void;
   onImportInstead?: () => void;
 }
 
-function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfirm, onClose, onImportInstead }: GenerateContextModalProps) {
+function GenerateContextModal({ count, withHeal: initHeal, initialNote, singleTc, onConfirm, onClose, onImportInstead }: GenerateContextModalProps) {
   const [heal, setHeal] = useState(initHeal);
   const [note, setNote] = useState(initialNote);
+  const [domRecording, setDomRecording] = useState('');
   const [save, setSave] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scriptMode, setScriptMode] = useState<'PLAYWRIGHT' | 'ROBOT'>('ROBOT');
+  const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(singleTc?.prerequisiteTcId ?? null);
+  const [automatedTcs, setAutomatedTcs] = useState<Array<{ id: string; tcId: string; title: string }>>([]);
+  const [prereqOpen, setPrereqOpen] = useState(false);
+  const [prereqSearch, setPrereqSearch] = useState('');
+  const prereqRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!singleTc?.projectId) return;
+    fetch(`/api/projects/${singleTc.projectId}/scripts`, { headers: { Authorization: `Bearer ${localStorage.getItem('qai-token') ?? ''}` } })
+      .then((r) => r.json())
+      .then((data: { scripts: Script[] }) => {
+        const seen = new Set<string>();
+        const tcs = (data.scripts ?? [])
+          .filter((s: Script) => s.testCaseId && s.testCase && s.testCaseId !== singleTc.id)
+          .map((s: Script) => ({ id: s.testCaseId!, tcId: s.testCase!.tcId, title: s.testCase!.title }))
+          .filter((t: { id: string }) => { if (seen.has(t.id)) return false; seen.add(t.id); return true; });
+        setAutomatedTcs(tcs);
+      })
+      .catch(() => {});
+  }, [singleTc?.id, singleTc?.projectId]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (prereqRef.current && !prereqRef.current.contains(e.target as Node)) setPrereqOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   async function handleSubmit() {
+    if (domRecording.length > 78000) {
+      alert('DOM Recording is too large (max ~78 000 chars). Export a shorter recording or remove some steps.');
+      return;
+    }
     setBusy(true);
-    await onConfirm({ withHeal: heal, contextNote: note, saveHints: save });
+    await onConfirm({ withHeal: heal, contextNote: note, domRecording, saveHints: save, scriptMode, prerequisiteTcId: count === 1 ? prerequisiteTcId : undefined });
     setBusy(false);
   }
 
@@ -389,6 +434,38 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfir
         </div>
 
         <div style={MODAL_BODY}>
+          {/* Script Framework toggle */}
+          <div>
+            <span style={LABEL_STYLE}>Script Framework</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['PLAYWRIGHT', 'ROBOT'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setScriptMode(v)}
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    fontWeight: 700, fontFamily: 'var(--font-ui)',
+                    border: scriptMode === v
+                      ? (v === 'ROBOT' ? '1px solid rgba(42,157,143,0.6)' : '1px solid rgba(37,99,171,0.6)')
+                      : '1px solid var(--border)',
+                    background: scriptMode === v
+                      ? (v === 'ROBOT' ? 'rgba(42,157,143,0.12)' : 'rgba(37,99,171,0.1)')
+                      : 'transparent',
+                    color: scriptMode === v ? (v === 'ROBOT' ? 'var(--emerald)' : 'var(--cyan)') : 'var(--text-dim)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {v === 'ROBOT' ? '🤖 Robot Framework' : '⚡ Playwright TS'}
+                </button>
+              ))}
+            </div>
+            {scriptMode === 'ROBOT' && (
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                Generates <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>.robot</code> files using RF Browser library (Playwright backend) — human-readable keywords, easy to correct.
+              </p>
+            )}
+          </div>
+
           {/* Mode toggle */}
           <div>
             <span style={LABEL_STYLE}>Mode</span>
@@ -397,8 +474,10 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfir
                 <button
                   key={String(v)}
                   onClick={() => setHeal(v)}
+                  disabled={v && scriptMode === 'ROBOT'}
+                  title={v && scriptMode === 'ROBOT' ? 'Heal is not available for Robot Framework scripts' : undefined}
                   style={{
-                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: (v && scriptMode === 'ROBOT') ? 'not-allowed' : 'pointer', fontSize: 11,
                     fontWeight: 700, fontFamily: 'var(--font-ui)',
                     border: heal === v
                       ? (v ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(37,99,171,0.6)')
@@ -407,6 +486,7 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfir
                       ? (v ? 'rgba(139,92,246,0.12)' : 'rgba(37,99,171,0.1)')
                       : 'transparent',
                     color: heal === v ? (v ? 'var(--violet)' : 'var(--cyan)') : 'var(--text-dim)',
+                    opacity: (v && scriptMode === 'ROBOT') ? 0.4 : 1,
                     transition: 'all 0.15s',
                   }}
                 >
@@ -414,7 +494,7 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfir
                 </button>
               ))}
             </div>
-            {heal && (
+            {heal && scriptMode !== 'ROBOT' && (
               <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
                 Each script is live-tested after generation and auto-healed up to 2 times.
               </p>
@@ -432,6 +512,103 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, onConfir
               autoFocus
             />
           </div>
+
+          {/* DOM Recording paste */}
+          <div>
+            <span style={LABEL_STYLE}>
+              🎬 DOM Recording{' '}
+              <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — paste output from QA DOM Recorder)</span>
+            </span>
+            <textarea
+              value={domRecording}
+              onChange={(e) => setDomRecording(e.target.value)}
+              placeholder={'Paste the exported recording from the QA DOM Recorder tool here.\n\nThe agent will use the captured selectors and steps to generate accurate locators without guessing.'}
+              style={{ ...TEXTAREA_STYLE, minHeight: 90, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan)' }}
+            />
+            {domRecording.trim() && (
+              <p style={{ fontSize: 10, color: 'var(--emerald)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                ✓ Recording attached — agent will use captured selectors as locked locators.
+              </p>
+            )}
+          </div>
+
+          {/* Prerequisite TC (single-TC only) */}
+          {count === 1 && (
+            <div>
+              <span style={LABEL_STYLE}>
+                🔗 Link to prerequisite TC{' '}
+                <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — reuse login/setup from another script)</span>
+              </span>
+              <div ref={prereqRef} style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => setPrereqOpen((o) => !o)}
+                  style={{
+                    width: '100%', background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
+                    color: prerequisiteTcId ? 'var(--text)' : 'var(--text-dim)',
+                    fontSize: 11, padding: '7px 10px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none', textAlign: 'left',
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {prerequisiteTcId
+                      ? (() => { const f = automatedTcs.find((t) => t.id === prerequisiteTcId); return f ? `${f.tcId} — ${f.title}` : '(loading…)'; })()
+                      : 'None — generate standalone script'}
+                  </span>
+                  <span style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>▾</span>
+                </button>
+                {prereqOpen && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                    background: 'var(--surface2)', border: '1px solid var(--border2)', borderRadius: 6,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.3)', maxHeight: 220, display: 'flex', flexDirection: 'column', marginTop: 2,
+                  }}>
+                    <input
+                      autoFocus
+                      value={prereqSearch}
+                      onChange={(e) => setPrereqSearch(e.target.value)}
+                      placeholder="Search TCs…"
+                      style={{ margin: 8, padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--surface3)', color: 'var(--text)', fontSize: 11, fontFamily: 'var(--font-ui)', outline: 'none' }}
+                    />
+                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                      <div
+                        onClick={() => { setPrerequisiteTcId(null); setPrereqOpen(false); setPrereqSearch(''); }}
+                        style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', color: prerequisiteTcId === null ? 'var(--cyan)' : 'var(--text-dim)', background: prerequisiteTcId === null ? 'var(--cyan-dim)' : 'transparent' }}
+                      >
+                        {prerequisiteTcId === null && '✓ '}None — generate standalone script
+                      </div>
+                      {automatedTcs
+                        .filter((t) => prereqSearch === '' || t.tcId.toLowerCase().includes(prereqSearch.toLowerCase()) || t.title.toLowerCase().includes(prereqSearch.toLowerCase()))
+                        .map((t) => (
+                          <div
+                            key={t.id}
+                            onClick={() => { setPrerequisiteTcId(t.id); setPrereqOpen(false); setPrereqSearch(''); }}
+                            style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', borderTop: '1px solid var(--border)', background: prerequisiteTcId === t.id ? 'var(--cyan-dim)' : 'transparent', color: prerequisiteTcId === t.id ? 'var(--cyan)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            {prerequisiteTcId === t.id && <span>✓</span>}
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{t.tcId}</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8, background: 'rgba(42,157,143,0.15)', color: 'var(--emerald)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(42,157,143,0.3)' }}>⚡ automated</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {prerequisiteTcId && (() => {
+                const f = automatedTcs.find((t) => t.id === prerequisiteTcId);
+                if (!f) return null;
+                return (
+                  <div style={{ marginTop: 6, padding: '7px 10px', background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.25)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 10, color: 'var(--cyan)' }}>🔗</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-mid)', flex: 1 }}>
+                      Script will call the <strong>{f.tcId}</strong> setup before running its own steps.
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {/* Save hints checkbox */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
@@ -595,24 +772,175 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   );
 }
 
+// ── ResourceHealthBanner ─────────────────────────────────────────────────────
+
+function ResourceHealthBanner({ projectId, resourceCount }: { projectId: string | undefined; resourceCount: number }) {
+  const [health, setHealth] = useState<{ scriptCount: number; resources: Array<{ filename: string; keywordCount: number; usedInScripts: number; lastUpdated: string }> } | null>(null);
+  const [mining, setMining] = useState(false);
+  const [candidates, setCandidates] = useState<Array<{ body: string; usedInFiles: string[]; count: number }>>([]);
+  const [showCandidates, setShowCandidates] = useState(false);
+
+  useEffect(() => {
+    if (!projectId || resourceCount === 0) return;
+    api.get<typeof health>(`/projects/${projectId}/resources/health`)
+      .then(r => setHealth(r.data))
+      .catch(() => {});
+  }, [projectId, resourceCount]);
+
+  async function runMining() {
+    if (!projectId) return;
+    setMining(true);
+    try {
+      const r = await api.get<{ candidates: typeof candidates; analysedFiles: number }>(`/projects/${projectId}/scripts/mine-keywords`);
+      setCandidates(r.data.candidates);
+      setShowCandidates(true);
+    } catch {
+      toast.error('Keyword mining failed');
+    }
+    setMining(false);
+  }
+
+  return (
+    <div style={{ background: 'rgba(42,157,143,0.05)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', lineHeight: 1.5, flex: 1 }}>
+          Shared <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>.robot</code> files auto-injected into generated Robot scripts.
+        </div>
+        {health && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+              {health.resources.reduce((s, r) => s + r.keywordCount, 0)} keywords · {health.scriptCount} scripts
+            </span>
+            <div
+              style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: resourceCount > 0 ? 'var(--emerald)' : 'var(--text-dim)',
+                flexShrink: 0,
+              }}
+              title={`Resource health: ${resourceCount} files`}
+            />
+          </div>
+        )}
+        <button
+          onClick={runMining}
+          disabled={mining}
+          title="Scan all .robot scripts for duplicate keyword patterns (suggests extractions)"
+          style={{
+            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, cursor: mining ? 'wait' : 'pointer',
+            background: 'transparent', border: '1px solid rgba(139,92,246,0.3)',
+            color: 'var(--violet)', flexShrink: 0, opacity: mining ? 0.6 : 1,
+          }}
+        >
+          {mining ? '⏳' : '⛏ Mine'}
+        </button>
+      </div>
+      {showCandidates && candidates.length > 0 && (
+        <div style={{ padding: '0 12px 10px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--violet)', marginBottom: 6, marginTop: 8 }}>
+            ⛏ Suggested Optimisations — Duplicate Keywords Found
+          </div>
+          {candidates.slice(0, 5).map((c, i) => (
+            <div key={i} style={{ marginBottom: 6, background: 'rgba(139,92,246,0.06)', borderRadius: 5, padding: '6px 8px', border: '1px solid rgba(139,92,246,0.15)' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 3 }}>
+                Found in <strong style={{ color: 'var(--violet)' }}>{c.count} scripts</strong>: {c.usedInFiles.map(f => f.replace(/\.robot$/, '')).join(', ')}
+              </div>
+              <pre style={{ fontSize: 9, color: 'var(--text-mid)', margin: 0, fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                {c.body.slice(0, 150)}{c.body.length > 150 ? '…' : ''}
+              </pre>
+            </div>
+          ))}
+          <button
+            onClick={() => setShowCandidates(false)}
+            style={{ fontSize: 9, color: 'var(--text-dim)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            ✕ Dismiss
+          </button>
+        </div>
+      )}
+      {showCandidates && candidates.length === 0 && (
+        <div style={{ padding: '0 12px 8px', fontSize: 9, color: 'var(--emerald)' }}>
+          ✓ No duplicate keyword patterns found across scripts.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── RegenerateModal ──────────────────────────────────────────────────────────
 
 interface RegenerateModalProps {
   script: Script;
   tc: TestCase | undefined;
-  onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) => void;
+  /** Pre-filled from "Fix with AI" button on a failed run result */
+  fixContext?: { failedStep?: string; errorMessage?: string };
+  onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string }) => void;
   onClose: () => void;
 }
 
-function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProps) {
-  const [note, setNote] = useState(tc?.generationHints ?? '');
+function isStructuredHintsJson(raw?: string | null): boolean {
+  if (!raw) return false;
+  try { const p = JSON.parse(raw); return p?.version === 2; } catch { return false; }
+}
+
+function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: RegenerateModalProps) {
+  // Don't pre-populate with raw StructuredHints JSON — only show free-text hints
+  const [note, setNote] = useState(!isStructuredHintsJson(tc?.generationHints) ? (tc?.generationHints ?? '') : '');
+  const [domSnippet, setDomSnippet] = useState('');
+  const [domRecording, setDomRecording] = useState('');
+  const [failedStep, setFailedStep] = useState(fixContext?.failedStep ?? '');
+  const [failedStepError, setFailedStepError] = useState(fixContext?.errorMessage ?? '');
   const [heal, setHeal] = useState(false);
   const [save, setSave] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showDomHelper, setShowDomHelper] = useState(false);
+  const [scriptMode, setScriptMode] = useState<'PLAYWRIGHT' | 'ROBOT'>(
+    (script as any).scriptType === 'PLAYWRIGHT' ? 'PLAYWRIGHT' : 'ROBOT',
+  );
+  const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc?.prerequisiteTcId ?? null);
+  const [automatedTcs, setAutomatedTcs] = useState<Array<{ id: string; tcId: string; title: string }>>([]);
+  const [prereqOpen, setPrereqOpen] = useState(false);
+  const [prereqSearch, setPrereqSearch] = useState('');
+  const prereqRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!tc?.projectId) return;
+    fetch(`/api/projects/${tc.projectId}/scripts`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json())
+      .then((data: { scripts: Script[] }) => {
+        const seen = new Set<string>();
+        const tcs = (data.scripts ?? [])
+          .filter((s: Script) => s.testCaseId && s.testCase && s.testCaseId !== tc.id)
+          .map((s: Script) => ({ id: s.testCaseId!, tcId: s.testCase!.tcId, title: s.testCase!.title }))
+          .filter((t: { id: string }) => { if (seen.has(t.id)) return false; seen.add(t.id); return true; });
+        setAutomatedTcs(tcs);
+      })
+      .catch(() => {});
+  }, [tc?.id, tc?.projectId]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (prereqRef.current && !prereqRef.current.contains(e.target as Node)) setPrereqOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   async function handleSubmit() {
     setBusy(true);
-    await onConfirm({ withHeal: heal, contextNote: note, saveHints: save });
+    // Persist prerequisite change to DB before regenerating so the worker picks it up
+    if (tc && prerequisiteTcId !== (tc.prerequisiteTcId ?? null)) {
+      await api.patch(`/projects/${tc.projectId}/test-cases/${tc.tcId}`, { prerequisiteTcId }).catch(() => {});
+    }
+    await onConfirm({
+      withHeal: scriptMode === 'ROBOT' ? false : heal,
+      contextNote: note,
+      saveHints: save,
+      scriptMode,
+      domSnippet: domSnippet.trim() || undefined,
+      domRecording: domRecording.trim() || undefined,
+      failedStep: failedStep.trim() || undefined,
+      failedStepError: failedStepError.trim() || undefined,
+    });
     setBusy(false);
   }
 
@@ -630,20 +958,187 @@ function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProp
         </div>
 
         <div style={MODAL_BODY}>
+          {/* Failed step — auto-filled from "Fix with AI" */}
+          {(failedStep || failedStepError) && (
+            <div style={{ background: 'rgba(248,113,113,0.07)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6, padding: '10px 12px' }}>
+              <span style={{ ...LABEL_STYLE, color: 'var(--rose)', marginBottom: 6 }}>⚠ Failed Step (auto-filled from run)</span>
+              {failedStep && (
+                <div style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-dim)', display: 'block', marginBottom: 2 }}>Step</span>
+                  <textarea
+                    value={failedStep}
+                    onChange={(e) => setFailedStep(e.target.value)}
+                    style={{ ...TEXTAREA_STYLE, minHeight: 40, background: 'rgba(248,113,113,0.05)' }}
+                  />
+                </div>
+              )}
+              {failedStepError && (
+                <div>
+                  <span style={{ fontSize: 10, color: 'var(--text-dim)', display: 'block', marginBottom: 2 }}>Error</span>
+                  <textarea
+                    value={failedStepError}
+                    onChange={(e) => setFailedStepError(e.target.value)}
+                    style={{ ...TEXTAREA_STYLE, minHeight: 60, fontFamily: 'var(--font-mono)', fontSize: 10, background: 'rgba(248,113,113,0.05)' }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Context note */}
           <div>
             <span style={LABEL_STYLE}>
-              What needs to be corrected{' '}
+              📋 Issue description{' '}
               <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — guides the script agent)</span>
             </span>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder={'Describe what to fix or improve...\n\nExamples:\n• The submit button selector should be input[type="submit"] not #btn-login\n• After login navigate to /projects before checking the dashboard\n• The route is /#/FinanceUserListReport not /finance/reports\n• Login is two-step: enter username → click Login → enter password → click Login again'}
-              style={{ ...TEXTAREA_STYLE, minHeight: 130 }}
-              autoFocus
+              style={{ ...TEXTAREA_STYLE, minHeight: 100 }}
+              autoFocus={!failedStep}
             />
           </div>
+
+          {/* DOM snippet */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ ...LABEL_STYLE, margin: 0 }}>
+                🔍 DOM snippet{' '}
+                <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(paste from browser DevTools — optional)</span>
+              </span>
+              <button
+                onClick={() => setShowDomHelper(v => !v)}
+                style={{ fontSize: 10, color: 'var(--cyan)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px' }}
+              >
+                {showDomHelper ? '▲ Hide helper' : '▼ How to extract'}
+              </button>
+            </div>
+            {showDomHelper && (
+              <div style={{ background: 'rgba(34,211,238,0.06)', border: '1px solid rgba(34,211,238,0.15)', borderRadius: 6, padding: '8px 10px', marginBottom: 8, fontSize: 10, color: 'var(--text-mid)', lineHeight: 1.7 }}>
+                <strong style={{ color: 'var(--cyan)' }}>How to paste DOM from DevTools:</strong>
+                <ol style={{ margin: '4px 0 0', paddingLeft: 16 }}>
+                  <li>Right-click the element in Chrome/Edge → <em>Inspect</em></li>
+                  <li>In the Elements panel, right-click the highlighted node → <em>Copy → Copy element</em></li>
+                  <li>Paste the HTML here</li>
+                </ol>
+                <p style={{ margin: '6px 0 0' }}>
+                  The AI will extract the best locator using: <code style={{ color: 'var(--emerald)' }}>data-testid &gt; id &gt; aria-label &gt; name &gt; text &gt; css</code>
+                </p>
+              </div>
+            )}
+            <textarea
+              value={domSnippet}
+              onChange={(e) => setDomSnippet(e.target.value)}
+              placeholder={'<button id="btnLogin" data-testid="login-submit" class="btn btn-primary">\n  Sign In\n</button>'}
+              style={{ ...TEXTAREA_STYLE, minHeight: 80, fontFamily: 'var(--font-mono)', fontSize: 10 }}
+            />
+          </div>
+
+          {/* DOM Recording */}
+          <div>
+            <span style={LABEL_STYLE}>
+              🎬 DOM Recording{' '}
+              <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — paste output from QA DOM Recorder)</span>
+            </span>
+            <textarea
+              value={domRecording}
+              onChange={(e) => {
+                if (e.target.value.length <= 78000) setDomRecording(e.target.value);
+              }}
+              placeholder={'Paste the exported recording from the QA DOM Recorder tool here...'}
+              style={{ ...TEXTAREA_STYLE, minHeight: 90, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan)' }}
+            />
+            {domRecording.trim() && (
+              <p style={{ fontSize: 10, color: 'var(--emerald)', margin: '4px 0 0' }}>
+                ✓ Recording attached — agent will use captured selectors as locked locators.
+              </p>
+            )}
+          </div>
+
+          {/* Prerequisite TC picker */}
+          {tc && (
+            <div>
+              <span style={LABEL_STYLE}>
+                ⛓ Prerequisite TC{' '}
+                <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — reuse login/nav from another script)</span>
+              </span>
+              <div ref={prereqRef} style={{ position: 'relative' }}>
+                <div
+                  onClick={() => setPrereqOpen((o) => !o)}
+                  style={{
+                    background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
+                    color: prerequisiteTcId ? 'var(--text)' : 'var(--text-dim)',
+                    fontSize: 11, padding: '7px 10px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none',
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {prerequisiteTcId
+                      ? (() => { const f = automatedTcs.find((t) => t.id === prerequisiteTcId); return f ? `${f.tcId} — ${f.title}` : '(loading…)'; })()
+                      : 'None — generate standalone script'}
+                  </span>
+                  <span style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>▾</span>
+                </div>
+                {prereqOpen && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 60,
+                    background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)', overflow: 'hidden',
+                    maxHeight: 200, display: 'flex', flexDirection: 'column',
+                  }}>
+                    <div style={{ padding: 8, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                      <input
+                        autoFocus
+                        placeholder="Search automated TCs…"
+                        value={prereqSearch}
+                        onChange={(e) => setPrereqSearch(e.target.value)}
+                        style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6, color: 'var(--text)', fontSize: 11, padding: '5px 8px', outline: 'none', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                      <div
+                        onClick={() => { setPrerequisiteTcId(null); setPrereqOpen(false); setPrereqSearch(''); }}
+                        style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', color: prerequisiteTcId === null ? 'var(--cyan)' : 'var(--text-dim)', background: prerequisiteTcId === null ? 'var(--cyan-dim)' : 'transparent' }}
+                      >
+                        {prerequisiteTcId === null && '✓ '}None — generate standalone script
+                      </div>
+                      {automatedTcs
+                        .filter((t) => prereqSearch === '' || t.tcId.toLowerCase().includes(prereqSearch.toLowerCase()) || t.title.toLowerCase().includes(prereqSearch.toLowerCase()))
+                        .map((t) => (
+                          <div
+                            key={t.id}
+                            onClick={() => { setPrerequisiteTcId(t.id); setPrereqOpen(false); setPrereqSearch(''); }}
+                            style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', borderTop: '1px solid var(--border)', background: prerequisiteTcId === t.id ? 'var(--cyan-dim)' : 'transparent', color: prerequisiteTcId === t.id ? 'var(--cyan)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            {prerequisiteTcId === t.id && <span>✓</span>}
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{t.tcId}</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8, background: 'rgba(42,157,143,0.15)', color: 'var(--emerald)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(42,157,143,0.3)' }}>⚡ automated</span>
+                          </div>
+                        ))}
+                      {automatedTcs.length === 0 && (
+                        <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-dim)' }}>No automated TCs found yet.</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {prerequisiteTcId && (() => {
+                const f = automatedTcs.find((t) => t.id === prerequisiteTcId);
+                if (!f) return null;
+                return (
+                  <div style={{ marginTop: 6, padding: '7px 10px', background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.25)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11 }}>⛓</span>
+                    <span style={{ flex: 1, fontSize: 10, color: 'var(--cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      Script generator will reuse setup from: <strong>{f.tcId} — {f.title}</strong>
+                    </span>
+                    <button onClick={() => setPrerequisiteTcId(null)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 13, padding: '0 2px' }}>×</button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {/* Save hints checkbox */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
@@ -658,6 +1153,38 @@ function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProp
             </span>
           </label>
 
+          {/* Script Framework toggle */}
+          <div>
+            <span style={LABEL_STYLE}>Script Framework</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['PLAYWRIGHT', 'ROBOT'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setScriptMode(v)}
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    fontWeight: 700, fontFamily: 'var(--font-ui)',
+                    border: scriptMode === v
+                      ? (v === 'ROBOT' ? '1px solid rgba(42,157,143,0.6)' : '1px solid rgba(37,99,171,0.6)')
+                      : '1px solid var(--border)',
+                    background: scriptMode === v
+                      ? (v === 'ROBOT' ? 'rgba(42,157,143,0.12)' : 'rgba(37,99,171,0.1)')
+                      : 'transparent',
+                    color: scriptMode === v ? (v === 'ROBOT' ? 'var(--emerald)' : 'var(--cyan)') : 'var(--text-dim)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {v === 'ROBOT' ? '🤖 Robot Framework' : '⚡ Playwright TS'}
+                </button>
+              ))}
+            </div>
+            {scriptMode === 'ROBOT' && (
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                Generates <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>.robot</code> files using RF Browser library — human-readable keywords, easy to correct.
+              </p>
+            )}
+          </div>
+
           {/* Mode toggle */}
           <div>
             <span style={LABEL_STYLE}>Mode</span>
@@ -666,8 +1193,10 @@ function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProp
                 <button
                   key={String(v)}
                   onClick={() => setHeal(v)}
+                  disabled={v && scriptMode === 'ROBOT'}
+                  title={v && scriptMode === 'ROBOT' ? 'Heal is not available for Robot Framework scripts' : undefined}
                   style={{
-                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: (v && scriptMode === 'ROBOT') ? 'not-allowed' : 'pointer', fontSize: 11,
                     fontWeight: 700, fontFamily: 'var(--font-ui)',
                     border: heal === v
                       ? (v ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(245,158,11,0.5)')
@@ -676,6 +1205,7 @@ function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProp
                       ? (v ? 'rgba(139,92,246,0.12)' : 'rgba(245,158,11,0.08)')
                       : 'transparent',
                     color: heal === v ? (v ? 'var(--violet)' : 'var(--amber)') : 'var(--text-dim)',
+                    opacity: (v && scriptMode === 'ROBOT') ? 0.4 : 1,
                     transition: 'all 0.15s',
                   }}
                 >
@@ -683,7 +1213,7 @@ function RegenerateModal({ script, tc, onConfirm, onClose }: RegenerateModalProp
                 </button>
               ))}
             </div>
-            {heal && (
+            {heal && scriptMode !== 'ROBOT' && (
               <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
                 The new script will be live-tested and auto-healed up to 2 times after generation.
               </p>
@@ -732,9 +1262,12 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
   const [file, setFile] = useState<File | null>(null);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
+  const [conversionNote, setConversionNote] = useState<{ converted: boolean; filename: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadScript(projectId);
   const uploadWithExtract = useUploadScriptWithExtract(projectId);
+
+  const isRobotFile = file?.name.toLowerCase().endsWith('.robot') ?? false;
 
   const filteredTCs = useMemo(() => {
     const q = search.toLowerCase();
@@ -744,23 +1277,31 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
   }, [testCases, search]);
 
   async function handleImport() {
-    if (!file) { toast.error('Select a .spec.ts or .spec.js file first'); return; }
+    if (!file) {
+      toast.error('Select a script file first');
+      return;
+    }
     setBusy(true);
     try {
       if (importMode === 'create') {
         const result = await uploadWithExtract.mutateAsync(file);
-        toast.success(
-          `Test case ${result.testCase.tcId} created from script!`,
-          { duration: 6000 },
-        );
+        if (result.converted) {
+          toast.success(`Converted SeleniumLibrary → Browser & created TC ${result.testCase.tcId}!`, { duration: 7000 });
+        } else {
+          toast.success(`Test case ${result.testCase.tcId} created from script!`, { duration: 6000 });
+        }
         onClose();
         navigate(`/projects/${slug}/tc-library`);
       } else {
         const tcId = importMode === 'link' ? (selectedTcId || undefined) : undefined;
-        await upload.mutateAsync({ file, testCaseId: tcId });
-        const linked = tcId ? testCases.find((tc) => tc.id === tcId) : null;
-        toast.success(linked ? `Imported and linked to ${linked.tcId}` : `Imported ${file.name}`);
-        onClose();
+        const result = await upload.mutateAsync({ file, testCaseId: tcId });
+        if (result.converted) {
+          setConversionNote({ converted: true, filename: result.filename });
+        } else {
+          const linked = tcId ? testCases.find((tc) => tc.id === tcId) : null;
+          toast.success(linked ? `Imported and linked to ${linked.tcId}` : `Imported ${file.name}`);
+          onClose();
+        }
       }
     } catch {
       toast.error('Import failed');
@@ -775,9 +1316,9 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
   };
 
   const MODE_OPTS: { value: ImportMode; label: string; desc: string }[] = [
-    { value: 'create', label: 'Create TC from script', desc: 'QA Infinity extracts the test case automatically' },
-    { value: 'link',   label: 'Link to existing TC',  desc: 'Choose a TC from your library' },
-    { value: 'standalone', label: 'Import standalone', desc: 'No TC — custom script only' },
+    { value: 'create',     label: 'Create TC from script', desc: 'QA Infinity extracts the test case automatically — TC created in DRAFT status.' },
+    { value: 'link',       label: 'Link to existing TC',   desc: 'Choose a TC from your library to associate this script with.' },
+    { value: 'standalone', label: 'Import standalone',     desc: 'No TC — custom script only.' },
   ];
 
   return (
@@ -789,136 +1330,167 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
         </div>
 
         <div style={MODAL_BODY}>
-          {/* Mode selector */}
-          <div>
-            <span style={LABEL_STYLE}>Import Mode</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {MODE_OPTS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setImportMode(opt.value)}
-                  style={{
-                    flex: 1, padding: '7px 6px', borderRadius: 6, cursor: 'pointer',
-                    fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-ui)',
-                    border: importMode === opt.value ? '1px solid rgba(139,92,246,0.6)' : '1px solid var(--border)',
-                    background: importMode === opt.value ? 'rgba(139,92,246,0.12)' : 'transparent',
-                    color: importMode === opt.value ? 'var(--violet)' : 'var(--text-dim)',
-                    transition: 'all 0.15s', textAlign: 'center',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '5px 0 0', lineHeight: 1.5 }}>
-              {MODE_OPTS.find(o => o.value === importMode)?.desc}
-              {importMode === 'create' && (
-                <span style={{ color: 'var(--violet)', marginLeft: 4 }}>
-                  — TC will be created in DRAFT status for review in TC Library.
-                </span>
-              )}
-            </p>
-          </div>
-
-          {/* File picker */}
-          <div>
-            <span style={LABEL_STYLE}>Script File <span style={{ color: '#f87171', fontWeight: 400 }}>*</span></span>
-            <button
-              onClick={() => fileRef.current?.click()}
-              style={{
-                width: '100%', padding: '18px 12px',
-                border: `2px dashed ${file ? 'var(--violet)' : 'var(--border)'}`,
-                borderRadius: 8, background: file ? 'rgba(139,92,246,0.06)' : 'transparent',
-                cursor: 'pointer', color: file ? 'var(--text)' : 'var(--text-dim)',
-                fontSize: 12, fontFamily: 'var(--font-ui)', textAlign: 'center',
-                transition: 'all 0.15s',
-              }}
-            >
-              {file ? `📄 ${file.name}` : '+ Click to select .spec.ts or .spec.js'}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".spec.ts,.spec.js"
-              style={{ display: 'none' }}
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-          </div>
-
-          {/* TC selector — only shown in 'link' mode */}
-          {importMode === 'link' && <div>
-            <span style={LABEL_STYLE}>Link to Test Case <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span></span>
-            <input
-              type="text"
-              placeholder="Search by title or TC ID…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={INPUT_STYLE_SM}
-            />
+          {/* Conversion result banner — shown after a SeleniumLibrary robot was converted */}
+          {conversionNote && (
             <div style={{
-              maxHeight: 160, overflowY: 'auto', marginTop: 4,
-              border: '1px solid var(--border)', borderRadius: 6,
-              background: 'var(--surface2)',
+              padding: '10px 12px', borderRadius: 6,
+              background: 'rgba(42,157,143,0.1)',
+              border: '1px solid rgba(42,157,143,0.4)',
+              fontSize: 11, lineHeight: 1.6,
             }}>
-              <div
-                onClick={() => setSelectedTcId('')}
+              <div style={{ fontWeight: 700, color: 'var(--emerald)', marginBottom: 4 }}>
+                ✅ Converted: SeleniumLibrary → Browser library
+              </div>
+              <div style={{ color: 'var(--text-mid)' }}>
+                Saved as <code style={{ fontFamily: 'var(--font-mono)' }}>{conversionNote.filename}</code> using RF Browser library (Playwright backend).
+              </div>
+              <button
+                onClick={onClose}
+                style={{ marginTop: 8, padding: '4px 12px', borderRadius: 5, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700, background: 'var(--surface3)', color: 'var(--text-mid)', fontFamily: 'var(--font-ui)' }}
+              >
+                Done
+              </button>
+            </div>
+          )}
+
+          {!conversionNote && <>
+            {/* Mode selector */}
+            <div>
+              <span style={LABEL_STYLE}>Import Mode</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {MODE_OPTS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setImportMode(opt.value)}
+                    style={{
+                      flex: 1, padding: '7px 6px', borderRadius: 6, cursor: 'pointer',
+                      fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: importMode === opt.value ? '1px solid rgba(139,92,246,0.6)' : '1px solid var(--border)',
+                      background: importMode === opt.value ? 'rgba(139,92,246,0.12)' : 'transparent',
+                      color: importMode === opt.value ? 'var(--violet)' : 'var(--text-dim)',
+                      transition: 'all 0.15s', textAlign: 'center',
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '5px 0 0', lineHeight: 1.5 }}>
+                {MODE_OPTS.find(o => o.value === importMode)?.desc}
+              </p>
+            </div>
+
+            {/* File picker */}
+            <div>
+              <span style={LABEL_STYLE}>
+                Script File <span style={{ color: '#f87171', fontWeight: 400 }}>*</span>
+                {isRobotFile && (
+                  <span style={{ marginLeft: 6, color: 'var(--emerald)', fontWeight: 400 }}>
+                    🤖 Robot Framework — SeleniumLibrary will be auto-converted if detected
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={() => fileRef.current?.click()}
                 style={{
-                  padding: '7px 10px', cursor: 'pointer', fontSize: 11,
-                  background: !selectedTcId ? 'rgba(37,99,171,0.18)' : 'transparent',
-                  color: !selectedTcId ? 'var(--cyan)' : 'var(--text-dim)',
-                  borderBottom: '1px solid var(--border)',
+                  width: '100%', padding: '18px 12px',
+                  border: `2px dashed ${file ? (isRobotFile ? 'var(--emerald)' : 'var(--violet)') : 'var(--border)'}`,
+                  borderRadius: 8, background: file ? (isRobotFile ? 'rgba(42,157,143,0.06)' : 'rgba(139,92,246,0.06)') : 'transparent',
+                  cursor: 'pointer', color: file ? 'var(--text)' : 'var(--text-dim)',
+                  fontSize: 12, fontFamily: 'var(--font-ui)', textAlign: 'center',
+                  transition: 'all 0.15s',
                 }}
               >
-                None — upload as unlinked custom script
-              </div>
-              {filteredTCs.map((tc) => (
-                <div
-                  key={tc.id}
-                  onClick={() => setSelectedTcId(tc.id)}
-                  style={{
-                    padding: '7px 10px', cursor: 'pointer', fontSize: 11,
-                    background: selectedTcId === tc.id ? 'rgba(37,99,171,0.18)' : 'transparent',
-                    color: selectedTcId === tc.id ? 'var(--cyan)' : 'var(--text-mid)',
-                    display: 'flex', gap: 8, alignItems: 'baseline',
-                  }}
-                >
-                  <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>{tc.tcId}</span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tc.title}</span>
-                </div>
-              ))}
-              {filteredTCs.length === 0 && search && (
-                <div style={{ padding: '8px 10px', color: 'var(--text-dim)', fontSize: 11 }}>No matches</div>
-              )}
+                {file ? `📄 ${file.name}` : '+ Click to select .spec.ts, .spec.js, or .robot'}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".spec.ts,.spec.js,.robot"
+                style={{ display: 'none' }}
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
             </div>
-            {selectedTcId && (
-              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '5px 0 0', lineHeight: 1.5 }}>
-                Any existing script for this test case will be replaced.
-              </p>
+
+            {/* TC selector — only shown in 'link' mode */}
+            {importMode === 'link' && (
+              <div>
+                <span style={LABEL_STYLE}>Link to Test Case <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span></span>
+                <input
+                  type="text"
+                  placeholder="Search by title or TC ID…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  style={INPUT_STYLE_SM}
+                />
+                <div style={{
+                  maxHeight: 160, overflowY: 'auto', marginTop: 4,
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  background: 'var(--surface2)',
+                }}>
+                  <div
+                    onClick={() => setSelectedTcId('')}
+                    style={{
+                      padding: '7px 10px', cursor: 'pointer', fontSize: 11,
+                      background: !selectedTcId ? 'rgba(37,99,171,0.18)' : 'transparent',
+                      color: !selectedTcId ? 'var(--cyan)' : 'var(--text-dim)',
+                      borderBottom: '1px solid var(--border)',
+                    }}
+                  >
+                    None — upload as unlinked custom script
+                  </div>
+                  {filteredTCs.map((tc) => (
+                    <div
+                      key={tc.id}
+                      onClick={() => setSelectedTcId(tc.id)}
+                      style={{
+                        padding: '7px 10px', cursor: 'pointer', fontSize: 11,
+                        background: selectedTcId === tc.id ? 'rgba(37,99,171,0.18)' : 'transparent',
+                        color: selectedTcId === tc.id ? 'var(--cyan)' : 'var(--text-mid)',
+                        display: 'flex', gap: 8, alignItems: 'baseline',
+                      }}
+                    >
+                      <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>{tc.tcId}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tc.title}</span>
+                    </div>
+                  ))}
+                  {filteredTCs.length === 0 && search && (
+                    <div style={{ padding: '8px 10px', color: 'var(--text-dim)', fontSize: 11 }}>No matches</div>
+                  )}
+                </div>
+                {selectedTcId && (
+                  <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '5px 0 0', lineHeight: 1.5 }}>
+                    Any existing script for this test case will be replaced.
+                  </p>
+                )}
+              </div>
             )}
-          </div>}
+          </>}
         </div>
 
-        <div style={MODAL_FOOTER}>
-          <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
-          <button
-            onClick={handleImport}
-            disabled={!file || busy}
-            style={{
-              padding: '7px 18px', borderRadius: 6, border: 'none',
-              cursor: !file || busy ? 'not-allowed' : 'pointer',
-              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
-              background: importMode === 'create'
-                ? 'linear-gradient(135deg, var(--violet), var(--emerald))'
-                : 'linear-gradient(135deg, var(--violet), var(--cyan))',
-              opacity: !file || busy ? 0.55 : 1,
-              transition: 'opacity 0.15s',
-            }}
-          >
-            {busy
-              ? (importMode === 'create' ? 'Extracting TC…' : 'Importing…')
-              : (importMode === 'create' ? '⬆ Import & Create TC' : '⬆ Import')}
-          </button>
-        </div>
+        {!conversionNote && (
+          <div style={MODAL_FOOTER}>
+            <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
+            <button
+              onClick={handleImport}
+              disabled={!file || busy}
+              style={{
+                padding: '7px 18px', borderRadius: 6, border: 'none',
+                cursor: !file || busy ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
+                background: importMode === 'create'
+                  ? 'linear-gradient(135deg, var(--violet), var(--emerald))'
+                  : 'linear-gradient(135deg, var(--violet), var(--cyan))',
+                opacity: !file || busy ? 0.55 : 1,
+                transition: 'opacity 0.15s',
+              }}
+            >
+              {busy
+                ? (importMode === 'create' ? 'Extracting TC…' : (isRobotFile ? 'Converting…' : 'Importing…'))
+                : (importMode === 'create' ? '⬆ Import & Create TC' : '⬆ Import')}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -941,6 +1513,27 @@ export default function Scripts() {
 
   const save = useSaveScriptContent(projectId ?? '');
   const deleteScript = useDeleteScript(projectId ?? '');
+  const createIndividualRun = useCreateIndividualRun(projectId ?? '');
+  const { data: envConfigs = [] } = useProjectEnvConfigs(projectId);
+
+  // ── Resources state ────────────────────────────────────────────────────────
+  const { data: resources = [], isLoading: resourcesLoading } = useResources(projectId);
+  const uploadResource = useUploadResource(projectId ?? '');
+  const saveResource = useSaveResource(projectId ?? '');
+  const deleteResource = useDeleteResource(projectId ?? '');
+  const [activeResourceFile, setActiveResourceFile] = useState<string | null>(null);
+  const [resourceContent, setResourceContent] = useState<string>('');
+  const [resourceDirty, setResourceDirty] = useState(false);
+  const resourceFileRef = useRef<HTMLInputElement>(null);
+  const { data: fetchedResourceContent } = useResourceContent(projectId, activeResourceFile);
+
+  // Sync fetched resource content into editor
+  useEffect(() => {
+    if (fetchedResourceContent !== undefined) {
+      setResourceContent(fetchedResourceContent);
+      setResourceDirty(false);
+    }
+  }, [fetchedResourceContent, activeResourceFile]);
   const { setSelected: setExecutionSelected } = useExecutionStore();
 
   // ── Derived data ─────────────────────────────────────────────────────────
@@ -962,7 +1555,7 @@ export default function Scripts() {
 
   // ── Left panel state ─────────────────────────────────────────────────────
 
-  const [leftTab, setLeftTab] = useState<'tcs' | 'scripts'>('tcs');
+  const [leftTab, setLeftTab] = useState<'tcs' | 'scripts' | 'resources'>('tcs');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(AIRTEL_USE_CASES),
   );
@@ -1053,6 +1646,63 @@ export default function Scripts() {
   // ── Regenerate modal state ────────────────────────────────────────────────
 
   const [showRegenModal, setShowRegenModal] = useState(false);
+  const [regenFixContext, setRegenFixContext] = useState<{ failedStep?: string; errorMessage?: string } | undefined>();
+
+  // ── Execution Monitor state ────────────────────────────────────────────────
+
+  const [showMonitor, setShowMonitor] = useState(false);
+  const [monitorRunId, setMonitorRunId] = useState<string | null>(null);
+  const [monitorScript, setMonitorScript] = useState('');
+
+  // ── Quick-run state (▶ Run from editor toolbar) ───────────────────────────
+
+  const [quickRunId, setQuickRunId] = useState<string | null>(null);
+  const [quickRunning, setQuickRunning] = useState(false);
+  const { data: quickRunData } = useRun(projectId, quickRunId);
+  const quickRunStatus = quickRunData?.status ?? null;
+
+  async function handleQuickRun() {
+    if (!projectId || !activeScript?.testCaseId) return;
+    const defaultEnv =
+      envConfigs.find((e) => e.isDefault) ?? envConfigs[0];
+    if (!defaultEnv) {
+      toast.error('No environment configured — add one in Project Settings first.');
+      return;
+    }
+    // Auto-save first if dirty
+    if (activeTabId && dirtyTabs.has(activeTabId)) {
+      try {
+        await save.mutateAsync({ scriptId: activeTabId, content: tabContents[activeTabId] ?? '' });
+        setDirtyTabs((prev) => { const n = new Set(prev); n.delete(activeTabId); return n; });
+      } catch {
+        toast.error('Save failed — cannot run unsaved script.');
+        return;
+      }
+    }
+    setQuickRunning(true);
+    setQuickRunId(null);
+    try {
+      const run = await createIndividualRun.mutateAsync({
+        testCaseId: activeScript.testCaseId,
+        environment: defaultEnv.name,
+      });
+      setQuickRunId(run.id);
+      // Open execution monitor
+      setMonitorRunId(run.id);
+      setMonitorScript(activeScript?.filename ?? 'script');
+      setShowMonitor(true);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? 'Failed to start run');
+      setQuickRunning(false);
+    }
+  }
+
+  // Once run finishes, stop the "running" spinner
+  useEffect(() => {
+    if (quickRunStatus && quickRunStatus !== 'PENDING' && quickRunStatus !== 'RUNNING') {
+      setQuickRunning(false);
+    }
+  }, [quickRunStatus]);
 
   // ── Import script modal state ─────────────────────────────────────────────
 
@@ -1084,6 +1734,9 @@ export default function Scripts() {
   const activeScript = openTabs.find((t) => t.id === activeTabId) ?? null;
   const activeContent = activeTabId ? (tabContents[activeTabId] ?? '') : '';
   const activeTc = allTCs.find((tc) => tc.id === activeScript?.testCaseId) ?? undefined;
+
+  // Clear quick-run badge when the user switches to a different script tab
+  useEffect(() => { setQuickRunId(null); setQuickRunning(false); }, [activeTabId]);
 
   // ── Open a tab ───────────────────────────────────────────────────────────
 
@@ -1142,17 +1795,26 @@ export default function Scripts() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveActiveTab(); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (activeResourceFile && resourceDirty && canWrite) {
+          saveResource.mutateAsync({ filename: activeResourceFile, content: resourceContent })
+            .then(() => { setResourceDirty(false); toast.success('Saved'); })
+            .catch(() => toast.error('Save failed'));
+        } else {
+          saveActiveTab();
+        }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [saveActiveTab]);
+  }, [saveActiveTab, activeResourceFile, resourceDirty, resourceContent, canWrite, saveResource]);
 
   // ── Open TC's script in editor ────────────────────────────────────────────
 
   function handleOpenTCScript(tcDbId: string) {
     const script = tcIdToScript.get(tcDbId);
-    if (script) openTab(script);
+    if (script) { setActiveResourceFile(null); openTab(script); }
   }
 
   // ── TC selection ─────────────────────────────────────────────────────────
@@ -1197,22 +1859,32 @@ export default function Scripts() {
 
   function handleQueueGenerate() {
     if (!projectId || tcSelected.size === 0) return;
-    // Pre-populate hints if exactly 1 TC selected and it has stored hints
+    // Pre-populate hints if exactly 1 TC selected and it has free-text (not JSON) hints
     if (tcSelected.size === 1) {
       const [singleId] = tcSelected;
       const tc = allTCs.find((t) => t.id === singleId);
-      setGenModalInitNote(tc?.generationHints ?? '');
+      const hints = tc?.generationHints ?? '';
+      setGenModalInitNote(!isStructuredHintsJson(hints) ? hints : '');
     } else {
       setGenModalInitNote('');
     }
     setShowGenModal(true);
   }
 
-  async function handleModalConfirmGenerate(opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) {
+  async function handleModalConfirmGenerate(opts: { withHeal: boolean; contextNote: string; domRecording: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; prerequisiteTcId?: string | null }) {
     if (!projectId || tcSelected.size === 0) return;
     const ids = Array.from(tcSelected);
     setShowGenModal(false);
     setTcSelected(new Set());
+
+    // Persist prerequisite change when generating a single TC
+    if (ids.length === 1 && opts.prerequisiteTcId !== undefined) {
+      const tc = allTCs.find((t) => t.id === ids[0]);
+      if (tc && opts.prerequisiteTcId !== (tc.prerequisiteTcId ?? null)) {
+        await api.patch(`/projects/${projectId}/test-cases/${tc.tcId}`, { prerequisiteTcId: opts.prerequisiteTcId }).catch(() => {});
+        void qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+      }
+    }
 
     // Save hints to each selected TC if requested
     if (opts.saveHints && opts.contextNote.trim()) {
@@ -1228,14 +1900,17 @@ export default function Scripts() {
     try {
       await api.post<GenerateApiResponse>(
         `/projects/${projectId}/scripts/generate`,
-        { testCaseIds: ids, withHeal: opts.withHeal, contextNote: opts.contextNote || undefined },
+        {
+          testCaseIds: ids,
+          withHeal: opts.scriptMode === 'ROBOT' ? false : opts.withHeal,
+          contextNote: opts.contextNote || undefined,
+          domRecording: opts.domRecording || undefined,
+          scriptMode: opts.scriptMode,
+        },
         { timeout: 30_000 },
       );
-      toast.success(
-        opts.withHeal
-          ? `Queued ${ids.length} script${ids.length !== 1 ? 's' : ''} (generate + heal)`
-          : `Queued ${ids.length} script${ids.length !== 1 ? 's' : ''}`,
-      );
+      const label = opts.scriptMode === 'ROBOT' ? '🤖 Robot' : (opts.withHeal ? '🩹 generate + heal' : '⚡ generate');
+      toast.success(`Queued ${ids.length} script${ids.length !== 1 ? 's' : ''} (${label})`);
     } catch (err) {
       const msg = (err as Error)?.message ?? 'Failed to enqueue';
       toast.error(msg);
@@ -1279,9 +1954,10 @@ export default function Scripts() {
 
   // ── Regenerate active script ──────────────────────────────────────────────
 
-  async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean }) {
+  async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string }) {
     if (!projectId || !activeScript?.testCaseId) return;
     setShowRegenModal(false);
+    setRegenFixContext(undefined);
 
     if (opts.saveHints && opts.contextNote.trim() && activeTc) {
       await api.patch(
@@ -1294,10 +1970,20 @@ export default function Scripts() {
     try {
       await api.post<GenerateApiResponse>(
         `/projects/${projectId}/scripts/generate`,
-        { testCaseIds: [activeScript.testCaseId], withHeal: opts.withHeal, contextNote: opts.contextNote || undefined },
+        {
+          testCaseIds: [activeScript.testCaseId],
+          withHeal: opts.scriptMode === 'ROBOT' ? false : opts.withHeal,
+          contextNote: opts.contextNote || undefined,
+          domSnippet: opts.domSnippet || undefined,
+          domRecording: opts.domRecording || undefined,
+          failedStep: opts.failedStep || undefined,
+          failedStepError: opts.failedStepError || undefined,
+          scriptMode: opts.scriptMode,
+        },
         { timeout: 30_000 },
       );
-      toast.success(opts.withHeal ? '↺ Regenerating with heal…' : '↺ Regenerating…');
+      const label = opts.scriptMode === 'ROBOT' ? '🤖 Robot' : (opts.withHeal ? '↺ Regenerating with heal…' : '↺ Regenerating…');
+      toast.success(label);
     } catch (err) {
       const msg = (err as Error)?.message ?? 'Failed to regenerate';
       toast.error(msg);
@@ -1355,6 +2041,7 @@ export default function Scripts() {
           count={tcSelected.size}
           withHeal={withHeal}
           initialNote={genModalInitNote}
+          singleTc={tcSelected.size === 1 ? (() => { const tc = allTCs.find((t) => t.id === [...tcSelected][0]); return tc ? { id: tc.id, tcId: tc.tcId, title: tc.title, projectId: tc.projectId, prerequisiteTcId: tc.prerequisiteTcId } : undefined; })() : undefined}
           onConfirm={handleModalConfirmGenerate}
           onClose={() => setShowGenModal(false)}
           onImportInstead={tcSelected.size === 1
@@ -1378,8 +2065,23 @@ export default function Scripts() {
         <RegenerateModal
           script={activeScript}
           tc={activeTc}
+          fixContext={regenFixContext}
           onConfirm={handleRegenConfirm}
-          onClose={() => setShowRegenModal(false)}
+          onClose={() => { setShowRegenModal(false); setRegenFixContext(undefined); }}
+        />
+      )}
+
+      {/* Execution Monitor — floating resizable */}
+      {showMonitor && monitorRunId && projectId && (
+        <ExecutionMonitor
+          runId={monitorRunId}
+          projectId={projectId}
+          scriptName={monitorScript}
+          onClose={() => setShowMonitor(false)}
+          onFixWithAi={(failedStep, errorMessage) => {
+            setRegenFixContext({ failedStep, errorMessage });
+            setShowRegenModal(true);
+          }}
         />
       )}
 
@@ -1446,21 +2148,13 @@ export default function Scripts() {
             )}
             <TbBtn
               variant="ghost"
-              onClick={async () => {
-                if (!projectId) return;
-                try {
-                  const res = await api.get(`/projects/${projectId}/scripts/context-guide`, { responseType: 'blob' });
-                  const url = URL.createObjectURL(new Blob([res.data as BlobPart], { type: 'text/markdown' }));
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `qa-infinity-guide-${slug ?? projectId}.md`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                } catch {
-                  toast.error('Failed to download script guide');
-                }
+              onClick={() => {
+                const a = document.createElement('a');
+                a.href = '/script-gen-guide.html';
+                a.download = 'SCRIPT_GEN_GUIDE.html';
+                a.click();
               }}
-              title="Download project-specific guide for Claude Desktop — use when credits are exhausted"
+              title="Download the script generation guide (HTML)"
             >
               📋 Script Guide
             </TbBtn>
@@ -1529,6 +2223,29 @@ export default function Scripts() {
                   background: 'var(--surface3)', color: 'var(--text-dim)', lineHeight: '14px',
                 }}>
                   {scripts.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setLeftTab('resources')}
+              style={{
+                flex: 1, padding: '9px 10px', border: 'none', cursor: 'pointer',
+                background: leftTab === 'resources' ? 'var(--surface)' : 'transparent',
+                borderBottom: leftTab === 'resources' ? '2px solid var(--emerald)' : '2px solid transparent',
+                color: leftTab === 'resources' ? 'var(--text)' : 'var(--text-dim)',
+                fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                transition: 'all 0.15s',
+              }}
+              title="Robot Framework resource files (keywords.robot, variables.robot)"
+            >
+              🗂 Resources
+              {resources.length > 0 && (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 10,
+                  background: 'rgba(42,157,143,0.18)', color: 'var(--emerald)', lineHeight: '14px',
+                }}>
+                  {resources.length}
                 </span>
               )}
             </button>
@@ -1840,6 +2557,143 @@ export default function Scripts() {
               )}
             </>
           )}
+
+          {/* ── RESOURCES TAB ── */}
+          {leftTab === 'resources' && (
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+              {/* Accent + description + health badge */}
+              <ResourceHealthBanner projectId={projectId} resourceCount={resources.length} />
+
+              {/* Upload + Init Defaults bar */}
+              {canWrite && (
+                <div style={{
+                  padding: '8px 10px', borderBottom: '1px solid var(--border)',
+                  flexShrink: 0, display: 'flex', gap: 6,
+                }}>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await api.post<{ created: string[]; skipped: string[] }>(
+                          `/projects/${projectId}/resources/init-defaults`,
+                        );
+                        if (res.data.created.length > 0) {
+                          toast.success(`Created: ${res.data.created.join(', ')}`);
+                          void qc.invalidateQueries({ queryKey: ['resources', projectId] });
+                        } else {
+                          toast('All default files already exist', { icon: 'ℹ️' });
+                        }
+                      } catch {
+                        toast.error('Failed to init defaults');
+                      }
+                    }}
+                    title="Auto-create common_keywords, variables, navigation_helpers, assertions .robot files"
+                    style={{
+                      padding: '6px 8px',
+                      background: 'rgba(42,157,143,0.12)',
+                      border: '1px solid rgba(42,157,143,0.3)', borderRadius: 5, cursor: 'pointer',
+                      color: 'var(--emerald)', fontWeight: 700, fontSize: 10,
+                    }}
+                  >
+                    ✦ Init Defaults
+                  </button>
+                  <button
+                    onClick={() => resourceFileRef.current?.click()}
+                    style={{
+                      flex: 1, padding: '6px 8px',
+                      background: 'linear-gradient(90deg, rgba(42,157,143,0.8), rgba(34,211,238,0.7))',
+                      border: 'none', borderRadius: 5, cursor: 'pointer',
+                      color: '#fff', fontWeight: 700, fontSize: 11,
+                    }}
+                  >
+                    ⬆ Upload .robot resource
+                  </button>
+                  <input
+                    ref={resourceFileRef}
+                    type="file"
+                    accept=".robot"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      try {
+                        const result = await uploadResource.mutateAsync(f);
+                        toast.success(`Uploaded ${result.filename}`);
+                        setActiveResourceFile(result.filename);
+                      } catch {
+                        toast.error('Upload failed');
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Resource file list */}
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {resourcesLoading ? (
+                  <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>
+                ) : resources.length === 0 ? (
+                  <div style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11, lineHeight: 1.7 }}>
+                    <div style={{ fontSize: 28, marginBottom: 8 }}>📁</div>
+                    <div style={{ marginBottom: 10 }}>
+                      No resource files yet. Click <strong style={{ color: 'var(--emerald)' }}>✦ Init Defaults</strong> to auto-create starter files:
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-mid)', textAlign: 'left', display: 'inline-block' }}>
+                      {['common_keywords.robot', 'variables.robot', 'navigation_helpers.robot', 'assertions.robot'].map(f => (
+                        <div key={f} style={{ marginBottom: 2 }}>📄 {f}</div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  resources.map((r) => (
+                    <div
+                      key={r.id}
+                      onClick={() => setActiveResourceFile(r.filename)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 12px', cursor: 'pointer',
+                        background: activeResourceFile === r.filename ? 'rgba(42,157,143,0.1)' : 'transparent',
+                        borderBottom: '1px solid var(--border)',
+                        borderLeft: activeResourceFile === r.filename ? '2px solid var(--emerald)' : '2px solid transparent',
+                        transition: 'all 0.12s',
+                      }}
+                    >
+                      <span style={{ fontSize: 13 }}>🤖</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.filename}
+                        </div>
+                        <div style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                          {(r.size / 1024).toFixed(1)} KB · {new Date(r.uploadedAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      {canWrite && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!window.confirm(`Delete "${r.filename}"?`)) return;
+                            deleteResource.mutateAsync(r.filename).then(() => {
+                              if (activeResourceFile === r.filename) setActiveResourceFile(null);
+                              toast.success('Deleted');
+                            }).catch(() => toast.error('Delete failed'));
+                          }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: 'var(--text-dim)', fontSize: 12, padding: '2px 4px',
+                            lineHeight: 1, borderRadius: 3,
+                          }}
+                          title="Delete resource file"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+
+            </div>
+          )}
         </div>
 
         {/* ── DRAG DIVIDER ─────────────────────────────────────────────── */}
@@ -1857,7 +2711,114 @@ export default function Scripts() {
 
         {/* ── RIGHT: Monaco Editor ───────────────────────────────────────── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#06224A' }}>
-          {openTabs.length === 0 ? (
+          {activeResourceFile ? (
+            <>
+              {/* Resource file tab bar */}
+              <div style={{
+                display: 'flex', alignItems: 'center',
+                borderBottom: '1px solid rgba(255,255,255,0.07)',
+                background: 'rgba(0,0,0,0.3)', flexShrink: 0, height: 36,
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '0 14px', height: '100%',
+                  borderRight: '1px solid rgba(255,255,255,0.07)',
+                  borderBottom: '2px solid var(--emerald)',
+                  background: 'rgba(42,157,143,0.08)',
+                }}>
+                  <span style={{ fontSize: 13 }}>🤖</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--emerald)', fontFamily: 'var(--font-mono)' }}>
+                    {activeResourceFile}{resourceDirty ? ' ●' : ''}
+                  </span>
+                  <button
+                    onClick={() => setActiveResourceFile(null)}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'rgba(226,232,240,0.4)', fontSize: 12, padding: '0 2px',
+                      lineHeight: 1, borderRadius: 3,
+                    }}
+                    title="Close"
+                  >✕</button>
+                </div>
+              </div>
+
+              {/* Resource editor toolbar */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                padding: '4px 10px', gap: 6, flexShrink: 0,
+                background: 'rgba(0,0,0,0.25)',
+                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                minHeight: 32,
+              }}>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                  resources/{activeResourceFile}
+                </span>
+              </div>
+
+              {/* Full Monaco editor */}
+              <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+                <Editor
+                  height="100%"
+                  language="plaintext"
+                  theme="vs-dark"
+                  value={resourceContent}
+                  onChange={(v) => {
+                    if (v === undefined) return;
+                    setResourceContent(v);
+                    setResourceDirty(true);
+                  }}
+                  options={{
+                    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                    fontSize: 13, lineHeight: 20,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on', tabSize: 4,
+                    renderLineHighlight: 'line',
+                    scrollbar: { verticalScrollbarSize: 5, horizontalScrollbarSize: 5 },
+                    overviewRulerLanes: 0,
+                    padding: { top: 12, bottom: 12 },
+                  }}
+                />
+              </div>
+
+              {/* Resource status bar */}
+              <div style={{
+                height: 24, background: 'rgba(0,0,0,0.3)',
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+                display: 'flex', alignItems: 'center', padding: '0 12px', gap: 16,
+                fontSize: 11, fontFamily: 'var(--font-mono)',
+                color: 'rgba(226,232,240,0.5)', flexShrink: 0,
+              }}>
+                <span style={{ color: 'rgba(226,232,240,0.8)' }}>{activeResourceFile}</span>
+                <span style={{ color: 'var(--emerald)', fontWeight: 700 }}>🤖 Robot Framework</span>
+                <div style={{ flex: 1 }} />
+                {resourceDirty && canWrite && (
+                  <button
+                    onClick={async () => {
+                      if (!resourceDirty) return;
+                      try {
+                        await saveResource.mutateAsync({ filename: activeResourceFile, content: resourceContent });
+                        setResourceDirty(false);
+                        toast.success('Saved');
+                      } catch {
+                        toast.error('Save failed');
+                      }
+                    }}
+                    style={{
+                      background: 'rgba(96,165,250,0.15)', border: '1px solid rgba(96,165,250,0.3)',
+                      borderRadius: 4, color: '#60a5fa', cursor: 'pointer',
+                      fontSize: 10, padding: '1px 8px', fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    ↑ Save (Ctrl+S)
+                  </button>
+                )}
+                {!resourceDirty && (
+                  <span style={{ color: '#34d399' }}>✓ Saved</span>
+                )}
+              </div>
+            </>
+          ) : openTabs.length === 0 ? (
             <EmptyEditor />
           ) : (
             <>
@@ -1933,6 +2894,105 @@ export default function Scripts() {
                     {activeScript.isGolden ? '★ Golden' : '☆ Golden'}
                   </button>
                 )}
+
+                {/* ▶ Run button — triggers a quick run against the default env */}
+                {activeScript?.testCaseId && (
+                  <>
+                    <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.08)', margin: '0 2px' }} />
+                    <button
+                      onClick={handleQuickRun}
+                      disabled={quickRunning || quickRunStatus === 'PENDING' || quickRunStatus === 'RUNNING'}
+                      title={`Run this script against the default environment${envConfigs.find(e => e.isDefault) ? ` (${envConfigs.find(e => e.isDefault)!.name})` : ''}`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '3px 11px', borderRadius: 5, cursor: (quickRunning || quickRunStatus === 'RUNNING' || quickRunStatus === 'PENDING') ? 'not-allowed' : 'pointer',
+                        fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                        border: '1px solid rgba(52,211,153,0.5)',
+                        background: 'rgba(52,211,153,0.1)',
+                        color: 'var(--emerald)',
+                        opacity: (quickRunning || quickRunStatus === 'RUNNING' || quickRunStatus === 'PENDING') ? 0.6 : 1,
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!quickRunning) {
+                          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(52,211,153,0.2)';
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(52,211,153,0.8)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = 'rgba(52,211,153,0.1)';
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(52,211,153,0.5)';
+                      }}
+                    >
+                      {(quickRunning || quickRunStatus === 'PENDING' || quickRunStatus === 'RUNNING')
+                        ? <>⏳ Running…</>
+                        : <>▶ Run</>}
+                    </button>
+
+                    {/* Inline result badge */}
+                    {quickRunId && !quickRunning && quickRunStatus && quickRunStatus !== 'PENDING' && quickRunStatus !== 'RUNNING' && (
+                      <>
+                        <span
+                          title="Click to view full run results"
+                          onClick={() => navigate(`/projects/${slug}/execution?runId=${quickRunId}`)}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                            border: quickRunStatus === 'PASSED'
+                              ? '1px solid rgba(52,211,153,0.5)'
+                              : quickRunStatus === 'FAILED'
+                              ? '1px solid rgba(248,113,113,0.5)'
+                              : '1px solid rgba(255,255,255,0.15)',
+                            background: quickRunStatus === 'PASSED'
+                              ? 'rgba(52,211,153,0.1)'
+                              : quickRunStatus === 'FAILED'
+                              ? 'rgba(248,113,113,0.1)'
+                              : 'rgba(255,255,255,0.05)',
+                            color: quickRunStatus === 'PASSED'
+                              ? 'var(--emerald)'
+                              : quickRunStatus === 'FAILED'
+                              ? 'var(--rose)'
+                              : 'var(--text-dim)',
+                          }}
+                        >
+                          {quickRunStatus === 'PASSED' ? '✅ PASSED' : quickRunStatus === 'FAILED' ? '❌ FAILED' : `⚠ ${quickRunStatus}`}
+                          <span style={{ fontSize: 9, opacity: 0.7 }}>↗</span>
+                        </span>
+                        {/* Re-open monitor */}
+                        {quickRunId && (
+                          <button
+                            onClick={() => { setMonitorRunId(quickRunId); setMonitorScript(activeScript?.filename ?? ''); setShowMonitor(true); }}
+                            title="Open execution monitor"
+                            style={{
+                              fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
+                              background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
+                              color: 'var(--text-dim)', fontFamily: 'var(--font-ui)',
+                            }}
+                          >
+                            ◫ Monitor
+                          </button>
+                        )}
+                        {/* Fix with AI — only on failure */}
+                        {quickRunStatus === 'FAILED' && activeScript?.testCaseId && (
+                          <button
+                            onClick={() => {
+                              setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
+                              setShowRegenModal(true);
+                            }}
+                            style={{
+                              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                              background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)',
+                              color: 'var(--violet)', fontFamily: 'var(--font-ui)',
+                            }}
+                          >
+                            🩹 Fix with AI
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
               </div>
 
               <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
@@ -1948,7 +3008,7 @@ export default function Scripts() {
                 )}
                 <Editor
                   height="100%"
-                  language="typescript"
+                  language={activeScript?.filename?.endsWith('.robot') ? 'plaintext' : 'typescript'}
                   theme="vs-dark"
                   value={activeContent}
                   onChange={(v) => {
@@ -1979,8 +3039,14 @@ export default function Scripts() {
                 color: 'rgba(226,232,240,0.5)', flexShrink: 0,
               }}>
                 <span style={{ color: 'rgba(226,232,240,0.8)' }}>{activeScript?.filename ?? ''}</span>
-                <span>TypeScript</span>
-                <span>TS 5.0</span>
+                {activeScript?.scriptType === 'ROBOT' ? (
+                  <span style={{ color: 'var(--emerald)', fontWeight: 700 }}>🤖 Robot Framework</span>
+                ) : (
+                  <>
+                    <span>TypeScript</span>
+                    <span>TS 5.0</span>
+                  </>
+                )}
                 {statusSize && <span>{statusSize}</span>}
                 {statusDirty
                   ? <span style={{ color: '#fbbf24' }}>● Modified</span>

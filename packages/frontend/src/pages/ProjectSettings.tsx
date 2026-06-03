@@ -69,10 +69,15 @@ function DetailsTab() {
   const { activeProject } = useProjectStore();
   const { slug } = useParams<{ slug: string }>();
   const updateProject = useUpdateProject(activeProject?.id ?? '');
+  const updateCtx     = useUpdateContext(activeProject?.id ?? '');
+  const { data: context } = useProjectContext(activeProject?.id ?? '');
+
   const [name, setName]       = useState(activeProject?.name ?? '');
   const [desc, setDesc]       = useState(activeProject?.description ?? '');
   const [baseUrl, setBaseUrl] = useState(activeProject?.baseUrl ?? '');
   const [colorIdx, setColorIdx] = useState(0);
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
 
   useEffect(() => {
     if (activeProject) {
@@ -82,6 +87,13 @@ function DetailsTab() {
     }
   }, [activeProject]);
 
+  // Pre-fill custom instructions from stored context
+  useEffect(() => {
+    if (context?.customInstructions != null && customInstructions === '') {
+      setCustomInstructions(context.customInstructions ?? '');
+    }
+  }, [context?.customInstructions]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function handleSave() {
     if (!activeProject) return;
     try {
@@ -89,6 +101,17 @@ function DetailsTab() {
       toast.success('Project details saved.');
     } catch {
       toast.error('Failed to save project details.');
+    }
+  }
+
+  async function handleSaveInstructions() {
+    try {
+      await updateCtx.mutateAsync({ customInstructions: customInstructions.trim() || null });
+      setInstructionsSaved(true);
+      setTimeout(() => setInstructionsSaved(false), 2500);
+      toast.success('AI instructions saved.');
+    } catch {
+      toast.error('Failed to save instructions.');
     }
   }
 
@@ -205,6 +228,94 @@ function DetailsTab() {
         >
           {updateProject.isPending ? 'Saving…' : '💾 Save Changes'}
         </button>
+      </div>
+
+      {/* ── Custom AI Instructions ─────────────────────────────────────── */}
+      <div
+        style={{
+          marginTop: '12px',
+          padding: '20px',
+          background: 'var(--surface2)',
+          border: '1px solid rgba(108,99,255,0.25)',
+          borderRadius: '10px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+          <label style={{ ...LABEL_STYLE, marginBottom: 0, color: 'var(--violet)' }}>
+            🧠 AI Script Instructions
+          </label>
+          <span
+            style={{
+              fontSize: '10px',
+              fontFamily: 'var(--font-mono)',
+              color: 'var(--text-dim)',
+              background: 'var(--surface3)',
+              border: '1px solid var(--border)',
+              borderRadius: '4px',
+              padding: '2px 7px',
+            }}
+          >
+            injected into every script generation
+          </span>
+        </div>
+        <p style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginBottom: '10px', lineHeight: 1.6 }}>
+          Describe your app's login type, sidebar structure, and any known quirks. The AI reads this before
+          generating every Robot script — no UI scan needed.
+        </p>
+        <textarea
+          className="input-field"
+          value={customInstructions}
+          onChange={(e) => setCustomInstructions(e.target.value)}
+          placeholder={
+            '## Login\n' +
+            '- Two-step Keycloak: enter username → click Login → password field appears\n' +
+            '- Login selectors: css=#username / css=#password / css=#kc-login\n' +
+            '- Post-login URL contains: /myProfile (takes 20-30s to load)\n\n' +
+            '## Navigation\n' +
+            '- Hash routing: URLs look like /#/stockManagement\n' +
+            '- Sidebar is a ul/li list — use exact text match for menu clicks\n' +
+            '- "Stock Creation" and "Stock Management > Stock" are different menu items\n\n' +
+            '## Forms\n' +
+            '- ng-select dropdowns: open with focus() + ArrowDown, NOT click()\n' +
+            '- Field IDs follow pattern: css=#sixdee_field_<fieldName>'
+          }
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '12px',
+            minHeight: '160px',
+            resize: 'vertical',
+            lineHeight: 1.65,
+          }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+          <button
+            type="button"
+            onClick={handleSaveInstructions}
+            disabled={updateCtx.isPending}
+            style={{
+              padding: '8px 18px',
+              background: instructionsSaved
+                ? 'linear-gradient(135deg, #059669, #047857)'
+                : 'linear-gradient(135deg, #6c63ff, #4f46e5)',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#fff',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: updateCtx.isPending ? 'not-allowed' : 'pointer',
+              fontFamily: 'var(--font-ui)',
+              opacity: updateCtx.isPending ? 0.6 : 1,
+              transition: 'background 0.3s',
+            }}
+          >
+            {updateCtx.isPending ? 'Saving…' : instructionsSaved ? '✓ Saved' : '💾 Save Instructions'}
+          </button>
+          <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+            {context?.customInstructions
+              ? 'Last saved: ' + (context.updatedAt ? new Date(context.updatedAt).toLocaleDateString() : 'previously')
+              : 'Not set yet'}
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -21,9 +21,19 @@ import type {
   AgentFinishData,
   SelectorType,
   LoginInstructions,
+  AgentLearning,
 } from '../types/scanner.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
+export interface BrowserAgentProductContext {
+  /** Previous verified flows from agentic traces for any feature */
+  agentLearnings: AgentLearning[];
+  /** All pages discovered during the project UI scan */
+  navigationMap: Array<{ label: string; url: string }>;
+  /** Already-saved test cases for this specific feature (for reference and deduplication) */
+  existingTCsForFeature: Array<{ title: string; steps: string[] }>;
+}
 
 export interface BrowserAgentOptions {
   page: Page;
@@ -33,8 +43,26 @@ export interface BrowserAgentOptions {
   testGoal: string;
   seedSteps?: string[];
   additionalContext?: string;
+  /** Application knowledge injected into the agent's system prompt */
+  productContext?: BrowserAgentProductContext;
   projectId: string;
+  projectName?: string;
   onStep: (step: RecordedAction) => Promise<void>;
+}
+
+/** Per-step verified locator entry stored in generationHints JSON */
+export interface StructuredLocator {
+  step: string;
+  selectorType: string;
+  selector: string;
+  /** Exact Playwright statement verified in live browser, e.g. await page.getByRole('button', { name: 'Save' }).first().click(); */
+  playwright: string;
+}
+
+/** Structured hints format (version 2) stored in TC.generationHints as JSON string */
+export interface StructuredHints {
+  version: 2;
+  locators: StructuredLocator[];
 }
 
 export interface GeneratedAgentTC {
@@ -45,7 +73,9 @@ export interface GeneratedAgentTC {
   type: 'UI';
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   useCaseTag: string;
-  generationHints: string;
+  generationHints: string; // JSON-encoded StructuredHints (version 2) or legacy string
+  /** Pre-generated Playwright script from deterministic trace conversion — only set on the happy-path TC */
+  scriptContent?: string;
 }
 
 // ── System prompt ──────────────────────────────────────────────────────────
@@ -55,14 +85,51 @@ function buildSystemPrompt(opts: BrowserAgentOptions): string {
     `You are a senior QA engineer with direct control of a real web browser.`,
     ``,
     `Your goal is to trace the UI flow for: "${opts.testGoal}"`,
-    `You are on the page: "${opts.menuContext}" (${opts.targetUrl})`,
+    `Feature under test: "${opts.menuContext}"`,
+    `Start URL: ${opts.targetUrl}`,
     ``,
-    `SCOPE: Only interact with elements on this page and any modals/dialogs it opens.`,
-    `Do NOT navigate to other main sections of the application.`,
+    `PHASE 1 — PAGE AUDIT (always do this first on every new page):`,
+    `- Call audit_page immediately before touching any element.`,
+    `- The audit shows all form fields (REQUIRED vs optional), buttons, nav items, and the best Playwright locator for each.`,
+    `- Never guess selectors from the screenshot — use what the audit tells you.`,
+    ``,
+    `PHASE 2 — NAVIGATION (if needed):`,
+    `- If the current page does not show the target feature, find it in the navigation and click through.`,
+    `- Call audit_page again after navigating to confirm you are on the right screen.`,
+    ``,
+    `PHASE 3 — INTERACTION:`,
+    `- Fill every field marked REQUIRED before attempting to submit.`,
+    `- Use the exact selector and selectorType from the audit output.`,
+    `- After every submit/save action, add assert_visible to confirm the result.`,
+    ``,
+    `LOCATOR RULES:`,
+    `- Priority: testid > role > label > placeholder > text > css`,
+    `- selectorType "role": encode as "roleName|Accessible Name" — e.g., "button|Save Order", "combobox|Status"`,
+    `  NEVER use a bare role without a name (e.g., "button" alone is wrong — use "button|Save")`,
+    `- selectorType "label": use the exact label text from the audit`,
+    `- selectorType "testid": use the data-testid value from the audit`,
+    `- selectorType "placeholder": use the placeholder text from the audit`,
+    ``,
+    `SIDEBAR NAVIGATION RULES:`,
+    `- The sidebar uses <ul>/<li> elements — NOT <nav> or <aside> — so the audit lists them under NAVIGATION as <li> items.`,
+    `- To expand a parent menu item: click with selectorType "text" and the exact label (e.g. "Stock Management").`,
+    `- ALWAYS use the exact label text — partial matches hit wrong items (e.g. "Stock" matches "Stock Management", "Stock Orders", etc.).`,
+    `- After expanding a parent, wait for the submenu to appear before clicking the child item.`,
+    `- If the audit shows no NAVIGATION items, call audit_page again after the page has settled.`,
+    `- CRITICAL: If seed steps specify a navigation path (e.g. "Expand Stock Management menu → Click Stock submenu"), follow that EXACT path.`,
+    `  Do NOT take a shortcut via a differently-named menu item that sounds related to the goal (e.g. do NOT click "Stock Creation" when told to go to "Stock Management > Stock").`,
+    `  A menu item named "Stock Creation" is a completely different feature from the "Stock" submenu under "Stock Management".`,
+    ``,
+    `OTHER RULES:`,
+    `- Only interact with elements visible on this page and any modals it opens.`,
+    `- If a tool call fails, check the audit for a better locator or use wait_for_element first.`,
+    `- Call finish_recording when the goal is achieved or you are fully blocked.`,
+    `- Maximum 30 interaction steps — call finish_recording before hitting this limit.`,
+    `- Keep stepDescription short and human-readable (they become test case steps).`,
   ];
 
   if (opts.seedSteps && opts.seedSteps.length > 0) {
-    parts.push(``, `User-provided steps to guide this trace (follow these, capturing real selectors):`);
+    parts.push(``, `User-provided steps to follow (capture real selectors for each):`);
     opts.seedSteps.forEach((s, i) => parts.push(`${i + 1}. ${s}`));
   }
 
@@ -70,16 +137,52 @@ function buildSystemPrompt(opts: BrowserAgentOptions): string {
     parts.push(``, `Additional context: ${opts.additionalContext}`);
   }
 
-  parts.push(
-    ``,
-    `Rules:`,
-    `- Prefer semantic selectors: role > label > text > testid > placeholder > css`,
-    `- After any form submit or navigation action, add assert_visible to confirm the result`,
-    `- If a tool call fails, try a different selectorType (e.g. switch from css to text or role)`,
-    `- Call finish_recording when the goal is achieved or you are fully blocked`,
-    `- Maximum 20 actions — call finish_recording before hitting this limit`,
-    `- Keep stepDescription short and human-readable (they become test case steps)`,
-  );
+  // ── Product context: inject app knowledge so the agent can navigate and generate meaningful TCs ──
+  const ctx = opts.productContext;
+  if (ctx) {
+    // Navigation map — tells the agent what pages exist and their URLs
+    if (ctx.navigationMap.length > 0) {
+      parts.push(``, `APPLICATION PAGES (${ctx.navigationMap.length} discovered — use these to navigate if needed):`);
+      ctx.navigationMap.slice(0, 30).forEach(n => parts.push(`  - ${n.label}: ${n.url}`));
+    }
+
+    // Previous agent traces — the most valuable training signal: real verified flows
+    const relevantLearnings = ctx.agentLearnings.filter(
+      l => l.menuContext === opts.menuContext || l.targetUrl === opts.targetUrl,
+    );
+    const otherLearnings = ctx.agentLearnings.filter(
+      l => l.menuContext !== opts.menuContext && l.targetUrl !== opts.targetUrl,
+    );
+
+    if (relevantLearnings.length > 0) {
+      parts.push(``, `PREVIOUSLY VERIFIED FLOWS FOR THIS EXACT FEATURE (follow these steps — they use real selectors):`);
+      for (const l of relevantLearnings) {
+        parts.push(`  ${l.menuContext} (${l.targetUrl}):`);
+        l.verifiedFlow.forEach(s => parts.push(`    → ${s}`));
+        if (l.verifiedLocators.length > 0) {
+          parts.push(`  Verified selectors:`);
+          l.verifiedLocators.slice(0, 10).forEach(loc =>
+            parts.push(`    - ${loc.semanticName}: ${loc.selector}`),
+          );
+        }
+      }
+    }
+
+    if (otherLearnings.length > 0) {
+      parts.push(``, `OTHER VERIFIED FLOWS (for navigation context — how to reach various app sections):`);
+      for (const l of otherLearnings.slice(0, 5)) {
+        parts.push(`  ${l.menuContext}: ${l.verifiedFlow.slice(0, 3).join(' → ')}`);
+      }
+    }
+
+    // Existing test cases — deduplication reference
+    if (ctx.existingTCsForFeature.length > 0) {
+      parts.push(``, `EXISTING TEST CASES FOR "${opts.menuContext}" (do NOT generate duplicates of these):`);
+      ctx.existingTCsForFeature.slice(0, 8).forEach(tc => {
+        parts.push(`  - "${tc.title}"`);
+      });
+    }
+  }
 
   return parts.join('\n');
 }
@@ -88,7 +191,17 @@ function buildSystemPrompt(opts: BrowserAgentOptions): string {
 
 function buildPlaywrightLocator(page: Page, selector: string, selectorType: SelectorType) {
   switch (selectorType) {
-    case 'role':        return page.getByRole(selector as Parameters<typeof page.getByRole>[0]);
+    case 'role': {
+      // Selector encodes role + accessible name as "role|Accessible Name"
+      // e.g., "button|Save Order" → page.getByRole('button', { name: 'Save Order' })
+      const pipeIdx = selector.indexOf('|');
+      if (pipeIdx > 0) {
+        const roleStr = selector.substring(0, pipeIdx) as Parameters<typeof page.getByRole>[0];
+        const name = selector.substring(pipeIdx + 1).trim();
+        return name ? page.getByRole(roleStr, { name }) : page.getByRole(roleStr);
+      }
+      return page.getByRole(selector as Parameters<typeof page.getByRole>[0]);
+    }
     case 'label':       return page.getByLabel(selector);
     case 'text':        return page.getByText(selector, { exact: false });
     case 'testid':      return page.getByTestId(selector);
@@ -112,7 +225,8 @@ async function executeToolCall(
       case 'click': {
         const locator = buildPlaywrightLocator(page, selector, selectorType);
         await locator.first().click({ timeout: 10000 });
-        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
+        // networkidle times out on SPAs with background polling — domcontentloaded is sufficient
+        await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => undefined);
         break;
       }
       case 'fill': {
@@ -165,36 +279,141 @@ async function executeToolCall(
   }
 }
 
-// ── DOM excerpt helper ─────────────────────────────────────────────────────
+// ── Rich DOM audit helper ──────────────────────────────────────────────────
 
-async function getCompactDomExcerpt(page: Page): Promise<string> {
-  // Inline function only — avoids esbuild __name injection issues with page.evaluate
-  return page.evaluate(function() {
-    const items: string[] = [];
-    const seen = new Set<string>();
-    const els = document.querySelectorAll<HTMLElement>(
-      'button, input:not([type="hidden"]), select, textarea, a[href], [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"]',
-    );
-    els.forEach(function(el) {
-      const tag = el.tagName.toLowerCase();
+async function getRichDomAudit(page: Page): Promise<string> {
+  // Use function() + const expressions only — avoids esbuild __name injection inside page.evaluate
+  return page.evaluate(function () {
+    const trunc = function(s: string, n: number): string { return s.length > n ? s.slice(0, n) + '…' : s; };
+
+    const getLabel = function(el: HTMLElement): string {
+      const aria = el.getAttribute('aria-label');
+      if (aria) return aria.trim();
+      const id = el.getAttribute('id');
+      if (id) {
+        const lbl = document.querySelector('label[for="' + id + '"]');
+        if (lbl) return (lbl.textContent || '').trim();
+      }
+      const by = el.getAttribute('aria-labelledby');
+      if (by) {
+        const lbl = document.getElementById(by);
+        if (lbl) return (lbl.textContent || '').trim();
+      }
+      const ph = (el as HTMLInputElement).placeholder;
+      if (ph) return ph.trim();
+      return trunc((el.textContent || '').trim().replace(/\s+/g, ' '), 50);
+    };
+
+    const bestLocator = function(el: HTMLElement, tag: string, label: string): string {
+      const testid = el.getAttribute('data-testid');
+      if (testid) return 'getByTestId("' + testid + '")';
       const role = el.getAttribute('role') || tag;
-      const rawText = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-      const ariaLabel = el.getAttribute('aria-label') || '';
-      const placeholder = (el as HTMLInputElement).placeholder || '';
-      const testid = el.getAttribute('data-testid') || '';
-      const label = ariaLabel || placeholder || rawText;
-      if (!label || seen.has(role + ':' + label)) return;
-      seen.add(role + ':' + label);
-      const hint = testid ? '[data-testid="' + testid + '"]' : label;
-      items.push('[' + role + '] ' + label + ' | ' + hint);
-    });
-    return items.slice(0, 50).join('\n');
+      if (role === 'button' || tag === 'button') {
+        return label ? 'getByRole("button", { name: "' + trunc(label, 40) + '" })' : 'locator("button")';
+      }
+      if (tag === 'a') return label ? 'getByRole("link", { name: "' + trunc(label, 40) + '" })' : 'locator("a")';
+      if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+        if (label) return 'getByLabel("' + trunc(label, 40) + '")';
+        const ph = (el as HTMLInputElement).placeholder;
+        if (ph) return 'getByPlaceholder("' + trunc(ph, 40) + '")';
+      }
+      if (role && label) return 'getByRole("' + role + '", { name: "' + trunc(label, 40) + '" })';
+      const id = el.getAttribute('id');
+      return id ? 'locator("#' + id + '")' : 'locator("' + tag + '")';
+    };
+
+    const visible = function(el: Element): boolean {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return false;
+      const s = window.getComputedStyle(el);
+      return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+    };
+
+    const lines: string[] = [];
+    lines.push('=== PAGE: ' + (document.title || 'Untitled') + ' | URL: ' + window.location.href + ' ===');
+
+    // Form fields
+    const fields = Array.from(document.querySelectorAll<HTMLElement>(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]), select, textarea',
+    )).filter(visible);
+    if (fields.length > 0) {
+      const req = fields.filter(e => (e as HTMLInputElement).required || e.getAttribute('aria-required') === 'true').length;
+      lines.push('\nFORM FIELDS (' + fields.length + ' visible, ' + req + ' REQUIRED):');
+      for (const el of fields.slice(0, 40)) {
+        const tag = el.tagName.toLowerCase();
+        const type = (el as HTMLInputElement).type || tag;
+        const label = getLabel(el);
+        const testid = el.getAttribute('data-testid') || '';
+        const required = (el as HTMLInputElement).required || el.getAttribute('aria-required') === 'true';
+        const ph = (el as HTMLInputElement).placeholder || '';
+        let line = '  ' + (required ? '●' : '○') + ' ';
+        line += (label ? '"' + trunc(label, 40) + '"' : '(unlabeled)') + ' [' + type + ']';
+        if (required) line += ' REQUIRED';
+        if (testid) line += ' testid="' + testid + '"';
+        if (!label && ph) line += ' placeholder="' + trunc(ph, 30) + '"';
+        if (tag === 'select') {
+          const opts = Array.from((el as HTMLSelectElement).options).map(function(o) { return o.text.trim(); }).filter(Boolean).slice(0, 8);
+          if (opts.length) line += ' options:[' + opts.join(', ') + ']';
+        }
+        line += ' → ' + bestLocator(el, tag, label);
+        lines.push(line);
+      }
+    }
+
+    // Buttons
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>(
+      'button, [role="button"], input[type="submit"], input[type="button"]',
+    )).filter(visible);
+    if (buttons.length > 0) {
+      lines.push('\nBUTTONS (' + buttons.length + ' visible):');
+      const seen = new Set<string>();
+      for (const el of buttons.slice(0, 20)) {
+        const label = getLabel(el) || trunc((el.textContent || '').trim().replace(/\s+/g, ' '), 50);
+        if (!label || seen.has(label)) continue;
+        seen.add(label);
+        const testid = el.getAttribute('data-testid') || '';
+        let line = '  ● "' + trunc(label, 50) + '"';
+        if (testid) line += ' testid="' + testid + '"';
+        line += ' → ' + bestLocator(el, 'button', label);
+        lines.push(line);
+      }
+    }
+
+    // Navigation / menu items
+    // Include bare <li> elements used by Angular sidebar menus (e.g. Ventas) that have no role/nav/aside
+    const navEls = Array.from(document.querySelectorAll<HTMLElement>(
+      '[role="menuitem"], [role="tab"], nav a[href], aside a[href], .sidebar a[href], [class*="sidebar"] a[href], [class*="nav"] a[href], [class*="menu"] li, [class*="sidebar"] li, [class*="sidenav"] li',
+    )).filter(visible);
+    if (navEls.length > 0) {
+      lines.push('\nNAVIGATION (' + navEls.length + ' items):');
+      const seen = new Set<string>();
+      for (const el of navEls.slice(0, 30)) {
+        // Prefer inner <span> text for <li> elements to avoid icon + arrow noise
+        const spanText = el.tagName.toLowerCase() === 'li'
+          ? (el.querySelector('span')?.textContent || '').trim()
+          : '';
+        const label = spanText || getLabel(el) || trunc((el.textContent || '').trim().replace(/\s+/g, ' '), 50);
+        if (!label || seen.has(label)) continue;
+        seen.add(label);
+        const href = (el as HTMLAnchorElement).href || '';
+        const tag = el.tagName.toLowerCase();
+        let line = '  ↗ "' + trunc(label, 50) + '"';
+        if (href) line += ' href="' + trunc(href.replace(window.location.origin, ''), 40) + '"';
+        // For <li> sidebar items use exact getByText — partial matches hit wrong items
+        line += tag === 'li'
+          ? ' → getByText("' + trunc(label, 40) + '", { exact: true }).first()'
+          : ' → ' + bestLocator(el, tag, label);
+        lines.push(line);
+      }
+    }
+
+    return lines.join('\n');
   }) as Promise<string>;
 }
 
 // ── Tool definitions ───────────────────────────────────────────────────────
 
-const SELECTOR_TYPES = ['css', 'text', 'role', 'label', 'testid', 'placeholder'] as const;
+const SELECTOR_TYPES = ['testid', 'role', 'label', 'placeholder', 'text', 'css'] as const;
 
 function createBrowserTools(): DynamicStructuredTool[] {
   return [
@@ -252,7 +471,7 @@ function createBrowserTools(): DynamicStructuredTool[] {
       description: 'Scroll the page.',
       schema: z.object({
         direction: z.enum(['down', 'up', 'top', 'bottom']),
-        pixels: z.number().optional().describe('Pixels to scroll (for up/down)'),
+        pixels: z.number().nullish().describe('Pixels to scroll (for up/down)'),
       }),
       func: async () => 'ok',
     }),
@@ -262,7 +481,15 @@ function createBrowserTools(): DynamicStructuredTool[] {
       schema: z.object({
         selector: z.string(),
         selectorType: z.enum(SELECTOR_TYPES),
-        timeoutMs: z.number().optional().describe('Max wait in ms, default 5000'),
+        timeoutMs: z.number().nullish().describe('Max wait in ms, default 5000'),
+      }),
+      func: async () => 'ok',
+    }),
+    new DynamicStructuredTool({
+      name: 'audit_page',
+      description: 'Get a full structured inventory of all visible form fields (with REQUIRED/optional status), buttons, and navigation items on the current page, each with its best Playwright locator. Call this FIRST on every new page before interacting with any element.',
+      schema: z.object({
+        reason: z.string().nullish().describe('Why you are auditing this page'),
       }),
       func: async () => 'ok',
     }),
@@ -273,7 +500,7 @@ function createBrowserTools(): DynamicStructuredTool[] {
         testTitle: z.string().describe('Short title for the generated test case'),
         expectedResult: z.string().describe('Final expected outcome description'),
         status: z.enum(['success', 'blocked']),
-        blockedReason: z.string().optional(),
+        blockedReason: z.string().nullish(),
       }),
       func: async () => 'ok',
     }),
@@ -282,15 +509,45 @@ function createBrowserTools(): DynamicStructuredTool[] {
 
 // ── Script generation (deterministic, no LLM) ─────────────────────────────
 
+/** Converts a RecordedAction into an exact Playwright locator expression */
 function buildLocatorCode(action: RecordedAction): string {
   const sel = JSON.stringify(action.selector ?? '');
   switch (action.selectorType) {
-    case 'role':        return `page.getByRole(${sel})`;
+    case 'role': {
+      // Selector is encoded as "role|Accessible Name" — e.g., "button|Save Order"
+      const selector = action.selector ?? '';
+      const pipeIdx = selector.indexOf('|');
+      if (pipeIdx > 0) {
+        const role = JSON.stringify(selector.substring(0, pipeIdx));
+        const name = JSON.stringify(selector.substring(pipeIdx + 1).trim());
+        return `page.getByRole(${role}, { name: ${name} })`;
+      }
+      return `page.getByRole(${sel})`;
+    }
     case 'label':       return `page.getByLabel(${sel})`;
     case 'text':        return `page.getByText(${sel})`;
     case 'testid':      return `page.getByTestId(${sel})`;
     case 'placeholder': return `page.getByPlaceholder(${sel})`;
     default:            return `page.locator(${sel})`;
+  }
+}
+
+/** Converts a RecordedAction into the exact Playwright statement used in generated scripts */
+function buildPlaywrightStatement(action: RecordedAction): string {
+  const loc = buildLocatorCode(action);
+  switch (action.toolName) {
+    case 'click':
+      return `await ${loc}.first().click();`;
+    case 'fill':
+      return `await ${loc}.first().fill(${JSON.stringify(action.value ?? '')});`;
+    case 'assert_visible':
+      return `await expect(${loc}.first()).toBeVisible();`;
+    case 'assert_text':
+      return `await expect(${loc}.first()).toContainText(${JSON.stringify(action.expectedText ?? '')});`;
+    case 'wait_for_element':
+      return `await ${loc}.first().waitFor({ state: 'visible', timeout: ${action.timeoutMs ?? 5000} });`;
+    default:
+      return '';
   }
 }
 
@@ -318,12 +575,19 @@ function buildLoginLines(login: LoginInstructions): string[] {
     if (step.action === 'fill') {
       const isPassword = step.description.toLowerCase().includes('password');
       const val = isPassword ? `process.env.TC_PASSWORD ?? ''` : `process.env.TC_USERNAME ?? ''`;
-      lines.push(`  await page.locator(${JSON.stringify(step.selector)}).first().fill(${val});`);
+      if (isPassword) {
+        // Keycloak requires real key events — fill() bypasses them and leaves Login button disabled
+        lines.push(`  await page.locator(${JSON.stringify(step.selector)}).first().click();`);
+        lines.push(`  await page.locator(${JSON.stringify(step.selector)}).first().pressSequentially(${val}, { delay: 50 });`);
+      } else {
+        lines.push(`  await page.locator(${JSON.stringify(step.selector)}).first().fill(${val});`);
+      }
     } else if (step.action === 'click') {
       lines.push(`  await page.locator(${JSON.stringify(step.selector)}).first().click();`);
     }
   }
-  lines.push(`  await page.waitForLoadState('networkidle', { timeout: 15000 });`);
+  // myProfile page takes ~20s to load on this platform — networkidle never reached due to background polling
+  lines.push(`  await page.waitForURL(/.*\\/myProfile/, { timeout: 30000 });`);
   return lines;
 }
 
@@ -340,19 +604,55 @@ export function actionLogToPlaywrightScript(
     .filter(Boolean);
 
   const title = finish.testTitle.replace(/'/g, "\\'");
+  // Use process.env.BASE_URL — never hardcode the URL
+  let targetPathExpr: string;
+  if (targetUrl.startsWith('http')) {
+    try {
+      const parsedPath = new URL(targetUrl).pathname;
+      targetPathExpr = `\`\${process.env.BASE_URL}${parsedPath}\``;
+    } catch {
+      targetPathExpr = 'process.env.BASE_URL!';
+    }
+  } else {
+    targetPathExpr = `\`\${process.env.BASE_URL}${targetUrl}\``;
+  }
+
   return [
     `import { test, expect } from '@playwright/test';`,
     ``,
     `test('${title}', async ({ page }) => {`,
-    `  await page.goto('/');`,
+    `  const baseURL = process.env.BASE_URL;`,
+    `  if (!baseURL) throw new Error('BASE_URL environment variable is not set');`,
+    `  await page.goto(baseURL);`,
     ...loginLines,
-    `  await page.goto(${JSON.stringify(targetUrl)});`,
+    `  await page.goto(${targetPathExpr});`,
     ``,
     ...testLines,
     ``,
     `  // Expected: ${finish.expectedResult}`,
     `});`,
   ].join('\n');
+}
+
+/** Builds a StructuredHints JSON string from verified trace actions */
+function buildStructuredHints(actions: RecordedAction[]): string {
+  const ELEMENT_TOOLS = new Set(['click', 'fill', 'assert_visible', 'assert_text', 'wait_for_element']);
+  const locators: StructuredLocator[] = actions
+    .filter(a => a.success && a.selector && ELEMENT_TOOLS.has(a.toolName))
+    .map(a => {
+      const playwright = buildPlaywrightStatement(a);
+      if (!playwright) return null;
+      return {
+        step: a.stepDescription ?? `${a.toolName} ${a.selector}`,
+        selectorType: a.selectorType ?? 'css',
+        selector: a.selector!,
+        playwright,
+      };
+    })
+    .filter(Boolean) as StructuredLocator[];
+
+  const hints: StructuredHints = { version: 2, locators };
+  return JSON.stringify(hints);
 }
 
 export function actionLogToTestCases(
@@ -362,11 +662,6 @@ export function actionLogToTestCases(
 ): GeneratedAgentTC[] {
   const successful = actions.filter(a => a.success && a.toolName !== 'finish_recording');
   const steps = successful.map(a => a.stepDescription ?? `${a.toolName} ${a.selector ?? ''}`.trim());
-  const hints = successful
-    .filter(a => a.selector)
-    .map(a => `${a.stepDescription ?? a.toolName}: ${a.selectorType ?? 'css'}=${a.selector}`)
-    .join('; ');
-
   return [{
     title: finish.testTitle,
     description: `Agentic trace of "${menuContext}" — verified flow captured by browser agent`,
@@ -375,7 +670,7 @@ export function actionLogToTestCases(
     type: 'UI',
     priority: 'HIGH',
     useCaseTag: menuContext,
-    generationHints: hints,
+    generationHints: buildStructuredHints(successful),
   }];
 }
 
@@ -388,8 +683,9 @@ export async function analyzeTraceToTestCases(
   testGoal: string,
   loginInstructions: LoginInstructions,
   projectId: string,
+  projectName?: string,
 ): Promise<GeneratedAgentTC[]> {
-  const llm = createLLM({ temperature: 0, agentName: 'tc-analyzer', projectId });
+  const llm = createLLM({ temperature: 0, agentName: 'tc-analyzer', projectId, projectName });
 
   // Build human-readable login steps from stored instructions
   const loginStepLines: string[] = [];
@@ -426,7 +722,7 @@ Each element must match this shape exactly:
   "expectedResult": "string — specific, observable outcome",
   "priority": "HIGH" | "MEDIUM" | "LOW",
   "useCaseTag": "string — feature group, e.g. 'Project Creation'",
-  "generationHints": "string — semicolon-separated 'step desc: selectorType=selector' entries"
+  "generationHints": "string — JSON-stringified StructuredHints object (see format below)"
 }
 
 RULES:
@@ -437,8 +733,23 @@ RULES:
 5. Negative tests: empty states, cancel flows, duplicate entries, unauthorised scenarios inferred from context.
 6. Titles MUST NOT repeat the user's original goal text — write concise action-based titles.
 7. useCaseTag groups related TCs (e.g. "Project Creation", "Form Validation").
-8. generationHints: include trace selectors relevant to this TC so script generation can reuse them.
+8. generationHints MUST be a JSON string with this exact structure:
+   {"version":2,"locators":[{"step":"<exact step text from your steps array>","selectorType":"<type>","selector":"<value>","playwright":"<exact Playwright statement>"},...]}
+   - Only include entries for steps that interact with UI elements (click, fill, assert).
+   - Use ONLY the verified selectors provided in the "Verified Selectors" section below.
+   - Map each relevant step in your TC to the closest matching verified selector.
+   - The "playwright" field must be the exact statement from the verified selectors list.
+   - Do NOT invent new selectors — only reference verified ones.
 9. Steps must be natural-language instructions readable by a manual QA tester — no code.`;
+
+  // Build the verified selectors lookup for the LLM to reference when building generationHints
+  const ELEMENT_TOOLS = new Set(['click', 'fill', 'assert_visible', 'assert_text', 'wait_for_element']);
+  const verifiedSelectorsLines = successful
+    .filter(a => a.selector && ELEMENT_TOOLS.has(a.toolName))
+    .map(a => {
+      const playwright = buildPlaywrightStatement(a);
+      return `  step="${a.stepDescription ?? a.toolName}" selectorType="${a.selectorType ?? 'css'}" selector="${a.selector}" playwright="${playwright}"`;
+    });
 
   const userContent = `## Test Goal
 ${testGoal}
@@ -452,11 +763,15 @@ ${loginStepLines.join('\n')}
 ## Recorded Browser Trace (${successful.length} successful steps with verified selectors)
 ${traceLines.join('\n')}
 
+## Verified Selectors (use ONLY these in generationHints — do not invent others)
+${verifiedSelectorsLines.length > 0 ? verifiedSelectorsLines.join('\n') : '(none)'}
+
 ## Trace Outcome
 Status: ${finish.status}
 Agent expected result: ${finish.expectedResult}${finish.blockedReason ? `\nBlocked reason: ${finish.blockedReason}` : ''}
 
-Generate comprehensive test cases. Infer validation and negative scenarios from forms, buttons, and interactions visible in the trace.`;
+Generate comprehensive test cases. Infer validation and negative scenarios from forms, buttons, and interactions visible in the trace.
+For generationHints on each TC: map each UI-interaction step to the matching verified selector above and produce the JSON string.`;
 
   try {
     const response = await llm.invoke([
@@ -503,8 +818,8 @@ Generate comprehensive test cases. Infer validation and negative scenarios from 
 // ── Main agent loop ────────────────────────────────────────────────────────
 
 export async function runBrowserAgent(opts: BrowserAgentOptions): Promise<BrowserAgentResult> {
-  const { page, projectId, onStep } = opts;
-  const llm = createLLM({ temperature: 0, agentName: 'browser-agent', projectId });
+  const { page, projectId, projectName, onStep } = opts;
+  const llm = createLLM({ temperature: 0, agentName: 'browser-agent', projectId, projectName });
   const tools = createBrowserTools();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -531,15 +846,19 @@ export async function runBrowserAgent(opts: BrowserAgentOptions): Promise<Browse
   const actions: RecordedAction[] = [];
   let finishData: AgentFinishData | null = null;
   let stepNumber = 0;
-  const MAX_STEPS = 20;
+  const MAX_STEPS = 30;
+  const WALL_CLOCK_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes total
+  const MAX_CONSECUTIVE_FAILURES = 5;           // force-finish if stuck retrying
+  const startTime = Date.now();
+  let consecutiveFailures = 0;
 
   // Track previous raw PNG for pixel-diff comparison (diff runs on raw; we compress for LLM)
   let prevRawBuf: Buffer | null = null;
 
-  while (stepNumber < MAX_STEPS && !finishData) {
+  while (stepNumber < MAX_STEPS && !finishData && (Date.now() - startTime) < WALL_CLOCK_TIMEOUT_MS) {
     const rawBuf = await page.screenshot({ type: 'png', fullPage: false });
     const currentUrl = page.url();
-    const domExcerpt = await getCompactDomExcerpt(page).catch(() => '(DOM unavailable)');
+    const domExcerpt = await getRichDomAudit(page).catch(() => '(DOM unavailable)');
 
     const actionSummary = actions.length > 0
       ? actions.map(a =>
@@ -613,6 +932,16 @@ export async function runBrowserAgent(opts: BrowserAgentOptions): Promise<Browse
         break;
       }
 
+      // audit_page returns live DOM data without counting as an interaction step
+      if (toolCall.name === 'audit_page') {
+        const audit = await getRichDomAudit(page).catch(() => '(DOM audit unavailable)');
+        history.push(new ToolMessage({
+          content: audit,
+          tool_call_id: toolCall.id ?? `call_${Date.now()}`,
+        }));
+        continue;
+      }
+
       const result = await executeToolCall(page, toolCall.name, toolCall.args);
       stepNumber++;
 
@@ -634,25 +963,44 @@ export async function runBrowserAgent(opts: BrowserAgentOptions): Promise<Browse
       actions.push(action);
       await onStep(action).catch(console.error);
 
+      if (result.success) {
+        consecutiveFailures = 0;
+      } else {
+        consecutiveFailures++;
+      }
+
       const toolResultText = result.success
         ? 'Action succeeded.'
-        : `Action FAILED: ${result.error ?? 'unknown error'}. Try a different selectorType (e.g., switch from css to text or role), or use wait_for_element first if the element is not yet visible.`;
+        : `Action FAILED: ${result.error ?? 'unknown error'}. Check the page audit for the correct selector, try a different selectorType, or call wait_for_element first if the element may not be visible yet.`;
 
       history.push(new ToolMessage({
         content: toolResultText,
         tool_call_id: toolCall.id ?? `call_${Date.now()}`,
       }));
 
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        finishData = {
+          testTitle: `Agentic trace: ${opts.menuContext}`,
+          expectedResult: 'Steps recorded up to this point',
+          status: 'blocked',
+          blockedReason: `Stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive failed actions — agent was stuck`,
+        };
+        break;
+      }
+
       if (finishData) break;
     }
   }
 
   if (!finishData) {
+    const timedOut = (Date.now() - startTime) >= WALL_CLOCK_TIMEOUT_MS;
     finishData = {
       testTitle: `Agentic trace: ${opts.menuContext}`,
-      expectedResult: 'Test steps recorded up to step limit',
+      expectedResult: 'Test steps recorded up to this point',
       status: 'blocked',
-      blockedReason: `Reached maximum step limit (${MAX_STEPS})`,
+      blockedReason: timedOut
+        ? `Stopped after 4-minute wall-clock timeout (${stepNumber} steps completed)`
+        : `Reached maximum step limit (${MAX_STEPS})`,
     };
   }
 

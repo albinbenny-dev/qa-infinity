@@ -45,7 +45,8 @@ $SourceFiles = @(
     "packages\runner\Dockerfile",
     "docker-compose.yml",
     "package.json",
-    "pnpm-workspace.yaml"
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml"
 )
 
 # -- Exclusions (node_modules, build output, git, etc.) -----------------------

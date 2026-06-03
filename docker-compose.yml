@@ -68,6 +68,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    extra_hosts:
+      - "airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local:10.0.12.244"
     networks:
       - qa-net
 
@@ -86,6 +88,8 @@ services:
     volumes:
       - qa-scripts:/scripts
       - qa-artifacts:/artifacts
+    extra_hosts:
+      - "airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local:10.0.12.244"
     networks:
       - qa-net
 

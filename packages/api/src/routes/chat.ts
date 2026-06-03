@@ -84,6 +84,7 @@ router.post('/message', wrap(async (req, res) => {
       history as Array<{ role: 'user' | 'assistant'; content: string }>,
       memories,
       (attachments ?? []) as ChatAttachment[],
+      req.project.name,
     );
   } catch (err) {
     console.error('[ChatAgent] Error:', err);

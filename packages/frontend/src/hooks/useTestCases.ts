@@ -114,6 +114,8 @@ export function useSaveTestCases(projectId: string) {
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
       qc.invalidateQueries({ queryKey: ['projects'] });
+      // Invalidate scripts so auto-saved scriptContent appears in Scripts page immediately
+      qc.invalidateQueries({ queryKey: ['scripts', projectId] });
     },
   });
 }
@@ -264,6 +266,39 @@ export function useStartAgentTrace(projectId: string) {
         { timeout: 15_000 },
       );
       return res.data;
+    },
+  });
+}
+
+export function useDuplicateTestCase(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (tc: TestCase) => {
+      const { title, steps, expectedResult, type, tags, useCaseTag, description, priority, generationHints, prerequisiteTcId } = tc;
+      const res = await api.post<{ testCases: TestCase[]; count: number }>(
+        `/projects/${projectId}/test-cases`,
+        {
+          testCases: [{
+            title: `${title} (Copy)`,
+            steps,
+            expectedResult,
+            type,
+            tags,
+            useCaseTag,
+            description,
+            priority,
+            generationHints,
+            prerequisiteTcId,
+            status: 'DRAFT',
+          }],
+        },
+      );
+      return res.data.testCases[0];
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }

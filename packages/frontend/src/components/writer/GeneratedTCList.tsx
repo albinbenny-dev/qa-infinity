@@ -4,6 +4,8 @@ import type { TestCase } from '../../types';
 interface GeneratedTC extends Omit<TestCase, 'id' | 'projectId' | 'tcId' | 'status'> {
   _tempId: string;
   sourceRef?: string;
+  /** Pre-generated Playwright script from agent trace */
+  scriptContent?: string;
 }
 
 interface GeneratedTCListProps {
@@ -17,7 +19,139 @@ interface GeneratedTCListProps {
   onDelete: (tempId: string) => void;
   onDeleteSelected: () => void;
   onApprove: (tc: GeneratedTC) => void;
+  onDuplicate: (tc: GeneratedTC) => void;
   isSaving: boolean;
+}
+
+// ── RF Browser action templates for quick-insert ─────────────────────────
+
+const RF_ACTIONS: Array<{ label: string; template: string; hint: string }> = [
+  { label: 'navigate_to',          template: 'Navigate to ${BASE_URL}/page',          hint: 'Open a URL' },
+  { label: 'click',                template: 'Click the [element] button/link',        hint: 'Click an element' },
+  { label: 'fill_text',            template: 'Fill [field] with [value]',              hint: 'Type into an input' },
+  { label: 'select_option',        template: 'Select [option] from [dropdown]',        hint: 'Choose from select' },
+  { label: 'check_checkbox',       template: 'Check the [label] checkbox',             hint: 'Tick a checkbox' },
+  { label: 'uncheck_checkbox',     template: 'Uncheck the [label] checkbox',           hint: 'Untick a checkbox' },
+  { label: 'hover',                template: 'Hover over [element]',                   hint: 'Mouse hover' },
+  { label: 'press_key',            template: 'Press [key] key',                        hint: 'Keyboard input' },
+  { label: 'wait_for_element',     template: 'Wait for [element] to be visible',       hint: 'Wait for visibility' },
+  { label: 'assert_text',          template: 'Assert [element] shows "[text]"',        hint: 'Check element text' },
+  { label: 'assert_element_visible', template: 'Assert [element] is visible',          hint: 'Verify visibility' },
+  { label: 'assert_element_hidden',  template: 'Assert [element] is hidden',           hint: 'Verify hidden' },
+  { label: 'assert_url',           template: 'Assert URL contains "/path"',            hint: 'Check current URL' },
+  { label: 'assert_title',         template: 'Assert page title contains "Title"',     hint: 'Check page title' },
+  { label: 'take_screenshot',      template: 'Take a screenshot',                      hint: 'Capture page' },
+  { label: 'execute_javascript',   template: 'Execute JavaScript: document.querySelector("")', hint: 'Run JS in browser' },
+  { label: 'get_text',             template: 'Get text from [element]',                hint: 'Read element text' },
+  { label: 'scroll_to',            template: 'Scroll to [element]',                    hint: 'Scroll into view' },
+];
+
+const LOCATOR_STRATEGIES = [
+  { prefix: 'id=',            hint: 'HTML id attribute — most stable' },
+  { prefix: 'css=[data-testid=""]', hint: 'Test hook attribute — very stable' },
+  { prefix: 'role=button[name=""]', hint: 'ARIA role + accessible name' },
+  { prefix: 'text=',          hint: 'Visible text — use for links/buttons' },
+  { prefix: 'css=',           hint: 'CSS selector — use sparingly' },
+  { prefix: 'xpath=',         hint: 'XPath — last resort only' },
+  { prefix: 'placeholder=',   hint: 'Input placeholder text' },
+];
+
+// ── RF Action picker ──────────────────────────────────────────────────────
+
+function RFActionPicker({ onInsert }: { onInsert: (template: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [showLocators, setShowLocators] = useState(false);
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button
+          onClick={() => { setOpen(v => !v); setShowLocators(false); }}
+          title="Insert an RF Browser action template"
+          style={{
+            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
+            background: 'rgba(42,157,143,0.12)', border: '1px solid rgba(42,157,143,0.3)',
+            color: 'var(--emerald)', cursor: 'pointer',
+          }}
+        >
+          ⚡ RF Action ▾
+        </button>
+        <button
+          onClick={() => { setShowLocators(v => !v); setOpen(false); }}
+          title="DOM locator strategy guide"
+          style={{
+            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
+            background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)',
+            color: 'var(--cyan)', cursor: 'pointer',
+          }}
+        >
+          🔍 DOM
+        </button>
+      </div>
+
+      {/* Action dropdown */}
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: '100%', left: 0, zIndex: 200, marginTop: 4,
+            background: 'var(--surface2)', border: '1px solid var(--border)',
+            borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            minWidth: 260, maxHeight: 260, overflowY: 'auto',
+          }}
+          onMouseLeave={() => setOpen(false)}
+        >
+          {RF_ACTIONS.map(a => (
+            <div
+              key={a.label}
+              onClick={() => { onInsert(a.template); setOpen(false); }}
+              style={{
+                padding: '6px 10px', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline',
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(42,157,143,0.1)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <code style={{ fontSize: 10, color: 'var(--emerald)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{a.label}</code>
+              <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>{a.hint}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Locator guide */}
+      {showLocators && (
+        <div
+          style={{
+            position: 'absolute', top: '100%', left: 0, zIndex: 200, marginTop: 4,
+            background: 'var(--surface2)', border: '1px solid var(--border)',
+            borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            minWidth: 280, padding: 10,
+          }}
+          onMouseLeave={() => setShowLocators(false)}
+        >
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 8 }}>
+            🔍 Locator Strategy — Priority Order
+          </div>
+          {LOCATOR_STRATEGIES.map((ls, i) => (
+            <div
+              key={ls.prefix}
+              onClick={() => { onInsert(ls.prefix); setShowLocators(false); }}
+              style={{ padding: '4px 0', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline' }}
+            >
+              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', width: 14, flexShrink: 0 }}>{i + 1}.</span>
+              <code style={{ fontSize: 10, color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>{ls.prefix}</code>
+              <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>{ls.hint}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 8, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: 9, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            <strong style={{ color: 'var(--text-mid)' }}>Extract from DevTools:</strong><br />
+            Right-click element → Inspect → right-click node → Copy → Copy element.<br />
+            Paste the HTML in the Regenerate panel's DOM Snippet field.
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const TYPE_COLORS: Record<string, { bg: string; color: string; border: string }> = {
@@ -47,6 +181,7 @@ function TCCard({
   onEdit,
   onDelete,
   onApprove,
+  onDuplicate,
 }: {
   tc: GeneratedTC;
   isSaved: boolean;
@@ -55,6 +190,7 @@ function TCCard({
   onEdit: (patch: Partial<GeneratedTC>) => void;
   onDelete: () => void;
   onApprove: () => void;
+  onDuplicate: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [newTag, setNewTag] = useState('');
@@ -114,6 +250,16 @@ function TCCard({
                 color: 'var(--violet)', border: '1px solid rgba(244,123,32,0.25)',
               }}>📌 {tc.useCaseTag}</span>
             )}
+            {tc.scriptContent && !isSaved && (
+              <span
+                title="A Playwright script was generated from the agent trace and will be saved with this test case"
+                style={{
+                  padding: '1px 6px', borderRadius: '100px', fontSize: '9px', fontWeight: 700,
+                  fontFamily: 'var(--font-mono)', background: 'rgba(139,92,246,0.12)',
+                  color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)',
+                  cursor: 'default',
+                }}>⚡ Script Ready</span>
+            )}
             {isSaved && (
               <span style={{
                 padding: '1px 6px', borderRadius: '100px', fontSize: '9px', fontWeight: 700,
@@ -156,6 +302,16 @@ function TCCard({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >{expanded ? '▲' : '▼'}</button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
+            title="Duplicate"
+            style={{
+              width: '26px', height: '26px', borderRadius: '5px',
+              background: 'var(--surface2)', border: '1px solid var(--border)',
+              color: 'var(--text-dim)', cursor: 'pointer', fontSize: '12px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >⎘</button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             title="Remove"
@@ -205,7 +361,15 @@ function TCCard({
 
           {/* Steps */}
           <div>
-            <div style={LABEL}>Steps</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ ...LABEL, margin: 0 }}>Steps</div>
+              <RFActionPicker
+                onInsert={(template) => {
+                  onEdit({ steps: [...tc.steps, template] });
+                  setFocusInsertIdx(tc.steps.length);
+                }}
+              />
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {tc.steps.map((step, si) => (
                 <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
@@ -416,6 +580,7 @@ export default function GeneratedTCList({
   onDelete,
   onDeleteSelected,
   onApprove,
+  onDuplicate,
   isSaving,
 }: GeneratedTCListProps) {
   const [search, setSearch] = useState('');
@@ -494,6 +659,7 @@ export default function GeneratedTCList({
               onEdit={(patch) => onEdit(tc._tempId, patch)}
               onDelete={() => onDelete(tc._tempId)}
               onApprove={() => onApprove(tc)}
+              onDuplicate={() => onDuplicate(tc)}
             />
           ))
         )}

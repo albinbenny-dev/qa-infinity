@@ -480,9 +480,10 @@ export async function runChatAgent(
   history: ChatHistoryMessage[],
   memories: string[] = [],
   attachments: ChatAttachment[] = [],
+  projectName?: string,
 ): Promise<ChatAgentResult> {
   const tools = createChatTools(projectId);
-  const llm = createLLM({ temperature: 0.3, agentName: 'chat-agent', projectId });
+  const llm = createLLM({ temperature: 0.3, agentName: 'chat-agent', projectId, projectName });
 
   const llmWithTools = typeof (llm as { bindTools?: (t: unknown) => unknown }).bindTools === 'function'
     ? (llm as { bindTools: (t: DynamicStructuredTool[]) => typeof llm }).bindTools(tools)

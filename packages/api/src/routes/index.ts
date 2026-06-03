@@ -11,6 +11,7 @@ import chatRouter from './chat.js';
 import scansRouter from './scans.js';
 import suitesRouter from './suites.js';
 import adminRouter from './admin.js';
+import resourcesRouter from './resources.js';
 import { verifyToken } from '../middleware/auth.js';
 
 const router = Router();
@@ -54,5 +55,8 @@ router.use('/projects/:projectId/suites', suitesRouter);
 
 // ── Admin / platform-level ────────────────────────────────────────────────
 router.use('/admin', adminRouter);
+
+// ── Robot Framework resources ─────────────────────────────────────────────
+router.use('/projects/:projectId/resources', resourcesRouter);
 
 export default router;

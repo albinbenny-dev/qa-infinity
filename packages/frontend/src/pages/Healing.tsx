@@ -197,11 +197,17 @@ function ExpandedRunResults({
 
 function FailedRunsPanel({
   projectId,
+  onHealsQueued,
 }: {
   projectId: string;
+  onHealsQueued?: (items: Array<{ runResultId: string; tcTitle: string }>) => void;
 }) {
   const { data, isLoading } = useRuns(projectId);
-  const { mutateAsync: trigger, isPending: triggering } = useTriggerHeal(projectId);
+  const { mutateAsync: trigger, isPending: triggering } = useTriggerHeal(
+    projectId,
+    undefined,
+    onHealsQueued,
+  );
 
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, string[]>>({});
@@ -985,7 +991,20 @@ export default function Healing() {
                 </span>
               </div>
               <div style={{ padding: '10px 12px' }}>
-                <FailedRunsPanel projectId={projectId} />
+                <FailedRunsPanel
+                  projectId={projectId}
+                  onHealsQueued={(queued) => {
+                    setHealProgress((prev) => [
+                      ...prev.filter((e) => !queued.some((q) => q.runResultId === e.runResultId)),
+                      ...queued.map((item) => ({
+                        runResultId: item.runResultId,
+                        tcTitle: item.tcTitle,
+                        phase: 'ANALYZING' as const,
+                        startedAt: Date.now(),
+                      })),
+                    ]);
+                  }}
+                />
               </div>
             </div>
 

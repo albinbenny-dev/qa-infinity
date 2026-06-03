@@ -56,8 +56,7 @@ export async function addRunJob(payload: RunJobPayload): Promise<void> {
 export async function addHealJob(payload: HealJobPayload): Promise<void> {
   await healQueue.add('heal', payload, {
     jobId: `heal-${payload.runResultId}`,  // Deduplicate — same RunResult is never healed twice
-    attempts: 2,
-    backoff: { type: 'exponential', delay: 5000 },
+    attempts: 1,
     removeOnComplete: 200,
     removeOnFail: 100,
   });
@@ -91,7 +90,12 @@ export interface ScriptGenJobPayload {
   projectId: string;
   testCaseId: string;
   withHeal: boolean;
-  contextNote?: string; // ephemeral user-provided hints for this generation run
+  contextNote?: string;   // ephemeral user-provided hints for this generation run
+  domSnippet?: string;    // DOM HTML from DevTools to improve locator accuracy
+  domRecording?: string;  // QA DOM Recorder export — structured step/selector capture from live session
+  failedStep?: string;    // step description that failed (e.g. "Step 5: Click css=#submit-btn")
+  failedStepError?: string; // error message from failed step
+  scriptMode?: 'PLAYWRIGHT' | 'ROBOT';
 }
 
 export interface ScriptVerifyJobPayload {
@@ -126,6 +130,7 @@ export const agentScanQueue = new Queue('agent-scans', { connection });
 export interface AgentScanJobPayload {
   agentTraceId: string;
   projectId: string;
+  projectName?: string;
   baseUrl: string;
   targetUrl: string;
   menuContext: string;

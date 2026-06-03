@@ -1,9 +1,20 @@
 FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
-# Install Node 20
+# Install Node 20 + Python 3 + pip
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs tzdata \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs tzdata python3 python3-pip python3-venv \
   && corepack enable && corepack prepare pnpm@9.15.9 --activate
+
+# Install Robot Framework + RF Browser into a venv so it never conflicts with system pip
+RUN python3 -m venv /opt/rfbrowser \
+  && /opt/rfbrowser/bin/pip install --upgrade pip \
+  && /opt/rfbrowser/bin/pip install robotframework robotframework-browser
+
+# Initialise RF Browser — downloads Playwright browsers managed by RF Browser
+RUN /opt/rfbrowser/bin/python -m Browser.entry init || true
+
+# Make `robot` available on PATH from the venv
+ENV PATH="/opt/rfbrowser/bin:${PATH}"
 
 WORKDIR /app
 

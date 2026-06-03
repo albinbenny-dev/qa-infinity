@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
 } from 'recharts';
 import Topbar from '../components/layout/Topbar';
-import { useOpenRouterUsage, useAgentUsage, useAgentConfig, useToggleAgent, useStandardMode, useUpdateAgentSettings, useUsageTrend } from '../hooks/useUsage';
+import { useOpenRouterUsage, useAgentUsage, useAgentConfig, useToggleAgent, useStandardMode, useUpdateAgentSettings, useUsageTrend, useUsageByProject } from '../hooks/useUsage';
 import type { AgentUsageRow, AgentConfigRow } from '../hooks/useUsage';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -585,6 +585,161 @@ function DailyUsageChart({ days }: { days: number }) {
   );
 }
 
+// ── Project Usage Chart ────────────────────────────────────────────────────
+
+function ProjectTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: { name: string }; value: number }>;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        padding: '10px 14px',
+        boxShadow: 'var(--shadow-card)',
+        fontSize: 12,
+      }}
+    >
+      <div style={{ color: 'var(--text)', fontWeight: 600, marginBottom: 4 }}>
+        {payload[0].payload.name}
+      </div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#F47B20', fontSize: 14 }}>
+        {fmtK(payload[0].value)} tokens
+      </div>
+    </div>
+  );
+}
+
+function ProjectUsageChart() {
+  const { data: byProject, isLoading } = useUsageByProject();
+
+  const chartData = useMemo(() => {
+    return (byProject ?? [])
+      .slice(0, 10)
+      .map((p) => ({
+        name: p.projectName.length > 22 ? p.projectName.slice(0, 20) + '…' : p.projectName,
+        tokens: p.totalTokens,
+      }))
+      .reverse();
+  }, [byProject]);
+
+  const maxTokens = useMemo(() => Math.max(...chartData.map((d) => d.tokens), 1), [chartData]);
+
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        boxShadow: 'var(--shadow-card)',
+      }}
+    >
+      <div style={{ height: 3, background: 'linear-gradient(90deg, var(--violet), var(--cyan))' }} />
+      <div
+        style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+          AI Token Usage by Project
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+          all-time · {fmtK(chartData.reduce((s, d) => s + d.tokens, 0))} total
+        </span>
+      </div>
+      <div style={{ padding: '16px 8px 8px' }}>
+        {isLoading ? (
+          <div
+            style={{
+              height: 200,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-dim)',
+              fontSize: 12,
+            }}
+          >
+            Loading…
+          </div>
+        ) : chartData.length === 0 ? (
+          <div
+            style={{
+              height: 100,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-dim)',
+              fontSize: 12,
+            }}
+          >
+            No project-scoped usage recorded yet.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(120, chartData.length * 38)}>
+            <BarChart
+              data={chartData}
+              layout="vertical"
+              margin={{ top: 0, right: 60, left: 8, bottom: 0 }}
+              barCategoryGap="25%"
+            >
+              <CartesianGrid horizontal={false} stroke="var(--border)" strokeOpacity={0.5} />
+              <XAxis
+                type="number"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}
+                tickFormatter={(v) => fmtK(v as number)}
+              />
+              <YAxis
+                type="category"
+                dataKey="name"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11, fill: 'var(--text)', fontWeight: 600 }}
+                width={140}
+              />
+              <Tooltip content={<ProjectTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+              <Bar dataKey="tokens" radius={[0, 4, 4, 0]} maxBarSize={24}>
+                {chartData.map((entry) => (
+                  <Cell
+                    key={entry.name}
+                    fill={
+                      entry.tokens === maxTokens
+                        ? '#F47B20'
+                        : 'rgba(164,123,250,0.6)'
+                    }
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+      <div style={{ padding: '4px 16px 10px', display: 'flex', gap: 16, fontSize: 10, color: 'var(--text-dim)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: '#F47B20', display: 'inline-block' }} />
+          Highest consumer
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: 'rgba(164,123,250,0.6)', display: 'inline-block' }} />
+          Other projects
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function Usage() {
@@ -712,6 +867,9 @@ export default function Usage() {
 
         {/* ── Daily usage chart ────────────────────────────────────── */}
         <DailyUsageChart days={days} />
+
+        {/* ── Per-project usage chart ───────────────────────────────── */}
+        <ProjectUsageChart />
 
         {/* ── Agent config toggles ──────────────────────────────────── */}
         <AgentConfigPanel />

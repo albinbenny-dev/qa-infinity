@@ -24,6 +24,7 @@ class LlmUsageTracker extends BaseCallbackHandler {
   constructor(
     private agentName: string,
     private projectId: string | undefined,
+    private projectName: string | undefined,
     private model: string,
   ) {
     super();
@@ -45,6 +46,7 @@ class LlmUsageTracker extends BaseCallbackHandler {
       data: {
         agentName: this.agentName,
         projectId: this.projectId ?? null,
+        projectName: this.projectName ?? null,
         model: this.model,
         promptTokens: usage?.promptTokens ?? 0,
         completionTokens: usage?.completionTokens ?? 0,
@@ -61,6 +63,7 @@ export function createLLM(options?: {
   temperature?: number;
   agentName?: string;
   projectId?: string;
+  projectName?: string;
   /**
    * Enable Anthropic prompt caching (only takes effect with provider=anthropic).
    *
@@ -80,6 +83,7 @@ export function createLLM(options?: {
   const temperature = options?.temperature ?? 0.2;
   const agentName = options?.agentName ?? 'unknown';
   const projectId = options?.projectId;
+  const projectName = options?.projectName;
   const enableCaching = options?.enableCaching ?? true;
   const provider = process.env.LLM_PROVIDER ?? 'openrouter';
 
@@ -93,7 +97,7 @@ export function createLLM(options?: {
       model,
       temperature,
       maxTokens: 8192,
-      callbacks: [new LlmUsageTracker(agentName, projectId, model)],
+      callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
       // ── Prompt caching: reduces cost by 90% on repeated system prompts ──
       // Agents that call this model multiple times with the same system prompt
       // (e.g. browser-agent running 20 steps) benefit most.
@@ -120,7 +124,7 @@ export function createLLM(options?: {
     openAIApiKey: apiKey,
     temperature,
     maxTokens: 8192,
-    callbacks: [new LlmUsageTracker(agentName, projectId, model)],
+    callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
     configuration: {
       baseURL: 'https://openrouter.ai/api/v1',
       defaultHeaders: {

@@ -32,12 +32,22 @@ export function useHealStats(projectId: string | undefined) {
   });
 }
 
-export function useTriggerHeal(projectId: string, onNoHeals?: () => void) {
+export interface TriggerHealResponse {
+  message: string;
+  count: number;
+  queued: Array<{ runResultId: string; tcTitle: string }>;
+}
+
+export function useTriggerHeal(
+  projectId: string,
+  onNoHeals?: () => void,
+  onQueued?: (items: Array<{ runResultId: string; tcTitle: string }>) => void,
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ runId, runResultIds }: { runId: string; runResultIds?: string[] }) =>
       api
-        .post<{ message: string; count: number }>(
+        .post<TriggerHealResponse>(
           `/projects/${projectId}/heals/trigger/${runId}`,
           { runResultIds },
         )
@@ -45,6 +55,7 @@ export function useTriggerHeal(projectId: string, onNoHeals?: () => void) {
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ['heals', projectId] });
       void qc.invalidateQueries({ queryKey: ['heal-stats', projectId] });
+      if (data.queued?.length) onQueued?.(data.queued);
       if (data.count === 0) onNoHeals?.();
     },
     onError: () => {

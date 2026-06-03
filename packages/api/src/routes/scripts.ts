@@ -15,6 +15,7 @@ import {
   deleteScript,
   getScriptFileMeta,
   exportZip,
+  listScriptFiles,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
@@ -29,23 +30,39 @@ router.use(requireProjectAccess as unknown as RequestHandler);
 const GenerateSchema = z.object({
   testCaseIds: z.array(z.string().min(1)).min(1).max(50),
   withHeal: z.boolean().optional().default(false),
-  contextNote: z.string().max(4000).optional(),
+  contextNote: z.string().max(12000).optional(),
+  domSnippet: z.string().max(8000).optional(),
+  domRecording: z.string().max(80000).optional(),
+  failedStep: z.string().max(500).optional(),
+  failedStepError: z.string().max(2000).optional(),
+  scriptMode: z.enum(['PLAYWRIGHT', 'ROBOT']).optional().default('ROBOT'),
 });
 
 const SaveContentSchema = z.object({
   content: z.string(),
 });
 
-// ── Multer for .spec.ts uploads ────────────────────────────────────────────
+// ── Multer for script uploads ──────────────────────────────────────────────
 
 const scriptUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
   fileFilter: (_req, file, cb) => {
     const ok =
-      file.originalname.endsWith('.spec.ts') || file.originalname.endsWith('.spec.js');
+      file.originalname.endsWith('.spec.ts') ||
+      file.originalname.endsWith('.spec.js') ||
+      file.originalname.endsWith('.robot');
     if (ok) cb(null, true);
-    else cb(new Error('Only .spec.ts or .spec.js files are allowed'));
+    else cb(new Error('Only .spec.ts, .spec.js, or .robot files are allowed'));
+  },
+});
+
+const robotUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.originalname.endsWith('.robot')) cb(null, true);
+    else cb(new Error('Only .robot files are allowed'));
   },
 });
 
@@ -75,6 +92,7 @@ router.get('/', async (req: Request, res: Response) => {
         projectId: s.projectId,
         testCaseId: s.testCaseId,
         filename: s.filename,
+        scriptType: (s as any).scriptType ?? 'PLAYWRIGHT',
         isCustomUpload: s.isCustomUpload,
         isGolden: s.isGolden,
         verificationStatus: s.verificationStatus,
@@ -105,7 +123,7 @@ router.post('/generate', async (req: Request, res: Response) => {
       return;
     }
 
-    const { testCaseIds, withHeal, contextNote } = parsed.data;
+    const { testCaseIds, withHeal, contextNote, domSnippet, domRecording, failedStep, failedStepError, scriptMode } = parsed.data;
     const projectId = req.project.id;
 
     const tcs = await prisma.testCase.findMany({
@@ -141,6 +159,11 @@ router.post('/generate', async (req: Request, res: Response) => {
         testCaseId: tc.id,
         withHeal,
         contextNote: contextNote || undefined,
+        domSnippet: domSnippet || undefined,
+        domRecording: domRecording || undefined,
+        failedStep: failedStep || undefined,
+        failedStepError: failedStepError || undefined,
+        scriptMode,
       });
 
       queued.push({
@@ -452,9 +475,18 @@ router.post(
         return;
       }
 
-      const content = req.file.buffer.toString('utf-8');
       const projectId = req.project.id;
       const testCaseId = (req.body?.testCaseId as string | undefined) || null;
+      const isRobotFile = req.file.originalname.toLowerCase().endsWith('.robot');
+
+      // Convert SeleniumLibrary → Browser for robot files
+      let rawContent = req.file.buffer.toString('utf-8');
+      let converted = false;
+      if (isRobotFile) {
+        const result = await convertRobotIfNeeded(rawContent, projectId);
+        rawContent = result.content;
+        converted = result.converted;
+      }
 
       let filename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
 
@@ -464,9 +496,7 @@ router.post(
           res.status(400).json({ error: 'Test case not found in this project' });
           return;
         }
-        // Rename to system-default convention for traceability
         filename = buildSystemFilename(tc.tcId, tc.title, req.file.originalname);
-        // Replace any existing script for this test case
         const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
         if (existing) {
           await prisma.script.delete({ where: { id: existing.id } });
@@ -474,14 +504,17 @@ router.post(
         }
       }
 
-      saveScript(projectId, filename, content);
+      saveScript(projectId, filename, rawContent);
+
+      const detectedScriptType = isRobotFile ? 'ROBOT' : 'PLAYWRIGHT';
 
       const script = await prisma.script.create({
         data: {
           projectId,
           testCaseId,
           filename,
-          content,
+          content: rawContent,
+          scriptType: detectedScriptType,
           isCustomUpload: true,
         },
       });
@@ -489,6 +522,8 @@ router.post(
       res.status(201).json({
         id: script.id,
         filename: script.filename,
+        scriptType: detectedScriptType,
+        converted,
         testCaseId: script.testCaseId,
         isCustomUpload: true,
         createdAt: script.createdAt,
@@ -531,15 +566,55 @@ router.get('/context-guide', async (req: Request, res: Response) => {
 // ── POST /upload-with-extract — upload script + auto-create TC from it ────
 
 function buildSystemFilename(tcId: string, title: string, originalname: string): string {
-  const ext = originalname.toLowerCase().endsWith('.spec.js') ? '.spec.js' : '.spec.ts';
+  const lower = originalname.toLowerCase();
+  const ext = lower.endsWith('.robot') ? '.robot' : lower.endsWith('.spec.js') ? '.spec.js' : '.spec.ts';
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   return `${tcId}-${slug}${ext}`;
 }
 
 async function nextTcId(projectId: string, projectSlug: string): Promise<string> {
-  const count = await prisma.testCase.count({ where: { projectId } });
   const prefix = projectSlug.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
-  return `TC-${prefix}-${String(count + 1).padStart(3, '0')}`;
+  const pattern = `TC-${prefix}-`;
+  const existing = await prisma.testCase.findMany({
+    where: { projectId, tcId: { startsWith: pattern } },
+    select: { tcId: true },
+  });
+  const maxSeq = existing.reduce((max, tc) => {
+    const n = parseInt(tc.tcId.slice(pattern.length), 10);
+    return Number.isFinite(n) ? Math.max(max, n) : max;
+  }, 0);
+  return `${pattern}${String(maxSeq + 1).padStart(3, '0')}`;
+}
+
+// ── Shared robot conversion helper ───────────────────────────────────────────
+
+async function convertRobotIfNeeded(content: string, projectId: string): Promise<{ content: string; converted: boolean }> {
+  if (!/SeleniumLibrary/i.test(content)) return { content, converted: false };
+  const llm = createLLM({ temperature: 0, agentName: 'script-agent', projectId });
+  const prompt = `You are an expert in Robot Framework test automation.
+Convert the following Robot Framework test file from SeleniumLibrary to Browser library (Playwright backend).
+
+Rules:
+- Replace "Library    SeleniumLibrary" with "Library    Browser"
+- Convert Open Browser to: New Browser    headless=False  /  New Context  /  New Page    \${BASE_URL}
+- Convert Input Text → Fill Text
+- Convert Click Element / Click Button → Click
+- Convert Wait Until Element Is Visible → Wait For Elements State    <locator>    visible
+- Convert Get Location → Get Url
+- Convert Capture Page Screenshot → Take Screenshot
+- Convert Close Browser → Close Browser (Browser library)
+- Convert Go To → New Page or reload as appropriate
+- Keep all *** Settings ***, *** Variables ***, *** Test Cases ***, *** Keywords *** sections
+- Keep variable names like \${BASE_URL}, \${TC_USERNAME}, \${TC_PASSWORD} unchanged
+- Preserve all test case names, step descriptions, and tags
+- Return ONLY the converted .robot file content — no explanation, no markdown fences
+
+Input file:
+${content.slice(0, 6000)}`;
+  const response = await llm.invoke([new HumanMessage(prompt)]);
+  const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+  const converted = raw.replace(/^```(?:robot|robotframework)?\s*/im, '').replace(/```\s*$/im, '').trim();
+  return { content: converted, converted: true };
 }
 
 async function extractTCFromScript(scriptContent: string, projectId: string, projectName?: string): Promise<{
@@ -552,10 +627,26 @@ async function extractTCFromScript(scriptContent: string, projectId: string, pro
 }> {
   const llm = createLLM({ temperature: 0, agentName: 'script-extract', projectId, projectName });
   const capped = scriptContent.slice(0, 8000);
+  const isRobot = capped.trimStart().startsWith('*** Settings ***');
 
   const response = await llm.invoke([
     new SystemMessage(
-      `You are a QA engineer. Extract test case details from a Playwright TypeScript test script.
+      isRobot
+        ? `You are a QA engineer. Extract test case details from a Robot Framework test script.
+Output ONLY a JSON object — no markdown fences, no explanation:
+{
+  "title": "concise test case title (from *** Test Cases *** section, 5-10 words)",
+  "description": "one sentence describing what is tested",
+  "steps": ["user action in plain English", "..."],
+  "expectedResult": "what the test verifies in plain English",
+  "type": "UI",
+  "useCaseTag": null
+}
+Rules:
+- steps: translate keywords into human-readable user actions, not Robot syntax
+- type: "UI" for browser tests, "API" for pure API, "SIT" for system integration
+- useCaseTag: functional area if clear (e.g. "Login", "Primary Sales", "Dashboard"), otherwise null`
+        : `You are a QA engineer. Extract test case details from a Playwright TypeScript test script.
 Output ONLY a JSON object — no markdown fences, no explanation:
 {
   "title": "concise test case title (from describe/test name, 5-10 words)",
@@ -570,7 +661,9 @@ Rules:
 - type: "UI" for browser tests, "API" for pure API, "SIT" for system integration
 - useCaseTag: functional area if clear (e.g. "Login", "Primary Sales", "Dashboard"), otherwise null`,
     ),
-    new HumanMessage(`Script:\n\`\`\`typescript\n${capped}\n\`\`\``),
+    new HumanMessage(isRobot
+      ? `Script:\n\`\`\`robot\n${capped}\n\`\`\``
+      : `Script:\n\`\`\`typescript\n${capped}\n\`\`\``),
   ]);
 
   const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
@@ -622,16 +715,26 @@ router.post(
       }
 
       const projectId = req.project.id;
-      const content = req.file.buffer.toString('utf-8');
+      const isRobotFile = req.file.originalname.toLowerCase().endsWith('.robot');
+
+      // Convert SeleniumLibrary → Browser for robot files before extraction
+      let rawContent = req.file.buffer.toString('utf-8');
+      let converted = false;
+      if (isRobotFile) {
+        const result = await convertRobotIfNeeded(rawContent, projectId);
+        rawContent = result.content;
+        converted = result.converted;
+      }
 
       // Extract TC details from script via LLM
-      const extracted = await extractTCFromScript(content, projectId, req.project.name);
+      const extracted = await extractTCFromScript(rawContent, projectId, req.project.name);
 
       // Generate a unique tcId
       const tcId = await nextTcId(projectId, req.project.slug ?? projectId);
 
       // Rename to system-default convention using extracted TC info
       const filename = buildSystemFilename(tcId, extracted.title, req.file.originalname);
+      const scriptType = isRobotFile ? 'ROBOT' : 'PLAYWRIGHT';
 
       // Create the test case in DRAFT status
       const testCase = await prisma.testCase.create({
@@ -652,19 +755,20 @@ router.post(
       });
 
       // Save script file and link to the created TC
-      saveScript(projectId, filename, content);
+      saveScript(projectId, filename, rawContent);
 
       const script = await prisma.script.create({
         data: {
           projectId,
           testCaseId: testCase.id,
           filename,
-          content,
+          content: rawContent,
+          scriptType,
           isCustomUpload: true,
         },
       });
 
-      res.status(201).json({ testCase, script });
+      res.status(201).json({ testCase, script, converted });
     } catch (err) {
       console.error('[scripts] POST /upload-with-extract', err);
       res.status(500).json({ error: 'Upload and extraction failed' });
@@ -699,6 +803,182 @@ router.get('/export/zip', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] GET /export/zip', err);
     res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ── POST /import-robot — upload & optionally convert a .robot file ───────────
+// Detects if the file uses SeleniumLibrary → converts to RF Browser via LLM
+// If already Browser/PlaywrightLibrary → passes through unchanged
+
+router.post(
+  '/import-robot',
+  (req: Request, res: Response, next: NextFunction) => {
+    robotUpload.single('file')(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        res.status(400).json({ error: `Upload error: ${err.message}` });
+        return;
+      }
+      if (err instanceof Error) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      next();
+    });
+  },
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: 'No file uploaded. Use multipart/form-data with field "file"' });
+        return;
+      }
+
+      const projectId = req.project.id;
+      const rawContent = req.file.buffer.toString('utf-8');
+      const originalName = req.file.originalname;
+
+      // Detect if file uses SeleniumLibrary
+      const usesSelenium = /SeleniumLibrary/i.test(rawContent);
+
+      let finalContent = rawContent;
+      let converted = false;
+
+      if (usesSelenium) {
+        // Convert SeleniumLibrary → RF Browser using LLM
+        const llm = createLLM({ temperature: 0, agentName: 'script-agent', projectId });
+        const conversionPrompt = `You are an expert in Robot Framework test automation.
+Convert the following Robot Framework test file from SeleniumLibrary to Browser library (Playwright backend).
+
+Rules:
+- Replace "Library    SeleniumLibrary" with "Library    Browser"
+- Convert Open Browser to: New Browser    headless=False  /  New Context  /  New Page    \${BASE_URL}
+- Convert Input Text → Fill Text
+- Convert Click Element / Click Button → Click
+- Convert Wait Until Element Is Visible → Wait For Elements State    <locator>    visible
+- Convert Get Location → Get Url
+- Convert Capture Page Screenshot → Take Screenshot
+- Convert Close Browser → Close Browser (Browser library)
+- Convert Go To → New Page or reload as appropriate
+- Keep all *** Settings ***, *** Variables ***, *** Test Cases ***, *** Keywords *** sections
+- Keep variable names like \${BASE_URL}, \${TC_USERNAME}, \${TC_PASSWORD} unchanged
+- Preserve all test case names, step descriptions, and tags
+- Return ONLY the converted .robot file content — no explanation, no markdown fences
+
+Input file:
+${rawContent.slice(0, 6000)}`;
+
+        const response = await llm.invoke([new HumanMessage(conversionPrompt)]);
+        const responseText = typeof response.content === 'string'
+          ? response.content
+          : JSON.stringify(response.content);
+        finalContent = responseText
+          .replace(/^```(?:robot|robotframework)?\s*/im, '')
+          .replace(/```\s*$/im, '')
+          .trim();
+        converted = true;
+      }
+
+      // Save to filesystem with sanitised filename
+      const filename = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      saveScript(projectId, filename, finalContent);
+
+      // Link to a test case if testCaseId provided
+      const testCaseId = (req.body?.testCaseId as string | undefined) || null;
+      if (testCaseId) {
+        const tc = await prisma.testCase.findFirst({ where: { id: testCaseId, projectId } });
+        if (!tc) {
+          res.status(400).json({ error: 'Test case not found in this project' });
+          return;
+        }
+        const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
+        if (existing) {
+          await prisma.script.delete({ where: { id: existing.id } });
+          deleteScript(projectId, existing.filename);
+        }
+      }
+
+      const script = await prisma.script.create({
+        data: {
+          projectId,
+          testCaseId,
+          filename,
+          content: finalContent,
+          scriptType: 'ROBOT',
+          isCustomUpload: true,
+        },
+      });
+
+      res.status(201).json({
+        id: script.id,
+        filename: script.filename,
+        scriptType: 'ROBOT',
+        converted,
+        originalLibrary: usesSelenium ? 'SeleniumLibrary' : 'Browser',
+        testCaseId: script.testCaseId,
+        createdAt: script.createdAt,
+      });
+    } catch (err) {
+      console.error('[scripts] POST /import-robot', err);
+      res.status(500).json({ error: 'Robot import failed' });
+    }
+  },
+);
+
+// ── GET /mine-keywords — cross-script keyword mining ─────────────────────
+// Analyses all .robot files in the project and returns keyword bodies that
+// appear in 2+ scripts (candidates for extraction to resources/).
+
+router.get('/mine-keywords', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.project.id;
+    const files = listScriptFiles(projectId).filter(f => f.filename.endsWith('.robot'));
+
+    // Parse keywords out of each file: a keyword is a non-indented line followed by indented lines
+    const keywordBodies: Map<string, { body: string; files: string[] }> = new Map();
+
+    for (const { filename } of files) {
+      let content: string;
+      try { content = readScript(projectId, filename); } catch { continue; }
+
+      const lines = content.split('\n');
+      let inKeywords = false;
+      let currentName = '';
+      const currentBody: string[] = [];
+
+      const flush = () => {
+        if (!currentName || currentBody.length === 0) return;
+        const body = currentBody.join('\n').trim();
+        if (body.length < 20) return; // ignore trivially short keywords
+        if (!keywordBodies.has(body)) {
+          keywordBodies.set(body, { body, files: [filename] });
+        } else {
+          const entry = keywordBodies.get(body)!;
+          if (!entry.files.includes(filename)) entry.files.push(filename);
+        }
+      };
+
+      for (const line of lines) {
+        if (line.trim() === '*** Keywords ***') { inKeywords = true; currentName = ''; currentBody.length = 0; continue; }
+        if (line.startsWith('*** ') && line !== '*** Keywords ***') { flush(); inKeywords = false; currentName = ''; currentBody.length = 0; continue; }
+        if (!inKeywords) continue;
+        if (line && !line.startsWith(' ') && !line.startsWith('\t')) {
+          flush(); currentName = line.trim(); currentBody.length = 0;
+        } else if (currentName) {
+          currentBody.push(line);
+        }
+      }
+      flush();
+    }
+
+    const candidates = Array.from(keywordBodies.values())
+      .filter(k => k.files.length >= 2)
+      .map(k => ({ body: k.body.slice(0, 300), usedInFiles: k.files, count: k.files.length }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20);
+
+    res.json({ candidates, analysedFiles: files.length });
+  } catch (err) {
+    console.error('[scripts] GET /mine-keywords', err);
+    res.status(500).json({ error: 'Keyword mining failed' });
   }
 });
 

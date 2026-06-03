@@ -1570,19 +1570,6 @@ export default function Scheduler() {
                   </div>
                   <RecentRunsTable runs={scheduledRuns.slice(0, 20)} loading={runsLoading} />
                 </div>
-
-                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '3px solid var(--cyan)', borderRadius: 12, padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ height: 3, background: 'linear-gradient(90deg,#2563AB,#0A2A57)', position: 'absolute', top: 0, left: 0, right: 0 }} />
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--cyan)', marginBottom: 8 }}>Cron Quick Reference</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {[['0 9 * * *','Every day at 9 AM'],['0 9 * * 1-5','Weekdays at 9 AM'],['0 * * * *','Every hour'],['0 0 * * 1','Every Monday midnight'],['*/15 * * * *','Every 15 minutes']].map(([expr, desc]) => (
-                      <div key={expr} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                        <code style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-mid)', background: 'var(--surface2)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{expr}</code>
-                        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{desc}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </>
             )}
           </div>

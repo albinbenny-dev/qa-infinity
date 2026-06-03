@@ -116,10 +116,15 @@ export async function generateReport(runId: string): Promise<void> {
     failedTests,
   });
 
-  const report = await prisma.report.create({
-    data: {
+  const report = await prisma.report.upsert({
+    where: { runId },
+    create: {
       projectId: run.projectId,
       runId,
+      summary: analysis.summary,
+      aiAnalysis: JSON.stringify(analysis),
+    },
+    update: {
       summary: analysis.summary,
       aiAnalysis: JSON.stringify(analysis),
     },
@@ -295,6 +300,61 @@ export async function getRunTrend(projectId: string, days: number): Promise<RunT
   }
 
   return points;
+}
+
+// ── getTopSuites ───────────────────────────────────────────────────────────
+
+export interface TopSuiteEntry {
+  name: string;
+  runCount: number;
+  lastRunStatuses: string[];
+  successRate: number;
+}
+
+export async function getTopSuites(projectId: string): Promise<TopSuiteEntry[]> {
+  const runs = await prisma.run.findMany({
+    where: {
+      projectId,
+      triggerType: 'SUITE',
+      status: { in: ['PASSED', 'FAILED', 'CANCELLED'] },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { name: true, status: true },
+    take: 500,
+  });
+
+  const byName = new Map<string, { statuses: string[]; count: number }>();
+  for (const run of runs) {
+    const existing = byName.get(run.name);
+    if (existing) {
+      existing.count++;
+      if (existing.statuses.length < 5) existing.statuses.push(run.status);
+    } else {
+      byName.set(run.name, { statuses: [run.status], count: 1 });
+    }
+  }
+
+  return [...byName.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5)
+    .map(([name, { statuses, count }]) => {
+      const terminal = statuses.filter((s) => s === 'PASSED' || s === 'FAILED');
+      const successRate =
+        terminal.length > 0
+          ? Math.round((terminal.filter((s) => s === 'PASSED').length / terminal.length) * 100)
+          : 0;
+      return { name, runCount: count, lastRunStatuses: statuses, successRate };
+    });
+}
+
+// ── getProjectTokenUsage ───────────────────────────────────────────────────
+
+export async function getProjectTokenUsage(projectId: string): Promise<number> {
+  const agg = await prisma.llmCall.aggregate({
+    where: { projectId },
+    _sum: { totalTokens: true },
+  });
+  return agg._sum.totalTokens ?? 0;
 }
 
 // ── getAgentStatuses ───────────────────────────────────────────────────────

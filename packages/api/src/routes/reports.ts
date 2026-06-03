@@ -10,6 +10,8 @@ import {
   getProjectStats,
   getRunTrend,
   getAgentStatuses,
+  getTopSuites,
+  getProjectTokenUsage,
   getEmailConfig,
   saveEmailConfig,
 } from '../services/reportService.js';
@@ -32,7 +34,7 @@ router.use(requireProjectAccess as unknown as RequestHandler);
 router.get('/dashboard', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const days = parseInt(req.query['days'] as string || '7', 10);
-    const [stats, trend, recentRunsData, agentStatuses] = await Promise.all([
+    const [stats, trend, recentRunsData, agentStatuses, topSuites, projectTokens] = await Promise.all([
       getProjectStats(req.project.id),
       getRunTrend(req.project.id, days),
       prisma.run.findMany({
@@ -45,8 +47,10 @@ router.get('/dashboard', async (req: Request, res: Response, next: NextFunction)
         },
       }),
       getAgentStatuses(req.project.id),
+      getTopSuites(req.project.id),
+      getProjectTokenUsage(req.project.id),
     ]);
-    res.json({ stats, trend, recentRuns: recentRunsData, agentStatuses });
+    res.json({ stats, trend, recentRuns: recentRunsData, agentStatuses, topSuites, projectTokens });
   } catch (err) { next(err); }
 });
 
@@ -457,8 +461,11 @@ router.get('/runs/:runId/results/:resultId/screenshot', async (req: Request, res
     if (!result?.screenshotPath) { res.status(404).json({ error: 'Screenshot not found' }); return; }
     if (!fs.existsSync(result.screenshotPath)) { res.status(404).json({ error: 'Screenshot file missing on disk' }); return; }
     const runLabelSc = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Content-Disposition', `attachment; filename="screenshot-${runLabelSc}_${result.testCase.tcId}.png"`);
+    const isJpeg = /\.(jpg|jpeg)$/i.test(result.screenshotPath);
+    const imgMime = isJpeg ? 'image/jpeg' : 'image/png';
+    const imgExt = isJpeg ? 'jpg' : 'png';
+    res.setHeader('Content-Type', imgMime);
+    res.setHeader('Content-Disposition', `attachment; filename="screenshot-${runLabelSc}_${result.testCase.tcId}.${imgExt}"`);
     fs.createReadStream(result.screenshotPath).pipe(res);
   } catch (err) { next(err); }
 });
@@ -507,8 +514,10 @@ router.get('/runs/:runId/results/:resultId/video', async (req: Request, res: Res
     if (!result?.videoPath) { res.status(404).json({ error: 'Video not found' }); return; }
     if (!fs.existsSync(result.videoPath)) { res.status(404).json({ error: 'Video file missing on disk' }); return; }
     const runLabelVid = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
-    res.setHeader('Content-Type', 'video/webm');
-    res.setHeader('Content-Disposition', `attachment; filename="video-${runLabelVid}_${result.testCase.tcId}.webm"`);
+    const videoExt = result.videoPath.toLowerCase().endsWith('.mp4') ? 'mp4' : 'webm';
+    const videoMime = videoExt === 'mp4' ? 'video/mp4' : 'video/webm';
+    res.setHeader('Content-Type', videoMime);
+    res.setHeader('Content-Disposition', `attachment; filename="video-${runLabelVid}_${result.testCase.tcId}.${videoExt}"`);
     fs.createReadStream(result.videoPath).pipe(res);
   } catch (err) { next(err); }
 });

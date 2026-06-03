@@ -53,7 +53,7 @@ export function listScriptFiles(projectId: string): ScriptFileMeta[] {
       const abs = path.join(dir, f);
       return (
         fs.statSync(abs).isFile() &&
-        (f.endsWith('.spec.ts') || f.endsWith('.spec.js'))
+        (f.endsWith('.spec.ts') || f.endsWith('.spec.js') || f.endsWith('.robot'))
       );
     })
     .map((f) => {
@@ -81,14 +81,15 @@ export async function exportZip(projectId: string, filenames?: string[]): Promis
   const zip = new JSZip();
   const dir = projectDir(projectId);
   const pages = pagesDir(projectId);
+  const res = resourcesDir(projectId);
 
-  // Add spec files
+  // Add spec / robot files
   if (fs.existsSync(dir)) {
     const files = fs.readdirSync(dir).filter((f) => {
       const abs = path.join(dir, f);
       if (!fs.statSync(abs).isFile()) return false;
       if (filenames) return filenames.includes(f);
-      return f.endsWith('.spec.ts') || f.endsWith('.spec.js');
+      return f.endsWith('.spec.ts') || f.endsWith('.spec.js') || f.endsWith('.robot');
     });
     for (const f of files) {
       zip.file(f, fs.readFileSync(path.join(dir, f)));
@@ -105,5 +106,46 @@ export async function exportZip(projectId: string, filenames?: string[]): Promis
     }
   }
 
+  // Always include resources/ folder (Robot Framework resource files)
+  if (fs.existsSync(res)) {
+    for (const f of fs.readdirSync(res)) {
+      const abs = path.join(res, f);
+      if (fs.statSync(abs).isFile()) {
+        zip.file(`resources/${f}`, fs.readFileSync(abs));
+      }
+    }
+  }
+
   return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+// ── Resource file helpers ─────────────────────────────────────────────────
+
+export function resourcesDir(projectId: string): string {
+  return path.join(SCRIPTS_ROOT, projectId, 'resources');
+}
+
+export function saveResourceFile(projectId: string, filename: string, buffer: Buffer): void {
+  ensureDir(resourcesDir(projectId));
+  fs.writeFileSync(path.join(resourcesDir(projectId), filename), buffer);
+}
+
+export function deleteResourceFile(projectId: string, filename: string): void {
+  const filePath = path.join(resourcesDir(projectId), filename);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+}
+
+export function listResourceFiles(projectId: string): { filename: string; size: number }[] {
+  const dir = resourcesDir(projectId);
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => fs.statSync(path.join(dir, f)).isFile())
+    .map((f) => ({ filename: f, size: fs.statSync(path.join(dir, f)).size }));
+}
+
+export function readResourceFile(projectId: string, filename: string): string {
+  const filePath = path.join(resourcesDir(projectId), filename);
+  if (!fs.existsSync(filePath)) throw new Error(`Resource file not found: ${filename}`);
+  return fs.readFileSync(filePath, 'utf-8');
 }

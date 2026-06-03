@@ -49,6 +49,7 @@ interface TCListPanelProps {
   onRunIndividual: (tc: TestCase) => void;
   onStopIndividual?: (tc: TestCase) => void;
   onViewTc: (tc: TestCase) => void;
+  onDuplicateTc: (tc: TestCase) => void;
   isRunning: boolean;
 }
 
@@ -66,6 +67,7 @@ export default function TCListPanel({
   onRunGroup,
   onRunIndividual,
   onViewTc,
+  onDuplicateTc,
   isRunning,
 }: TCListPanelProps) {
   const [viewMode, setViewMode] = useState<'usecase' | 'flat'>('usecase');
@@ -309,6 +311,7 @@ export default function TCListPanel({
               onRunGroup={onRunGroup}
               onRunIndividual={onRunIndividual}
               onViewTc={onViewTc}
+              onDuplicateTc={onDuplicateTc}
             />
           ))
         ) : (
@@ -322,6 +325,7 @@ export default function TCListPanel({
               onToggle={() => onToggleTc(tc.id)}
               onRun={() => onRunIndividual(tc)}
               onView={() => onViewTc(tc)}
+              onDuplicate={() => onDuplicateTc(tc)}
             />
           ))
         )}
@@ -332,8 +336,8 @@ export default function TCListPanel({
 
 // ── UseCase group ─────────────────────────────────────────────────────────
 function UseCaseGroupRow({
-  group, groupIndex: _groupIndex, expanded, selectedIds, runningTcIds, scriptedTcIds,
-  isRunning, onToggleExpand, onToggleTc, onToggleGroup, onRunGroup, onRunIndividual, onViewTc,
+  group, groupIndex: _groupIndex, expanded, selectedIds, runningTcIds, scriptedTcIds: _scriptedTcIds,
+  isRunning, onToggleExpand, onToggleTc, onToggleGroup, onRunGroup, onRunIndividual, onViewTc, onDuplicateTc,
 }: {
   group: { name: string; tcs: TestCase[]; color: string };
   groupIndex: number;
@@ -348,6 +352,7 @@ function UseCaseGroupRow({
   onRunGroup: (tag: string) => void;
   onRunIndividual: (tc: TestCase) => void;
   onViewTc: (tc: TestCase) => void;
+  onDuplicateTc: (tc: TestCase) => void;
 }) {
   const ids = group.tcs.map((tc) => tc.id);
   const allSelected = ids.length > 0 && ids.every((id) => selectedIds.has(id));
@@ -486,6 +491,7 @@ function UseCaseGroupRow({
           onToggle={() => onToggleTc(tc.id)}
           onRun={() => onRunIndividual(tc)}
           onView={() => onViewTc(tc)}
+          onDuplicate={() => onDuplicateTc(tc)}
           indent
         />
       ))}
@@ -496,7 +502,7 @@ function UseCaseGroupRow({
 // ── TC row ────────────────────────────────────────────────────────────────
 function TCRow({
   tc, isSelected, isRunning, runDisabled,
-  onToggle, onRun, onView, indent = false,
+  onToggle, onRun, onView, onDuplicate, indent = false,
 }: {
   tc: TestCase;
   isSelected: boolean;
@@ -505,6 +511,7 @@ function TCRow({
   onToggle: () => void;
   onRun: () => void;
   onView: () => void;
+  onDuplicate: () => void;
   indent?: boolean;
 }) {
   const chip = TYPE_CHIP[tc.type] ?? { bg: 'var(--surface3)', color: 'var(--text-dim)' };
@@ -593,6 +600,22 @@ function TCRow({
         }}
       >
         {isRunning ? '■' : '▶'}
+      </button>
+
+      {/* Duplicate button */}
+      <button
+        onClick={onDuplicate}
+        title="Duplicate test case"
+        style={{
+          width: 22, height: 22, borderRadius: 4,
+          background: 'rgba(139,92,246,0.08)',
+          border: '1px solid rgba(139,92,246,0.2)',
+          color: 'var(--violet)', fontSize: 10, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        ⎘
       </button>
 
       {/* View button */}

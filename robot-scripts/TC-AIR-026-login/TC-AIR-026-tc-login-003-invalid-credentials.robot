@@ -1,0 +1,48 @@
+*** Settings ***
+Documentation       TC_LOGIN_003 - Invalid Credentials - Login Should Fail
+...                 Verify that an incorrect password shows an error.
+Library             Browser    auto_closing_level=KEEP
+
+*** Variables ***
+${BASE_URL}          https://airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local
+${TC_USERNAME}       Nigeria2
+${USERNAME_FIELD}    css=#username
+${PASSWORD_FIELD}    css=#password
+${LOGIN_BTN}         css=#kc-login
+${TIMEOUT}           30s
+
+*** Test Cases ***
+
+TC_LOGIN_003 - Invalid Credentials - Login Should Fail
+    [Documentation]    Verify that an incorrect password shows an error.
+    [Tags]             negative    login
+    [Setup]            Open Airtel Application
+    [Teardown]         Close Test Session
+    Enter Username And Proceed    ${TC_USERNAME}
+    Enter Password And Submit     WrongPassword123
+    ${src}=    Get Page Source
+    Should Not Contain    ${src}    My Profile
+
+*** Keywords ***
+
+Open Airtel Application
+    New Browser    chromium    headless=False
+    New Context    ignoreHTTPSErrors=True
+    New Page       ${BASE_URL}
+    Wait For Elements State    ${USERNAME_FIELD}    visible    ${TIMEOUT}
+
+Close Test Session
+    Close Browser
+
+Enter Username And Proceed
+    [Arguments]    ${username}
+    Fill Text    ${USERNAME_FIELD}    ${username}
+    Click        ${LOGIN_BTN}
+    Wait For Elements State    ${PASSWORD_FIELD}    visible    ${TIMEOUT}
+
+Enter Password And Submit
+    [Arguments]    ${password}
+    Fill Text    ${PASSWORD_FIELD}    ${password}
+    Wait For Elements State    ${LOGIN_BTN}    enabled    ${TIMEOUT}
+    Click        ${LOGIN_BTN}
+    Sleep        3s

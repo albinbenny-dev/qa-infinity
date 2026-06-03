@@ -41,6 +41,10 @@ interface PWReport {
     skipped: number;
     duration: number;
   };
+  // Robot Framework report shape (from parseRobotXmlReport in runner/index.js)
+  _robotReport?: true;
+  suiteStatus?: 'PASS' | 'FAIL';
+  tests?: Array<{ name: string; status: 'PASS' | 'FAIL'; durationMs: number; errorMsg: string | null }>;
 }
 
 function flattenTests(suite: PWSuite): PWTestCase[] {
@@ -222,7 +226,21 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     let tracePath: string | undefined;
     let videoPath: string | undefined;
 
-    if (result.reportData) {
+    if (result.reportData?._robotReport) {
+      // ── Robot Framework report ──────────────────────────────────────────
+      // RF exit code is the definitive source of truth (0 = all pass, non-zero = failure)
+      const rfReport = result.reportData;
+      const rfTests = rfReport.tests ?? [];
+      duration = rfTests.reduce((sum, t) => sum + t.durationMs, 0) || result.durationMs;
+      passed = result.exitCode === 0;
+      if (!passed) {
+        const failedTest = rfTests.find((t) => t.status === 'FAIL');
+        errorMessage = failedTest?.errorMsg ?? 'Robot test failed — check the run log for details.';
+      }
+      // Assets captured by the runner's post-run directory scan
+      if (result.screenshotPath) screenshotPath = result.screenshotPath;
+      if (result.videoPath) videoPath = result.videoPath;
+    } else if (result.reportData) {
       const stats = result.reportData.stats;
       const totalTests = (stats?.expected ?? 0) + (stats?.unexpected ?? 0) + (stats?.skipped ?? 0);
       duration = Math.round(stats?.duration ?? result.durationMs);
@@ -279,6 +297,8 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     if (passed) {
       totalPassed++;
       emitLog(runId, 'pass', `✓ ${scriptName} PASSED · ${(duration / 1000).toFixed(1)}s`);
+      // Write verified locators back to generationHints so next generation starts with proven selectors
+      void extractAndLockLocators(testCaseId, scriptPath).catch(() => {});
     } else {
       totalFailed++;
       emitLog(runId, 'fail', `✗ ${scriptName} FAILED · ${errorMessage ?? 'Unknown error'}`);
@@ -336,6 +356,50 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   }
 }
 
+// ── Helper: extract verified locators from a passing script and lock them ────
+// Parses css=, text=, xpath= and nth= patterns from the script content, then
+// merges them into testCase.generationHints so the next generation skips the
+// guessing phase and starts with proven selectors.
+async function extractAndLockLocators(testCaseId: string, scriptPath: string): Promise<void> {
+  let scriptContent: string;
+  try {
+    scriptContent = fs.readFileSync(scriptPath, 'utf-8');
+  } catch {
+    return;
+  }
+
+  // Extract all locator strings assigned to variables or passed to RF Browser keywords
+  const locatorPattern = /(?:css=|text=|xpath=)[^\s'"}{]+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
+  const matches = scriptContent.match(locatorPattern) ?? [];
+  const unique = [...new Set(matches)].filter(
+    (l) => !l.includes('${') && l.length > 5,
+  );
+
+  if (unique.length === 0) return;
+
+  const tc = await prisma.testCase.findUnique({
+    where: { id: testCaseId },
+    select: { generationHints: true },
+  });
+  if (!tc) return;
+
+  let hints: Record<string, unknown> = {};
+  try {
+    hints = tc.generationHints ? JSON.parse(tc.generationHints as string) : {};
+  } catch { /* start fresh */ }
+
+  // Merge new verified locators — existing locked ones are preserved
+  const existing: string[] = Array.isArray(hints.verifiedLocators) ? hints.verifiedLocators as string[] : [];
+  const merged = [...new Set([...existing, ...unique])];
+  hints.verifiedLocators = merged;
+  hints.lastPassedAt = new Date().toISOString();
+
+  await prisma.testCase.update({
+    where: { id: testCaseId },
+    data: { generationHints: JSON.stringify(hints) },
+  });
+}
+
 // ── Helper: emit log line ────────────────────────────────────────────────────
 function emitLog(runId: string, kind: 'info' | 'pass' | 'fail' | 'run' | 'warn', text: string): void {
   emitToRun(runId, 'run:log', { kind, text, ts: new Date().toISOString() });
@@ -347,6 +411,8 @@ interface SpawnResult {
   error?: string;
   durationMs: number;
   reportData?: PWReport;
+  screenshotPath?: string;
+  videoPath?: string;
 }
 
 async function spawnPlaywright(
@@ -360,9 +426,9 @@ async function spawnPlaywright(
   const start = Date.now();
   const runnerUrl = process.env.RUNNER_URL ?? 'http://qa-runner:5001';
 
-  // Hard cap: 120 s (runner's 90 s kill timer + 30 s network/startup buffer)
+  // Hard cap: runner HARD_KILL_MS (900 s) + 60 s cleanup buffer
   const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 120_000);
+  const fetchTimeout = setTimeout(() => controller.abort(), 960_000);
 
   // Forward external cancellation (e.g. user clicked Stop Run)
   if (externalSignal) {
@@ -392,12 +458,14 @@ async function spawnPlaywright(
     // Read chunked NDJSON response line by line
     let exitCode = 1;
     let reportData: PWReport | undefined;
+    let rfScreenshotPath: string | undefined;
+    let rfVideoPath: string | undefined;
     const text = await response.text();
 
     for (const raw of text.split('\n')) {
       const trimmed = raw.trim();
       if (!trimmed) continue;
-      let msg: { type: string; text?: string; exitCode?: number; reportData?: PWReport | null };
+      let msg: { type: string; text?: string; exitCode?: number; reportData?: PWReport | null; screenshotPath?: string | null; videoPath?: string | null };
       try {
         msg = JSON.parse(trimmed);
       } catch {
@@ -409,12 +477,14 @@ async function spawnPlaywright(
       } else if (msg.type === 'done') {
         exitCode = msg.exitCode ?? 1;
         reportData = msg.reportData ?? undefined;
+        if (msg.screenshotPath) rfScreenshotPath = msg.screenshotPath;
+        if (msg.videoPath) rfVideoPath = msg.videoPath;
       }
     }
 
     clearTimeout(fetchTimeout);
     const durationMs = Date.now() - start;
-    return { exitCode, reportData, durationMs };
+    return { exitCode, reportData, durationMs, screenshotPath: rfScreenshotPath, videoPath: rfVideoPath };
   } catch (err: unknown) {
     clearTimeout(fetchTimeout);
     const durationMs = Date.now() - start;

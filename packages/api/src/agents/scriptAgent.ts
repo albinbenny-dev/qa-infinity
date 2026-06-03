@@ -15,6 +15,38 @@ export interface HealContext {
   timestamp: string;
 }
 
+// ── Structured hints (version 2 from agent traces) ────────────────────────
+
+interface StructuredLocator {
+  step: string;
+  selectorType: string;
+  selector: string;
+  playwright: string;
+}
+
+interface StructuredHints {
+  version: number;
+  locators: StructuredLocator[];
+}
+
+function parseStructuredHints(raw: string): StructuredHints | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.version === 2 && Array.isArray(parsed.locators) && parsed.locators.length > 0) {
+      return parsed as StructuredHints;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export interface ResourceFileInfo {
+  filename: string;
+  /** Keyword names extracted from *** Keywords *** section */
+  keywords: string[];
+}
+
 export interface ScriptAgentInput {
   testCase: {
     id: string;
@@ -25,7 +57,7 @@ export interface ScriptAgentInput {
     expectedResult: string;
     type: string;
     useCaseTag?: string | null;
-    generationHints?: string | null; // stored per-TC hints
+    generationHints?: string | null; // stored per-TC hints (may be StructuredHints JSON)
   };
   project: {
     id: string;
@@ -33,7 +65,13 @@ export interface ScriptAgentInput {
     baseUrl?: string | null;
   };
   existingPOMs: string[]; // filenames of already-generated POM classes
-  contextNote?: string;   // ephemeral user-typed context for this run
+  contextNote?: string;      // ephemeral user-typed context for this run
+  domSnippet?: string;       // HTML from DevTools to extract accurate locators
+  domRecording?: string;     // QA DOM Recorder export — structured live-session capture
+  failedStep?: string;       // step that failed (e.g. "Step 5: Click css=#submit-btn")
+  failedStepError?: string;  // error message from the failed step
+  scriptMode?: 'PLAYWRIGHT' | 'ROBOT'; // defaults to PLAYWRIGHT
+  resourceFiles?: ResourceFileInfo[]; // resource files with keyword names for Robot mode
   /** Past approved/auto-applied heals for this project — teach the agent what NOT to repeat */
   recentHeals?: HealContext[];
   /**
@@ -52,6 +90,7 @@ export interface ScriptAgentResult {
   specContent: string;
   pomContent?: string;
   pomFilename?: string;
+  scriptType: 'PLAYWRIGHT' | 'ROBOT';
 }
 
 const SYSTEM_PROMPT_BASE = `You are a senior QA automation engineer.
@@ -64,9 +103,26 @@ Return ONLY raw TypeScript — no markdown fences, no explanations.
 {PLATFORM_CONTEXT}
 
 ### Base URL — CRITICAL
-The Playwright config sets baseURL from the BASE_URL environment variable at runtime.
-ALWAYS use relative paths in page.goto() calls — e.g. page.goto('/') NOT page.goto('http://localhost:3000/').
-Never hardcode an absolute URL in any page.goto(), page.request, or navigation call.
+ALWAYS read the application URL from process.env.BASE_URL — never hardcode any URL.
+Do NOT use relative paths in page.goto() — they only work when a playwright.config.ts sets baseURL,
+which cannot be assumed at execution time.
+
+Every page.goto() and navigation call MUST use process.env.BASE_URL explicitly:
+  BAD:  page.goto('/')                              ← relative path, breaks without playwright config
+  BAD:  page.goto('http://any-hardcoded-url/login') ← hardcoded, not portable
+  GOOD: page.goto(process.env.BASE_URL!)             ← root navigation
+  GOOD: page.goto(\`\${process.env.BASE_URL}/login\`) ← sub-path navigation
+
+The navigate() method in EVERY POM class MUST follow this exact pattern:
+  async navigate(): Promise<void> {
+    const baseURL = process.env.BASE_URL;
+    if (!baseURL) throw new Error('BASE_URL environment variable is not set');
+    await this.page.goto(baseURL);
+    await this.page.waitForLoadState('domcontentloaded');
+  }
+
+For sub-page navigation (e.g. going directly to a settings or list page):
+  await this.page.goto(\`\${process.env.BASE_URL}/your-path\`);
 
 ### Timeout Defaults for Post-Login Assertions
 - Use { timeout: 15000 } on toBeVisible() and toHaveURL() calls that follow a login action.
@@ -80,10 +136,18 @@ When multiple tests in the same describe block all require a login step:
 
 ### Never hardcode dynamic/installation-specific values — CRITICAL
 Do NOT hardcode project slugs, user IDs, entity names, or any value that changes per installation.
-BAD:  page.goto('/projects/test/dashboard')  ← 'test' is a hardcoded slug
+BAD:  page.goto(\`\${process.env.BASE_URL}/projects/test/dashboard\`)  ← 'test' is a hardcoded slug
 GOOD: skip navigation to specific entities, or derive slug/id from a previous step or env var.
 If the test case requires navigating into a specific project/entity, use process.env.TEST_PROJECT_SLUG
 or note in a comment that the value must be replaced — do not invent a placeholder slug.
+
+### Locked Locators — CRITICAL
+When the user context includes a "LOCKED LOCATORS" section, those Playwright statements were captured in a
+live browser session and are guaranteed to work. You MUST:
+- Copy them verbatim for the steps they map to.
+- Never substitute, invent, or modify these locators.
+- If a locked locator uses a fill action, use the exact same locator with the appropriate value.
+This is the highest-priority instruction — it overrides your default locator preference order.
 
 ### Heal History — learn from past failures
 If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
@@ -119,9 +183,23 @@ Return ONLY raw TypeScript — no markdown fences, no explanations.
 {PLATFORM_CONTEXT}
 
 ### Base URL — CRITICAL
-The Playwright config sets baseURL from the BASE_URL environment variable at runtime.
-ALWAYS use relative paths in page.goto() calls — e.g. page.goto('/') NOT page.goto('http://localhost:3000/').
-Never hardcode an absolute URL in any page.goto(), page.request, or navigation call.
+ALWAYS read the application URL from process.env.BASE_URL — never hardcode any URL.
+Do NOT use relative paths in page.goto() — they only work when a playwright.config.ts sets baseURL,
+which cannot be assumed at execution time.
+
+Every page.goto() and navigation call MUST use process.env.BASE_URL explicitly:
+  BAD:  page.goto('/')                              ← relative path, breaks without playwright config
+  BAD:  page.goto('http://any-hardcoded-url/login') ← hardcoded, not portable
+  GOOD: page.goto(process.env.BASE_URL!)             ← root navigation
+  GOOD: page.goto(\`\${process.env.BASE_URL}/login\`) ← sub-path navigation
+
+Since this is self-contained (no POM), the login step MUST start with:
+  const baseURL = process.env.BASE_URL;
+  if (!baseURL) throw new Error('BASE_URL environment variable is not set');
+  await page.goto(baseURL);
+
+For sub-page navigation:
+  await page.goto(\`\${process.env.BASE_URL}/your-path\`);
 
 ### Timeout Defaults for Post-Login Assertions
 - Use { timeout: 15000 } on toBeVisible() and toHaveURL() calls that follow a login action.
@@ -135,10 +213,18 @@ When multiple tests in the same describe block all require a login step:
 
 ### Never hardcode dynamic/installation-specific values — CRITICAL
 Do NOT hardcode project slugs, user IDs, entity names, or any value that changes per installation.
-BAD:  page.goto('/projects/test/dashboard')  ← 'test' is a hardcoded slug
+BAD:  page.goto(\`\${process.env.BASE_URL}/projects/test/dashboard\`)  ← 'test' is a hardcoded slug
 GOOD: skip navigation to specific entities, or derive slug/id from a previous step or env var.
 If the test case requires navigating into a specific project/entity, use process.env.TEST_PROJECT_SLUG
 or note in a comment that the value must be replaced — do not invent a placeholder slug.
+
+### Locked Locators — CRITICAL
+When the user context includes a "LOCKED LOCATORS" section, those Playwright statements were captured in a
+live browser session and are guaranteed to work. You MUST:
+- Copy them verbatim for the steps they map to.
+- Never substitute, invent, or modify these locators.
+- If a locked locator uses a fill action, use the exact same locator with the appropriate value.
+This is the highest-priority instruction — it overrides your default locator preference order.
 
 ### Heal History — learn from past failures
 If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
@@ -153,6 +239,138 @@ Output format — use this exact separator:
 
 The spec file must import from '@playwright/test', include a test.describe block,
 use async/await, and handle assertions with expect().`;
+
+const SYSTEM_PROMPT_ROBOT = `You are a senior QA automation engineer.
+Generate a production-ready Robot Framework test using the Browser library (Playwright backend)
+for the target application (baseUrl: {BASE_URL}).
+The Browser library uses Playwright under the hood — use its keywords exactly.
+
+{PLATFORM_CONTEXT}
+
+### Base URL — CRITICAL
+Read the application URL from the \${BASE_URL} variable — never hardcode any URL.
+Every navigation call MUST use: \${BASE_URL}
+  BAD:  New Page    https://hardcoded-url/login
+  GOOD: New Page    \${BASE_URL}
+
+### Credentials
+Use \${TC_USERNAME} and \${TC_PASSWORD} variables — never hardcode credentials.
+
+### Locator strategy — STRICT PRIORITY ORDER
+Choose the FIRST strategy that uniquely identifies the element. Never skip ahead.
+
+1. **id=<value>**
+   Use when the element has a stable HTML id attribute.
+   Examples:  id=username    id=kc-login    id=password
+   RF syntax: css=#username  OR  id=username
+
+2. **css=<selector> with data attribute**
+   Use when element has a data-testid, data-cy, data-qa or similar test hook.
+   Examples:  css=[data-testid=submit-btn]    css=[data-cy=login-form]
+
+3. **css=<selector> with stable attribute**
+   Use when element has a stable name, type, role, or aria-label attribute.
+   Examples:  css=input[name="username"]    css=button[type="submit"]
+              css=[aria-label="Close dialog"]    css=input[placeholder="Search"]
+
+4. **role=<role>[name="<accessible name>"]**
+   Use for interactive elements (buttons, links, inputs) identified by their ARIA role
+   and visible label — resilient to class/id changes.
+   Examples:  role=button[name="Login"]    role=link[name="Dashboard"]
+              role=textbox[name="Username"]
+
+5. **text=<visible text>** or **text="<exact text>"**
+   Use for links, labels, and buttons identified purely by their visible text.
+   Examples:  text=Login    text="Sign In"    text=Forgot Password
+
+6. **css=<class-based selector>**
+   Use only when no better anchor exists. Prefer specific, short class chains.
+   Examples:  css=.btn-primary    css=.login-form input.email-field
+   AVOID: long brittle chains like css=div > div > form > div:nth-child(2) > input
+
+7. **xpath=<expression>**
+   LAST RESORT ONLY — use only when no CSS or role selector is possible.
+   If you must use XPath, keep it as short and attribute-based as possible.
+   Examples:  xpath=//input[@id='username']    xpath=//button[text()='Login']
+   NEVER use index-based XPath: xpath=//div[3]/span[2]
+
+### Locator anti-patterns — NEVER do these
+- Never hardcode full XPath trees with positional indices
+- Never use generated class names (e.g. css=.sc-bdXxxt, css=.css-1x2y3z)
+- Never chain more than 3 CSS descendant steps
+- For Angular/React apps: prefer id= or data-testid= as they survive re-renders
+- NEVER use bare HTML tag selectors (e.g. css=ul, css=div, css=span) — they match dozens of elements and cause strict mode violations. Always add a class, id, role, or attribute to narrow to a single element.
+- NEVER use multiple css= prefixes in a single locator argument — this produces invalid CSS and crashes at runtime.
+  Each locator argument accepts exactly ONE strategy prefix. Commas inside a single css= are valid CSS multi-selectors; additional css= tokens are not.
+  BAD:  Wait For Elements State    css=.sidebar, css=nav, css=[class*="nav"]    visible    \${TIMEOUT}
+  BAD:  Click    css=button:has-text("Save"), css=input[type=submit]
+  GOOD: Wait For Elements State    css=.sidebar, nav, [class*="nav"]    visible    \${TIMEOUT}
+  GOOD: Click    css=button:has-text("Save"), input[type=submit]
+  If you need a true OR across incompatible strategies (e.g. css + text), use separate
+  Run Keyword And Return Status calls rather than jamming two prefixes together.
+
+### Key Browser library keywords
+New Browser    chromium    headless=False
+New Context    ignoreHTTPSErrors=True    recordVideo={'dir': '\${OUTPUTDIR}'}
+New Page    \${BASE_URL}
+Fill Text    <locator>    <value>
+Click    <locator>
+Wait For Elements State    <locator>    visible    \${TIMEOUT}
+Wait For Elements State    <locator>    enabled    \${TIMEOUT}
+Get Url
+Should Contain    <string>    <substring>
+Take Screenshot    filename=\${OUTPUTDIR}/screenshot.png
+Get Text    <locator>
+Get Element    <locator>
+Select Options By    <locator>    value    <value>
+Hover    <locator>
+Keyboard Input    type    <text>
+Sleep    <time>s    # use sparingly — prefer Wait For Elements State
+
+### Screenshot and Video Recording — REQUIRED
+Every generated script MUST capture a screenshot and video for run history. You MUST:
+1. Configure video in New Context — ALWAYS include \`recordVideo={'dir': '\${OUTPUTDIR}'}\`:
+     New Context    ignoreHTTPSErrors=True    recordVideo={'dir': '\${OUTPUTDIR}'}
+2. Take a screenshot at the end of EVERY test — add \`Take Screenshot\` as the FIRST line of the
+   teardown keyword (before Close Browser), so it captures the final page state on both pass and fail:
+     Close Test Session
+         Take Screenshot    filename=\${OUTPUTDIR}/screenshot.png
+         Close Browser
+   This is NON-NEGOTIABLE — run history will not show any assets without these two steps.
+
+### Variables section
+Always declare these at minimum:
+\${BASE_URL}       (set from environment — do NOT hardcode)
+\${TC_USERNAME}    (set from environment)
+\${TC_PASSWORD}    (set from environment)
+\${TIMEOUT}        30s
+
+### Test structure
+- Use *** Keywords *** to extract every reusable action (e.g. Open Application, Login As User)
+- Test Cases section should read like a business scenario — one keyword call per logical step
+- [Setup] and [Teardown] tags on the test case for browser open/close (teardown = Close Test Session)
+- The Close Test Session keyword MUST call Take Screenshot before Close Browser (see above)
+- [Tags] on every test: use the use-case tag, test type, and "automation"
+
+### Resource files
+ONLY import resource files that are explicitly listed in the prompt under "Available resource files".
+If no resource files are listed, do NOT add any Resource imports — do NOT invent filenames like keywords.robot or variables.robot.
+When resource files are listed, import them with:
+Resource    resources/<filename>.robot
+Use keywords from them where applicable rather than repeating logic.
+
+### Locked Locators
+When the user prompt includes a LOCKED LOCATORS section, those selectors were captured
+in a live browser session and are guaranteed to work. Use them verbatim — convert
+Playwright selector syntax (page.locator('css=...')) to RF Browser selector syntax
+(css=...) without modification to the selector string itself.
+
+### Output format — use this EXACT separator:
+===ROBOT===
+<complete .robot file content>
+
+The .robot file MUST have all four sections: *** Settings ***, *** Variables ***, *** Test Cases ***, *** Keywords ***
+Do NOT include markdown fences, explanations, or any text outside the ===ROBOT=== block.`;
 
 export async function getProjectPlatformSection(
   projectId: string,
@@ -316,6 +534,25 @@ function buildLearningsSection(learnings: AgentLearning[], useCaseTag?: string |
   return lines.join('\n');
 }
 
+// ── Step-text matching for locked vs reference locators ───────────────────
+
+/**
+ * Returns true if `hintStep` (from a stored StructuredHints locator) still
+ * matches one of the current TC steps.  Uses normalised substring comparison
+ * so minor punctuation/capitalisation edits still match, but a fully rewritten
+ * step will not match and its locator will be demoted to "reference" status.
+ */
+function stepTextMatches(hintStep: string, currentSteps: string[]): boolean {
+  if (currentSteps.length === 0) return false;
+  const normalize = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const nh = normalize(hintStep);
+  return currentSteps.some((s) => {
+    const ns = normalize(s);
+    return ns === nh || ns.includes(nh) || nh.includes(ns);
+  });
+}
+
 // ── Golden examples (few-shot grounding) ──────────────────────────────────
 
 async function getGoldenExamples(
@@ -384,37 +621,163 @@ async function getGoldenExamples(
 }
 
 export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAgentResult> {
-  const llm = createLLM({ temperature: 0.1, agentName: 'script-agent', projectId: input.project.id });
+  const llm = createLLM({ temperature: 0.1, agentName: 'script-agent', projectId: input.project.id, projectName: input.project.name });
 
   const baseUrl = input.project.baseUrl ?? 'http://localhost:3000';
+  const isRobot = input.scriptMode === 'ROBOT';
   const selfContained = input.existingPOMs.length === 0;
   const [platformSection, goldenSection] = await Promise.all([
     getProjectPlatformSection(input.project.id, input.testCase.useCaseTag),
-    getGoldenExamples(input.project.id, input.testCase.useCaseTag, selfContained),
+    isRobot ? Promise.resolve('') : getGoldenExamples(input.project.id, input.testCase.useCaseTag, selfContained),
   ]);
   const fullPlatformContext = goldenSection
     ? `${platformSection}\n\n${goldenSection}`
     : platformSection;
-  const promptTemplate = selfContained
-    ? SYSTEM_PROMPT_SELF_CONTAINED
-    : SYSTEM_PROMPT_BASE;
+  let promptTemplate: string;
+  if (isRobot) {
+    promptTemplate = SYSTEM_PROMPT_ROBOT;
+  } else if (selfContained) {
+    promptTemplate = SYSTEM_PROMPT_SELF_CONTAINED;
+  } else {
+    promptTemplate = SYSTEM_PROMPT_BASE;
+  }
   const systemPrompt = promptTemplate
     .replace('{BASE_URL}', baseUrl)
     .replace('{PLATFORM_CONTEXT}', fullPlatformContext);
 
   const steps = parseJsonArray(input.testCase.steps);
-  const pomListText =
-    input.existingPOMs.length > 0
-      ? `\nExisting POMs (do NOT regenerate): ${input.existingPOMs.join(', ')}`
-      : '\nNo existing POMs — write self-contained inline code only. Do NOT import from ./pages/.';
+  const pomListText = isRobot
+    ? ''
+    : (input.existingPOMs.length > 0
+        ? `\nExisting POMs (do NOT regenerate): ${input.existingPOMs.join(', ')}`
+        : '\nNo existing POMs — write self-contained inline code only. Do NOT import from ./pages/.');
 
-  // Build combined user context: stored hints + ephemeral contextNote
-  const contextParts: string[] = [];
-  if (input.testCase.generationHints?.trim()) {
-    contextParts.push(`Stored hints for this test case:\n${input.testCase.generationHints.trim()}`);
+  // Robot resource file injection
+  const resourceLines: string[] = [];
+  if (isRobot && input.resourceFiles && input.resourceFiles.length > 0) {
+    resourceLines.push('', '### Resource Files — USE THESE KEYWORDS, do NOT rewrite their logic');
+    resourceLines.push('Import all relevant files. Use their keywords instead of duplicating steps.');
+    resourceLines.push('Import syntax: Resource    resources/<filename>');
+    resourceLines.push('');
+
+    const loginKeywords: string[] = [];
+    for (const rf of input.resourceFiles) {
+      const kwList = rf.keywords.length > 0 ? rf.keywords.join(', ') : '(no keywords)';
+      resourceLines.push(`  - ${rf.filename}`);
+      resourceLines.push(`      Keywords: ${kwList}`);
+      // Collect login/setup keyword names for the critical rule below
+      for (const kw of rf.keywords) {
+        const lower = kw.toLowerCase();
+        if (lower.includes('login') || lower.includes('open application') || lower.includes('close test') || lower.includes('setup')) {
+          loginKeywords.push(kw);
+        }
+      }
+    }
+
+    if (loginKeywords.length > 0) {
+      resourceLines.push('');
+      resourceLines.push(`CRITICAL — Login/Setup/Teardown keywords are provided by the resource files: ${loginKeywords.join(', ')}`);
+      resourceLines.push('Structure your test using ONLY the keyword names listed above — do NOT invent names.');
+      resourceLines.push('Typical pattern:');
+      resourceLines.push('  [Setup]    <open-session keyword from resource>');
+      resourceLines.push('  [Teardown] <close-session keyword from resource>');
+      resourceLines.push('  Then call the login keyword as the first step in the test body.');
+      resourceLines.push('DO NOT define your own Open/Login/Close keywords — use the exact names from the list above.');
+    }
   }
+
+  // Build combined user context: structured/locked locators + ephemeral contextNote
+  const contextParts: string[] = [];
+
+  if (input.testCase.generationHints?.trim()) {
+    // Surface verified locators written back by runWorker after a passing run
+    try {
+      const raw = JSON.parse(input.testCase.generationHints.trim());
+      if (Array.isArray(raw.verifiedLocators) && raw.verifiedLocators.length > 0) {
+        contextParts.push([
+          'VERIFIED LOCATORS — extracted from the last passing run of this test case.',
+          'These selectors are confirmed to work in the live app. Prefer them over any invented alternatives.',
+          '',
+          ...(raw.verifiedLocators as string[]).map((l: string) => `  ${l}`),
+          ...(raw.lastPassedAt ? [`  (last passed: ${raw.lastPassedAt})`] : []),
+        ].join('\n'));
+      }
+    } catch { /* not JSON — fall through to structured hints parser */ }
+
+    const structured = parseStructuredHints(input.testCase.generationHints.trim());
+    if (structured && structured.locators.length > 0) {
+      // Split locators: LOCKED if step still matches a current TC step, REFERENCE if step was edited
+      const locked: StructuredLocator[] = [];
+      const reference: StructuredLocator[] = [];
+      for (const loc of structured.locators) {
+        if (stepTextMatches(loc.step, steps)) {
+          locked.push(loc);
+        } else {
+          reference.push(loc);
+        }
+      }
+
+      if (locked.length > 0) {
+        contextParts.push([
+          'LOCKED LOCATORS — verified in live browser session.',
+          'You MUST use these EXACT Playwright statements for the steps they map to.',
+          'Do NOT substitute, invent, or modify any of these locators.',
+          '',
+          ...locked.map(l => `  Step "${l.step}" → ${l.playwright}`),
+        ].join('\n'));
+      }
+
+      if (reference.length > 0) {
+        contextParts.push([
+          'REFERENCE LOCATORS from a previous agent trace — the test steps may have changed since these were recorded.',
+          'Use them as a starting point where applicable; adapt selectors to match the current test case steps.',
+          '',
+          ...reference.map(l => `  "${l.step}" → ${l.playwright}`),
+        ].join('\n'));
+      }
+    } else {
+      // Legacy free-text hints — pass through as before
+      contextParts.push(`Stored hints for this test case:\n${input.testCase.generationHints.trim()}`);
+    }
+  }
+
+  if (input.domRecording?.trim()) {
+    contextParts.push([
+      'DOM RECORDING — captured from a live manual execution of this exact test case.',
+      'This is the HIGHEST PRIORITY input. Each RECOMMENDED selector was verified in a real browser session.',
+      'Rules you MUST follow:',
+      '  1. Use the RECOMMENDED selector verbatim for every step it maps to — do NOT invent alternatives.',
+      '  2. For SHORT-LIVED TOASTs: assert the toast text IMMEDIATELY after the trigger step with NO Sleep before it.',
+      '  3. For FILL steps: use the RECOMMENDED selector and fill with the appropriate test data value.',
+      '',
+      input.domRecording.trim(),
+    ].join('\n'));
+  }
+
   if (input.contextNote?.trim()) {
     contextParts.push(`Additional context provided for this run:\n${input.contextNote.trim()}`);
+  }
+
+  if (input.failedStep?.trim() || input.failedStepError?.trim()) {
+    const lines = ['FAILED STEP (fix this specifically — do not restructure the whole script unless necessary):'];
+    if (input.failedStep?.trim()) lines.push(`  Step: ${input.failedStep.trim()}`);
+    if (input.failedStepError?.trim()) lines.push(`  Error: ${input.failedStepError.trim()}`);
+    lines.push('');
+    lines.push('Instructions:');
+    lines.push('  1. Parse the DOM snippet (if provided) to extract the BEST locator using priority: data-testid > id > aria-label > text > css.');
+    lines.push('  2. Fix ONLY the broken locators/steps. Do not restructure the entire script unless asked.');
+    lines.push('  3. Add a DIFF SUMMARY at the top as comments showing what changed and why.');
+    contextParts.push(lines.join('\n'));
+  }
+
+  if (input.domSnippet?.trim()) {
+    contextParts.push([
+      'DOM SNIPPET (from browser DevTools — use this to extract the most stable locator):',
+      input.domSnippet.trim(),
+      '',
+      'Locator extraction priority from this DOM: data-testid > id > aria-label > name attribute > visible text > css class.',
+      'Pick the FIRST strategy that uniquely identifies the target element.',
+    ].join('\n'));
   }
 
   // Build past heals section — teach the agent which patterns to avoid
@@ -459,7 +822,7 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   const userPrompt = [
     `Project: ${input.project.name}`,
     `Base URL: ${baseUrl}`,
-    pomListText,
+    ...(pomListText ? [pomListText] : []),
     '',
     'Test Case:',
     `  ID:          ${input.testCase.tcId}`,
@@ -472,9 +835,10 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     ...steps.map((s, i) => `  ${i + 1}. ${s}`),
     '',
     `Expected Result: ${input.testCase.expectedResult}`,
+    ...resourceLines,
     ...(contextParts.length > 0 ? [
       '',
-      '### User Context & Locator Hints — FOLLOW THESE EXACTLY',
+      '### LOCKED LOCATORS & Context — HIGHEST PRIORITY — FOLLOW EXACTLY',
       ...contextParts,
     ] : []),
     ...prereqLines,
@@ -486,7 +850,7 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   const content =
     typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
 
-  return parseAgentOutput(content);
+  return parseAgentOutput(content, isRobot ? 'ROBOT' : 'PLAYWRIGHT');
 }
 
 function parseJsonArray(raw: string): string[] {
@@ -498,7 +862,24 @@ function parseJsonArray(raw: string): string[] {
   }
 }
 
-function parseAgentOutput(raw: string): ScriptAgentResult {
+function parseAgentOutput(raw: string, scriptType: 'PLAYWRIGHT' | 'ROBOT' = 'PLAYWRIGHT'): ScriptAgentResult {
+  // ── Robot mode ─────────────────────────────────────────────────────────────
+  if (scriptType === 'ROBOT') {
+    const robotIdx = raw.indexOf('===ROBOT===');
+    let specContent: string;
+    if (robotIdx !== -1) {
+      specContent = raw.slice(robotIdx + '===ROBOT==='.length).trim();
+    } else {
+      // Fallback: strip markdown fences if present
+      specContent = raw
+        .replace(/^```(?:robot|robotframework)?\s*/im, '')
+        .replace(/```\s*$/im, '')
+        .trim();
+    }
+    return { specContent, scriptType: 'ROBOT' };
+  }
+
+  // ── Playwright mode ────────────────────────────────────────────────────────
   const specIdx = raw.indexOf('===SPEC===');
   const pomIdx = raw.indexOf('===POM===');
 
@@ -516,21 +897,21 @@ function parseAgentOutput(raw: string): ScriptAgentResult {
   }
 
   if (pomIdx === -1) {
-    return { specContent };
+    return { specContent, scriptType: 'PLAYWRIGHT' };
   }
 
   const pomRaw = raw.slice(pomIdx + '===POM==='.length).trim();
   const colonIdx = pomRaw.indexOf(':');
   if (colonIdx === -1) {
-    return { specContent };
+    return { specContent, scriptType: 'PLAYWRIGHT' };
   }
 
   const pomFilename = pomRaw.slice(0, colonIdx).trim();
   const pomContent = pomRaw.slice(colonIdx + 1).trim();
 
   if (!pomFilename || !pomContent) {
-    return { specContent };
+    return { specContent, scriptType: 'PLAYWRIGHT' };
   }
 
-  return { specContent, pomContent, pomFilename };
+  return { specContent, pomContent, pomFilename, scriptType: 'PLAYWRIGHT' };
 }

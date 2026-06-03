@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { KNOWN_AGENTS, STANDARD_MODE_DISABLED, DEFAULT_HEALING_SETTINGS } from '../lib/agentConfig.js';
@@ -217,6 +217,56 @@ router.get('/usage/trend', async (req: Request, res: Response, next: NextFunctio
 
     const trend = Array.from(byDay.entries()).map(([date, tokens]) => ({ date, tokens }));
     res.json({ trend });
+  } catch (err) { next(err); }
+});
+
+// ── GET /admin/usage/by-project ───────────────────────────────────────────
+// Per-project token usage aggregated from local LlmCall log.
+
+router.get('/usage/by-project', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rows = await prisma.llmCall.groupBy({
+      by: ['projectId'],
+      where: { projectId: { not: null } },
+      _sum: { totalTokens: true },
+      orderBy: { _sum: { totalTokens: 'desc' } },
+    });
+
+    const projectIds = rows
+      .map((r) => r.projectId)
+      .filter((id): id is string => id !== null);
+
+    const projects = await prisma.project.findMany({
+      where: { id: { in: projectIds } },
+      select: { id: true, name: true },
+    });
+    const nameMap = new Map(projects.map((p) => [p.id, p.name]));
+
+    // For project IDs not found in the Project table (deleted projects), look up
+    // the stored projectName from the most recent LlmCall for that project.
+    const orphanedIds = projectIds.filter((id) => !nameMap.has(id));
+    if (orphanedIds.length > 0) {
+      const orphanCalls = await prisma.llmCall.findMany({
+        where: { projectId: { in: orphanedIds }, projectName: { not: null } },
+        select: { projectId: true, projectName: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      for (const call of orphanCalls) {
+        if (call.projectId && call.projectName && !nameMap.has(call.projectId)) {
+          nameMap.set(call.projectId, call.projectName);
+        }
+      }
+    }
+
+    const byProject = rows
+      .filter((r): r is typeof r & { projectId: string } => r.projectId !== null)
+      .map((r) => ({
+        projectId: r.projectId,
+        projectName: nameMap.get(r.projectId) ?? 'Deleted Project',
+        totalTokens: r._sum.totalTokens ?? 0,
+      }));
+
+    res.json({ byProject });
   } catch (err) { next(err); }
 });
 

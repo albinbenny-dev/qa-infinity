@@ -52,6 +52,7 @@ async function executeLoginFromInstructions(
 async function runHealTrace(opts: {
   agentTraceId: string;
   projectId: string;
+  projectName?: string;
   baseUrl: string;
   testGoal: string;
   loginInstructions: LoginInstructions;
@@ -105,6 +106,7 @@ async function runHealTrace(opts: {
       testGoal: opts.testGoal,
       additionalContext,
       projectId: opts.projectId,
+      projectName: opts.projectName,
       onStep: async (step: RecordedAction) => {
         await prisma.agentTrace
           .update({
@@ -180,6 +182,7 @@ async function runHealTrace(opts: {
 // Load RunResult → Classify → DOM capture (SELECTOR) → Patch → Save → Maybe auto-apply
 
 export async function triggerHeal(runResultId: string): Promise<void> {
+  // Skip if any heal already exists for this run result (any status including IN_PROGRESS)
   const existing = await prisma.heal.findFirst({ where: { runResultId } });
   if (existing) return;
 
@@ -235,155 +238,189 @@ export async function triggerHeal(runResultId: string): Promise<void> {
     scriptContent: script.content,
   });
 
-  const { selectorTraceThreshold } = await getHealingAgentSettings();
-  const traceDecision = needsAgentTrace(classResult, selectorTraceThreshold);
-  let agentTraceId: string | undefined;
-  let agentTraceContext: string | undefined;
-
-  if (traceDecision.needed && project.baseUrl) {
-    console.log(`[heal-service] Agent trace required: ${traceDecision.reason}`);
-    getRunsNamespace()?.emit('heal:progress', {
-      runResultId,
-      projectId,
-      projectSlug,
-      phase: 'TRACING',
-      tcTitle: runResult.testCase?.title ?? 'Test',
-    });
-    try {
-      const envConfig = await prisma.envConfig.findFirst({
-        where: { projectId, name: runResult.run.environment },
-        select: { username: true, password: true },
-      });
-
-      const projectContext = await prisma.projectContext.findUnique({ where: { projectId } });
-      const loginInstructions: LoginInstructions = projectContext?.loginInstructions
-        ? (JSON.parse(projectContext.loginInstructions) as LoginInstructions)
-        : { steps: [], selectors: { username: '', password: '', submit: '' }, loginType: 'standard', postLoginUrl: '', notes: '' };
-
-      const tcTitle = runResult.testCase?.title ?? 'Unknown';
-      const errSnippet = (runResult.errorMessage ?? '').slice(0, 150);
-      const testGoal = classResult.type === 'SELECTOR'
-        ? `Find correct selectors for: ${tcTitle} — Script error: ${errSnippet}`
-        : `Diagnose missing/incorrect steps for: ${tcTitle} — Including prerequisites like login. Error: ${errSnippet}`;
-
-      const trace = await prisma.agentTrace.create({
-        data: {
-          projectId,
-          status: 'RUNNING',
-          testGoal,
-          menuContext: 'heal-diagnostic',
-        },
-      });
-      agentTraceId = trace.id;
-
-      const traceResult = await runHealTrace({
-        agentTraceId: trace.id,
-        projectId,
-        baseUrl: project.baseUrl,
-        testGoal,
-        loginInstructions,
-        username: envConfig?.username ?? '',
-        password: envConfig?.password ?? '',
-        classResult,
-        scriptContent: script.content,
-      });
-
-      agentTraceContext = traceResult.summary;
-      console.log(`[heal-service] Agent trace ${trace.id} complete — using live trace context for patch`);
-
-      // Persist verified selectors so future script generation can use them
-      const menuCtx = runResult.testCase?.title ?? 'heal-diagnostic';
-      await saveAgentLearnings(projectId, menuCtx, project.baseUrl, traceResult.actions).catch(
-        (e) => console.warn('[heal-service] saveAgentLearnings failed (non-fatal):', (e as Error).message),
-      );
-    } catch (traceErr) {
-      console.warn(
-        '[heal-service] Agent trace failed — falling back to static analysis:',
-        (traceErr as Error).message,
-      );
-      agentTraceId = undefined;
-      agentTraceContext = undefined;
-    }
-  } else {
-    console.log(`[heal-service] Static analysis: ${traceDecision.reason}`);
-  }
-
-  // DOM snapshot for SELECTOR type — only when no agent trace was run
-  let domSnapshot: string | undefined;
-  if (!agentTraceContext && classResult.type === 'SELECTOR' && project.baseUrl) {
-    const snapshot = await captureSnapshot(project.baseUrl);
-    if (snapshot) {
-      domSnapshot = JSON.stringify(snapshot.interactiveElements, null, 2);
-    }
-  }
-
-  getRunsNamespace()?.emit('heal:progress', {
-    runResultId,
-    projectId,
-    projectSlug,
-    phase: 'PATCHING',
-    tcTitle: runResult.testCase?.title ?? 'Test',
-  });
-
-  const patchResult = await runPatcher({
-    type: classResult.type,
-    errorMessage: runResult.errorMessage ?? 'Unknown error',
-    originalScript: script.content,
-    domSnapshot,
-    agentTraceContext,
-    projectName: project.name,
-    baseUrl: project.baseUrl,
-  });
-
-  // Combine confidence: classifier 30% + patcher 70%
-  const rawConfidence = classResult.confidence * 0.3 + patchResult.confidence * 0.7;
-  const finalConfidence = Math.min(100, Math.round(rawConfidence));
-  const autoApply = finalConfidence >= AUTO_APPLY_THRESHOLD;
-
+  // Create the heal record immediately after classification (before the slow browser trace).
+  // This closes the race window: any concurrent trigger will now find this record and exit early
+  // instead of launching a duplicate pipeline that may run for 10–30 minutes.
   const heal = await prisma.heal.create({
     data: {
       projectId,
       runResultId,
       type: classResult.type,
       originalCode: script.content,
-      patchedCode: patchResult.patchedScript,
-      confidence: finalConfidence,
-      summary: patchResult.explanation,
-      status: autoApply ? 'AUTO_APPLIED' : 'PENDING',
-      agentTraceId: agentTraceId ?? null,
+      patchedCode: '',
+      confidence: 0,
+      summary: null,
+      status: 'IN_PROGRESS',
+      agentTraceId: null,
     },
   });
 
-  if (!autoApply) {
-    getRunsNamespace()?.emit('heal:pending-created', {
-      healId: heal.id,
+  try {
+    const { selectorTraceThreshold } = await getHealingAgentSettings();
+    const traceDecision = needsAgentTrace(classResult, selectorTraceThreshold);
+    let agentTraceId: string | undefined;
+    let agentTraceContext: string | undefined;
+
+    if (traceDecision.needed && project.baseUrl) {
+      console.log(`[heal-service] Agent trace required: ${traceDecision.reason}`);
+      getRunsNamespace()?.emit('heal:progress', {
+        runResultId,
+        projectId,
+        projectSlug,
+        phase: 'TRACING',
+        tcTitle: runResult.testCase?.title ?? 'Test',
+      });
+      try {
+        const envConfig = await prisma.envConfig.findFirst({
+          where: { projectId, name: runResult.run.environment },
+          select: { username: true, password: true },
+        });
+
+        const projectContext = await prisma.projectContext.findUnique({ where: { projectId } });
+        const loginInstructions: LoginInstructions = projectContext?.loginInstructions
+          ? (JSON.parse(projectContext.loginInstructions) as LoginInstructions)
+          : { steps: [], selectors: { username: '', password: '', submit: '' }, loginType: 'standard', postLoginUrl: '', notes: '' };
+
+        const tcTitle = runResult.testCase?.title ?? 'Unknown';
+        const errSnippet = (runResult.errorMessage ?? '').slice(0, 150);
+        const testGoal = classResult.type === 'SELECTOR'
+          ? `Find correct selectors for: ${tcTitle} — Script error: ${errSnippet}`
+          : `Diagnose missing/incorrect steps for: ${tcTitle} — Including prerequisites like login. Error: ${errSnippet}`;
+
+        const trace = await prisma.agentTrace.create({
+          data: {
+            projectId,
+            status: 'RUNNING',
+            testGoal,
+            menuContext: 'heal-diagnostic',
+          },
+        });
+        agentTraceId = trace.id;
+
+        // Keep the heal record's agentTraceId up to date so the UI can link to the trace
+        await prisma.heal.update({
+          where: { id: heal.id },
+          data: { agentTraceId: trace.id },
+        });
+
+        const traceResult = await runHealTrace({
+          agentTraceId: trace.id,
+          projectId,
+          projectName: project.name,
+          baseUrl: project.baseUrl,
+          testGoal,
+          loginInstructions,
+          username: envConfig?.username ?? '',
+          password: envConfig?.password ?? '',
+          classResult,
+          scriptContent: script.content,
+        });
+
+        agentTraceContext = traceResult.summary;
+        console.log(`[heal-service] Agent trace ${trace.id} complete — using live trace context for patch`);
+
+        // Persist verified selectors so future script generation can use them
+        const menuCtx = runResult.testCase?.title ?? 'heal-diagnostic';
+        await saveAgentLearnings(projectId, menuCtx, project.baseUrl, traceResult.actions).catch(
+          (e) => console.warn('[heal-service] saveAgentLearnings failed (non-fatal):', (e as Error).message),
+        );
+      } catch (traceErr) {
+        console.warn(
+          '[heal-service] Agent trace failed — falling back to static analysis:',
+          (traceErr as Error).message,
+        );
+        agentTraceId = undefined;
+        agentTraceContext = undefined;
+      }
+    } else {
+      console.log(`[heal-service] Static analysis: ${traceDecision.reason}`);
+    }
+
+    // DOM snapshot for SELECTOR type — only when no agent trace was run
+    let domSnapshot: string | undefined;
+    if (!agentTraceContext && classResult.type === 'SELECTOR' && project.baseUrl) {
+      const snapshot = await captureSnapshot(project.baseUrl);
+      if (snapshot) {
+        domSnapshot = JSON.stringify(snapshot.interactiveElements, null, 2);
+      }
+    }
+
+    getRunsNamespace()?.emit('heal:progress', {
+      runResultId,
       projectId,
       projectSlug,
+      phase: 'PATCHING',
       tcTitle: runResult.testCase?.title ?? 'Test',
-      confidence: finalConfidence,
-      runResultId,
     });
-  }
 
-  if (autoApply) {
-    writeScriptToDisk(projectId, script.filename, patchResult.patchedScript);
-    // Promote to golden — auto-applied at ≥95% confidence is a trusted fix
-    await prisma.script.update({
-      where: { id: script.id },
-      data: { content: patchResult.patchedScript, isGolden: true },
+    const patchResult = await runPatcher({
+      type: classResult.type,
+      errorMessage: runResult.errorMessage ?? 'Unknown error',
+      originalScript: script.content,
+      domSnapshot,
+      agentTraceContext,
+      projectName: project.name,
+      baseUrl: project.baseUrl,
     });
-    console.log(`[heal-service] Auto-applied heal ${heal.id} (confidence: ${finalConfidence}%) — script promoted to golden`);
 
-    // Notify all connected clients so the UI can show a toast
-    getRunsNamespace()?.emit('heal:auto-applied', {
-      healId: heal.id,
-      projectId,
-      projectSlug,
-      tcTitle: runResult.testCase?.title ?? 'Test',
-      confidence: finalConfidence,
-      explanation: patchResult.explanation,
-      runResultId,
+    // Combine confidence: classifier 30% + patcher 70%
+    const rawConfidence = classResult.confidence * 0.3 + patchResult.confidence * 0.7;
+    const finalConfidence = Math.min(100, Math.round(rawConfidence));
+    const autoApply = finalConfidence >= AUTO_APPLY_THRESHOLD;
+
+    // Update the IN_PROGRESS record with final values
+    await prisma.heal.update({
+      where: { id: heal.id },
+      data: {
+        patchedCode: patchResult.patchedScript,
+        confidence: finalConfidence,
+        summary: patchResult.explanation,
+        status: autoApply ? 'AUTO_APPLIED' : 'PENDING',
+        agentTraceId: agentTraceId ?? null,
+      },
     });
+
+    if (!autoApply) {
+      getRunsNamespace()?.emit('heal:pending-created', {
+        healId: heal.id,
+        projectId,
+        projectSlug,
+        tcTitle: runResult.testCase?.title ?? 'Test',
+        confidence: finalConfidence,
+        runResultId,
+      });
+    }
+
+    if (autoApply) {
+      writeScriptToDisk(projectId, script.filename, patchResult.patchedScript);
+      // Promote to golden — auto-applied at ≥95% confidence is a trusted fix
+      await prisma.script.update({
+        where: { id: script.id },
+        data: { content: patchResult.patchedScript, isGolden: true },
+      });
+      console.log(`[heal-service] Auto-applied heal ${heal.id} (confidence: ${finalConfidence}%) — script promoted to golden`);
+
+      // Notify all connected clients so the UI can show a toast
+      getRunsNamespace()?.emit('heal:auto-applied', {
+        healId: heal.id,
+        projectId,
+        projectSlug,
+        tcTitle: runResult.testCase?.title ?? 'Test',
+        confidence: finalConfidence,
+        explanation: patchResult.explanation,
+        runResultId,
+      });
+    }
+  } catch (err) {
+    // Mark the heal as EXHAUSTED so the UI surfaces the failure and the user can re-trigger
+    await prisma.heal.update({
+      where: { id: heal.id },
+      data: {
+        status: 'EXHAUSTED',
+        summary: `Healing pipeline failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    }).catch(console.error);
+    throw err;
   }
 }
 
