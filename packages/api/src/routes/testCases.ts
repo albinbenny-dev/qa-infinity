@@ -1,0 +1,1212 @@
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
+import path from 'path';
+import fs from 'fs';
+import * as xlsx from 'xlsx';
+import XLSXStyle from 'xlsx-js-style';
+import { prisma } from '../lib/prisma.js';
+import { verifyToken } from '../middleware/auth.js';
+import { requireProjectAccess } from '../middleware/projectAccess.js';
+import { getLibraryContext } from '../services/reqLibraryLoader.js';
+import { runWriterAgent } from '../agents/writerAgent.js';
+import {
+  fetchJiraStory,
+  fetchUrlContent,
+  fetchUISnapshot,
+  readUploadedFile,
+  readReferenceTCs,
+  type UISnapshot,
+} from '../services/inputAdapters.js';
+import { addAgentScanJob } from '../lib/queue.js';
+import type { AgentLearning, RecordedAction } from '../types/scanner.js';
+import { saveScript } from '../services/scriptFileService.js';
+import { z } from 'zod';
+
+function mimeFromPath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const map: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xls': 'application/vnd.ms-excel',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc': 'application/msword',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+  };
+  return map[ext] ?? 'text/plain';
+}
+
+const router = Router({ mergeParams: true });
+
+router.use(verifyToken as RequestHandler);
+router.use(requireProjectAccess as unknown as RequestHandler);
+
+// ── Zod schemas ────────────────────────────────────────────────────────────
+
+const SeedTCSchema = z.object({
+  title: z.string().min(1),
+  steps: z.array(z.string()).default([]),
+  expectedResult: z.string().default(''),
+  useCaseTag: z.string().optional(),
+  description: z.string().optional(),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
+  type: z.enum(['UI', 'API', 'SIT']).optional(),
+  preConditions: z.string().optional(),
+  testData: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const GenerateInputSchema = z.object({
+  inputs: z.array(
+    z.object({
+      type: z.string().min(1),
+      content: z.string().min(1),
+      label: z.string().min(1),
+    }),
+  ).default([]),
+  testTypes: z.array(z.enum(['UI', 'API', 'SIT'])).min(1).default(['UI']),
+  additionalContext: z.string().optional(),
+  seedTestCases: z.array(SeedTCSchema).optional(),
+}).refine(
+  (d) => d.inputs.length > 0 || (d.seedTestCases && d.seedTestCases.length > 0),
+  { message: 'Provide at least one input source or one seed test case' },
+);
+
+const SaveTestCasesSchema = z.object({
+  testCases: z.array(
+    z.object({
+      title: z.string().min(1),
+      description: z.string().optional().default(''),
+      steps: z.array(z.string()).min(1),
+      expectedResult: z.string().min(1),
+      type: z.enum(['UI', 'API', 'SIT']),
+      tags: z.array(z.string()).default([]),
+      useCaseTag: z.string().optional(),
+      priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
+      sourceRef: z.string().optional(),
+      generationHints: z.string().optional(),
+      status: z.enum(['DRAFT', 'APPROVED', 'DEPRECATED']).optional().default('DRAFT'),
+      /** Pre-generated Playwright script from agent trace — saved alongside the TC */
+      scriptContent: z.string().optional(),
+    }),
+  ).min(1),
+});
+
+const UpdateTestCaseSchema = z.object({
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  steps: z.array(z.string()).optional(),
+  expectedResult: z.string().optional(),
+  type: z.enum(['UI', 'API', 'SIT']).optional(),
+  tags: z.array(z.string()).optional(),
+  useCaseTag: z.string().optional().nullable(),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
+  status: z.enum(['DRAFT', 'APPROVED', 'DEPRECATED']).optional(),
+  sourceRef: z.string().optional(),
+  prerequisiteTcId: z.string().nullable().optional(),
+});
+
+const BulkApproveSchema = z.object({
+  ids: z.array(z.string().cuid()).min(1),
+});
+
+const BulkUpdateUseCaseSchema = z.object({
+  testCaseIds: z.array(z.string().cuid()).min(1),
+  targetUseCaseTag: z.string().min(1).max(120),
+});
+
+const BulkDeleteSchema = z.object({
+  ids: z.array(z.string().cuid()).min(1),
+});
+
+const BulkAddTagSchema = z.object({
+  testCaseIds: z.array(z.string().cuid()).min(1),
+  tag: z.string().min(1).max(80),
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function parseTCFields(tc: Record<string, unknown>) {
+  return {
+    ...tc,
+    steps: JSON.parse((tc['steps'] as string) || '[]'),
+    tags: JSON.parse((tc['tags'] as string) || '[]'),
+  };
+}
+
+async function nextTcId(projectId: string, projectSlug: string): Promise<string> {
+  const count = await prisma.testCase.count({ where: { projectId } });
+  const prefix = projectSlug.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+  return `TC-${prefix}-${String(count + 1).padStart(3, '0')}`;
+}
+
+// ── POST /generate ─────────────────────────────────────────────────────────
+
+router.post('/generate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = GenerateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const { inputs, testTypes, additionalContext, seedTestCases } = parsed.data;
+
+    const uiSnapshots: UISnapshot[] = [];
+
+    // Resolve each input through the appropriate adapter in parallel
+    const resolvedInputs = await Promise.all(
+      inputs.map(async (inp) => {
+        try {
+          let content = inp.content;
+          switch (inp.type) {
+            case 'jira':
+              content = await fetchJiraStory(inp.content);
+              break;
+            case 'url':
+              content = await fetchUrlContent(inp.content);
+              break;
+            case 'ui_url': {
+              const snap = await fetchUISnapshot(inp.content);
+              uiSnapshots.push(snap);
+              content = [
+                `[Live UI Screenshot: "${snap.pageTitle}" at ${inp.content}]`,
+                '',
+                'Interactive elements detected on screen:',
+                snap.interactiveElements,
+              ].join('\n');
+              break;
+            }
+            case 'upload':
+              content = await readUploadedFile(inp.content, mimeFromPath(inp.content));
+              break;
+            case 'reference_tc':
+              content = await readReferenceTCs(req.project.id, [inp.content]);
+              break;
+            case 'prompt':
+              // raw text — use as-is
+              break;
+          }
+          return { ...inp, content };
+        } catch {
+          // Return raw content on adapter failure so the agent still runs
+          return inp;
+        }
+      }),
+    );
+
+    const [projectLibraryContext, existingTagRows, existingTCRows, projectCtx] = await Promise.all([
+      getLibraryContext(req.project.id),
+      prisma.testCase.findMany({
+        where: { projectId: req.project.id, useCaseTag: { not: null } },
+        select: { useCaseTag: true },
+        distinct: ['useCaseTag'],
+        orderBy: { useCaseTag: 'asc' },
+      }),
+      prisma.testCase.findMany({
+        where: { projectId: req.project.id },
+        select: { title: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.projectContext.findUnique({ where: { projectId: req.project.id } }),
+    ]);
+
+    const existingUseCaseTags = existingTagRows
+      .map((r) => r.useCaseTag)
+      .filter(Boolean) as string[];
+
+    const existingTestCaseTitles = existingTCRows.map((r) => r.title);
+
+    // Build a compact context summary from the project's UI scan
+    let projectContextSummary: string | undefined;
+    if (projectCtx) {
+      const navMap = projectCtx.navigationMap ? JSON.parse(projectCtx.navigationMap) as Array<{ label: string; url: string }> : [];
+      const useCases = projectCtx.useCaseSummary ? JSON.parse(projectCtx.useCaseSummary) as Array<{ name: string }> : [];
+      const scanDate = projectCtx.updatedAt.toISOString().split('T')[0];
+      const navLines = navMap.slice(0, 20).map((n) => `  - ${n.label}: ${n.url}`).join('\n');
+      const useCaseLines = useCases.map((u) => `  - ${u.name}`).join('\n');
+      const learningLines = (() => {
+        if (!projectCtx.agentLearnings) return '';
+        const learnings = JSON.parse(projectCtx.agentLearnings) as AgentLearning[];
+        if (learnings.length === 0) return '';
+        const lines = learnings.slice(-5).map(l =>
+          `  - ${l.menuContext} (${l.targetUrl}): ${l.verifiedFlow.join(' → ')}`,
+        ).join('\n');
+        return `\nVerified UI flows from agentic traces (use these locators/steps directly):\n${lines}`;
+      })();
+
+      projectContextSummary = [
+        `Scan date: ${scanDate}`,
+        `Navigation (${navMap.length} pages):`,
+        navLines || '  (none)',
+        `Known use cases:`,
+        useCaseLines || '  (none)',
+        learningLines,
+      ].filter(Boolean).join('\n');
+    }
+
+    // Build heal insights — teach the writer agent which failure patterns to avoid
+    let healInsights: string | undefined;
+    const healRows = await prisma.heal.findMany({
+      where: {
+        projectId: req.project.id,
+        status: { in: ['APPROVED', 'AUTO_APPLIED'] },
+        updatedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+      },
+      include: {
+        runResult: {
+          include: { testCase: { select: { title: true, useCaseTag: true } } },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 15,
+    });
+
+    if (healRows.length > 0) {
+      healInsights = healRows
+        .map((h) => {
+          const tc = h.runResult?.testCase?.title ? ` (${h.runResult.testCase.title})` : '';
+          const uc = h.runResult?.testCase?.useCaseTag ? ` [${h.runResult.testCase.useCaseTag}]` : '';
+          return `[${h.type}]${tc}${uc}: ${h.summary}`;
+        })
+        .join('\n');
+    }
+
+    // Standard Mode: no rich inputs (Jira / UI screens / uploaded docs) — only seed TCs.
+    // In this case, tell the writer agent to ENRICH the seeds rather than add gap TCs.
+    const isSeedOnlyCall = resolvedInputs.length === 0 && (seedTestCases?.length ?? 0) > 0;
+
+    const result = await runWriterAgent({
+      inputs: resolvedInputs,
+      uiSnapshots,
+      projectLibraryContext,
+      projectName: req.project.name,
+      testTypes,
+      additionalContext,
+      existingUseCaseTags,
+      existingTestCaseTitles,
+      projectContextSummary,
+      seedTestCases,
+      healInsights,
+      enrichSeeds: isSeedOnlyCall,
+    });
+
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /use-cases ─────────────────────────────────────────────────────────
+
+router.get('/use-cases', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const raw = await prisma.testCase.findMany({
+      where: { projectId: req.project.id, useCaseTag: { not: null } },
+      select: { useCaseTag: true },
+      distinct: ['useCaseTag'],
+      orderBy: { useCaseTag: 'asc' },
+    });
+
+    const useCases = raw.map((r) => r.useCaseTag).filter(Boolean) as string[];
+    res.json({ useCases });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /export/excel ──────────────────────────────────────────────────────
+// Formatted two-sheet workbook matching the run-report reference style:
+//   Sheet 1 "Dashboard"  — library summary tile + TC breakdown table
+//   Sheet 2 "Test Cases" — full TC detail
+
+router.get('/export/excel', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { useCaseTag: ucFilter, ids: idsParam } = req.query as Record<string, string>;
+
+    const where: Record<string, unknown> = { projectId: req.project.id };
+    if (ucFilter) where['useCaseTag'] = ucFilter;
+    if (idsParam) {
+      const ids = idsParam.split(',').filter(Boolean);
+      if (ids.length > 0) where['id'] = { in: ids };
+    }
+
+    const tcs = await prisma.testCase.findMany({
+      where,
+      orderBy: [{ useCaseTag: 'asc' }, { tcId: 'asc' }],
+    });
+
+    // ── Style helpers ────────────────────────────────────────────────────────
+    const COL = {
+      navyDark:  '1F4E79', navyMid: '2E75B6', steelBlue: '4472C4',
+      lightBlue: 'D6E4F0', white: 'FFFFFF',   green: '00B050',
+      orange:    'FF8C00', red: 'FF0000',      yellow: 'FFD966', grey: 'D9D9D9',
+    };
+    type CellStyle = {
+      fill?: { fgColor: { rgb: string } };
+      font?: { color?: { rgb: string }; bold?: boolean; sz?: number };
+      alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean };
+    };
+    function mkCell(v: string | number, s: CellStyle = {}) {
+      return { v, t: typeof v === 'number' ? 'n' : 's', s };
+    }
+    const bgS  = (rgb: string) => ({ fill: { fgColor: { rgb } } });
+    const fWB  = { font: { color: { rgb: COL.white }, bold: true } };
+    const fB   = { font: { bold: true } };
+    const aC   = { alignment: { horizontal: 'center', vertical: 'center' } };
+    const aL   = { alignment: { horizontal: 'left',   vertical: 'center' } };
+    const aWL  = { alignment: { horizontal: 'left',   vertical: 'top', wrapText: true } };
+    const aWC  = { alignment: { horizontal: 'center', vertical: 'center', wrapText: true } };
+
+    const total      = tcs.length;
+    const approved   = tcs.filter((t) => t.status === 'APPROVED').length;
+    const draft      = tcs.filter((t) => t.status === 'DRAFT').length;
+    const deprecated = tcs.filter((t) => t.status === 'DEPRECATED').length;
+    const useCases   = [...new Set(tcs.map((t) => t.useCaseTag).filter(Boolean))];
+    const exportDate = new Date().toLocaleString('en-GB', {
+      day: 'numeric', month: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SHEET 1: Dashboard
+    // ════════════════════════════════════════════════════════════════════════
+    const ws1: Record<string, ReturnType<typeof mkCell> | object> = {};
+    const m1: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [];
+    function w1(addr: string, v: string | number, s: CellStyle) { ws1[addr] = mkCell(v, s); }
+    function mg1(r1: number, c1: number, r2: number, c2: number) {
+      m1.push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
+    }
+
+    // Row 1 — title banner
+    let exportTitle = `TEST CASE LIBRARY — ${req.project.name.toUpperCase()}`;
+    if (ucFilter) exportTitle = `${req.project.name.toUpperCase()} · ${ucFilter.toUpperCase()}`;
+    else if (idsParam) exportTitle = `${req.project.name.toUpperCase()} · SELECTED (${tcs.length} TCs)`;
+    w1('A1', exportTitle,
+      { ...bgS(COL.navyDark), font: { color: { rgb: COL.white }, bold: true, sz: 14 }, ...aC });
+    mg1(0, 0, 0, 5);
+
+    // Rows 3–5 — metadata
+    const metaRows: [string, string][] = [
+      ['Project',     req.project.name],
+      ['Export Date', exportDate],
+      ['Use Cases',   useCases.join(', ') || '(none)'],
+    ];
+    metaRows.forEach(([label, value], i) => {
+      const r = 2 + i;
+      w1(`A${r + 1}`, label, { ...bgS(COL.lightBlue), ...fB, ...aL });
+      w1(`C${r + 1}`, value, { ...bgS(COL.white), ...aL });
+      mg1(r, 0, r, 1); mg1(r, 2, r, 5);
+    });
+
+    // Row 7 — SUMMARY heading
+    w1('A7', 'SUMMARY', { ...bgS(COL.navyMid), ...fWB, ...aL });
+    mg1(6, 0, 6, 5);
+
+    // Row 8 — stat headers
+    ['TOTAL', 'APPROVED', 'DRAFT', 'DEPRECATED', 'USE CASES', ''].forEach((h, i) => {
+      w1(`${String.fromCharCode(65 + i)}8`, h, { ...bgS(COL.steelBlue), ...fWB, ...aC });
+    });
+
+    // Row 9 — stat values
+    ([
+      [total, COL.grey], [approved, COL.green], [draft, COL.yellow],
+      [deprecated, COL.orange], [useCases.length, COL.steelBlue], ['', COL.white],
+    ] as Array<[number | string, string]>).forEach(([val, color], i) => {
+      w1(`${String.fromCharCode(65 + i)}9`, val, { ...bgS(color), ...fB, ...aC });
+    });
+
+    // Row 11 — breakdown heading
+    w1('A11', 'TEST CASE BREAKDOWN', { ...bgS(COL.navyMid), ...fWB, ...aL });
+    mg1(10, 0, 10, 5);
+
+    // Row 12 — column headers
+    ['#', 'Test Case ID', 'Title', 'Priority', 'Type', 'Status'].forEach((h, i) => {
+      w1(`${String.fromCharCode(65 + i)}12`, h, { ...bgS(COL.navyDark), ...fWB, ...aC });
+    });
+
+    // TC data rows
+    tcs.forEach((tc, idx) => {
+      const rn = 13 + idx;
+      const fill = idx % 2 === 0 ? COL.lightBlue : COL.white;
+      [idx + 1, tc.tcId, tc.title, tc.priority, tc.type, tc.status].forEach((v, ci) => {
+        const addr = `${String.fromCharCode(65 + ci)}${rn}`;
+        const st: CellStyle = { ...bgS(fill), ...(ci === 0 ? aC : aL) };
+        w1(addr, v, ci === 5 ? { ...st, ...fB } : st);
+      });
+    });
+
+    const maxRow1 = Math.max(15, 12 + tcs.length);
+    ws1['!ref']    = `A1:F${maxRow1}`;
+    ws1['!merges'] = m1;
+    ws1['!cols']   = [{ wch: 4 }, { wch: 20 }, { wch: 46 }, { wch: 12 }, { wch: 15 }, { wch: 12 }];
+    ws1['!rows']   = [
+      { hpt: 36 }, { hpt: 8 },
+      { hpt: 22 }, { hpt: 22 }, { hpt: 22 },
+      { hpt: 8 }, { hpt: 22 }, { hpt: 20 }, { hpt: 32 }, { hpt: 8 },
+      { hpt: 22 }, { hpt: 20 },
+      ...tcs.map(() => ({ hpt: 18 })),
+    ];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SHEET 2: Test Cases
+    // ════════════════════════════════════════════════════════════════════════
+    const ws2: Record<string, ReturnType<typeof mkCell> | object> = {};
+    function w2(addr: string, v: string | number, s: CellStyle) { ws2[addr] = mkCell(v, s); }
+
+    const tcHeaders = [
+      'Test Case ID', 'Module / Feature', 'Test Case Title', 'Objective',
+      'Test Steps', 'Test Data', 'Expected Result', 'Status',
+      'Priority', 'Test Type', 'Created Date',
+    ];
+    tcHeaders.forEach((h, idx) => {
+      w2(`${tcCol(idx + 1)}1`, h, { ...bgS(COL.navyDark), ...fWB, ...aWC });
+    });
+
+    const tcRowH: { hpt: number }[] = [{ hpt: 26 }];
+    tcs.forEach((tc, idx) => {
+      const rn   = 2 + idx;
+      const fill = idx % 2 === 0 ? COL.lightBlue : COL.white;
+
+      let stepsText = '';
+      try {
+        const arr: string[] = JSON.parse(tc.steps || '[]');
+        stepsText = arr.map((s, si) => `${si + 1}. ${s}`).join('\n');
+      } catch { stepsText = tc.steps; }
+
+      const rowData: Array<string | number> = [
+        tc.tcId, tc.useCaseTag ?? '', tc.title, tc.description ?? '',
+        stepsText, '', tc.expectedResult,
+        tc.status, tc.priority, tc.type,
+        tc.createdAt.toISOString().split('T')[0],
+      ];
+
+      rowData.forEach((v, ci) => {
+        const st: CellStyle = { ...bgS(fill), ...aWL };
+        w2(`${tcCol(ci + 1)}${rn}`, v, (ci === 7 || ci === 8) ? { ...st, ...fB } : st);
+      });
+
+      tcRowH.push({ hpt: Math.max(42, Math.min(150, stepsText.split('\n').length * 15 + 10)) });
+    });
+
+    ws2['!ref']  = `A1:K${1 + tcs.length}`;
+    ws2['!cols'] = [
+      { wch: 15 }, { wch: 19 }, { wch: 42 }, { wch: 55 }, { wch: 45 },
+      { wch: 38 }, { wch: 55 }, { wch: 10 }, { wch: 11 }, { wch: 13 }, { wch: 15 },
+    ];
+    ws2['!rows'] = tcRowH;
+
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws1 as XLSXStyle.WorkSheet, 'Dashboard');
+    XLSXStyle.utils.book_append_sheet(wb, ws2 as XLSXStyle.WorkSheet, 'Test Cases');
+    const buf = XLSXStyle.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    let filename = `${req.project.slug}-test-cases-${Date.now()}.xlsx`;
+    if (ucFilter) filename = `${req.project.slug}-${ucFilter.replace(/\s+/g, '-')}-${Date.now()}.xlsx`;
+    else if (idsParam) filename = `${req.project.slug}-selected-${Date.now()}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Excel column index to letter(s): 1→A, 27→AA … (for the TC sheet export) */
+function tcCol(n: number): string {
+  let s = '';
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+// ── POST /bulk-approve ─────────────────────────────────────────────────────
+
+router.post('/bulk-approve', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = BulkApproveSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const result = await prisma.testCase.updateMany({
+      where: { id: { in: parsed.data.ids }, projectId: req.project.id },
+      data: { status: 'APPROVED' },
+    });
+
+    res.json({ updated: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /stats ─────────────────────────────────────────────────────────────
+
+router.get('/stats', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const projectId = req.project.id;
+
+    const [totalTCs, ucRaw, neverRunCount, runResultsRaw] = await Promise.all([
+      prisma.testCase.count({ where: { projectId } }),
+      prisma.testCase.findMany({
+        where: { projectId, useCaseTag: { not: null } },
+        select: { useCaseTag: true },
+        distinct: ['useCaseTag'],
+      }),
+      prisma.testCase.count({ where: { projectId, runResults: { none: {} } } }),
+      prisma.runResult.findMany({
+        where: { testCase: { projectId } },
+        select: { testCaseId: true, status: true },
+        orderBy: { run: { createdAt: 'desc' } },
+      }),
+    ]);
+
+    // First occurrence per testCaseId = most recent run result (ordered desc above)
+    const latestByTc = new Map<string, string>();
+    for (const rr of runResultsRaw) {
+      if (!latestByTc.has(rr.testCaseId)) {
+        latestByTc.set(rr.testCaseId, rr.status);
+      }
+    }
+
+    let passedLast = 0;
+    let failedLast = 0;
+    for (const status of latestByTc.values()) {
+      if (status === 'PASSED') passedLast++;
+      else if (status === 'FAILED') failedLast++;
+    }
+
+    res.json({
+      totalTCs,
+      useCaseCount: ucRaw.length,
+      passedLast,
+      failedLast,
+      neverRun: neverRunCount,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /bulk-update-usecase ──────────────────────────────────────────────
+
+router.post('/bulk-update-usecase', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = BulkUpdateUseCaseSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const result = await prisma.testCase.updateMany({
+      where: { id: { in: parsed.data.testCaseIds }, projectId: req.project.id },
+      data: { useCaseTag: parsed.data.targetUseCaseTag },
+    });
+
+    res.json({ updated: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /bulk-delete ─────────────────────────────────────────────────────
+
+router.post('/bulk-delete', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = BulkDeleteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const result = await prisma.testCase.deleteMany({
+      where: { id: { in: parsed.data.ids }, projectId: req.project.id },
+    });
+
+    res.json({ deleted: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /bulk-add-tag ────────────────────────────────────────────────────
+
+router.post('/bulk-add-tag', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = BulkAddTagSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const { testCaseIds, tag } = parsed.data;
+    const tcs = await prisma.testCase.findMany({
+      where: { id: { in: testCaseIds }, projectId: req.project.id },
+      select: { id: true, tags: true },
+    });
+
+    await prisma.$transaction(
+      tcs.map((tc) => {
+        const tags = JSON.parse(tc.tags || '[]') as string[];
+        if (!tags.includes(tag)) tags.push(tag);
+        return prisma.testCase.update({ where: { id: tc.id }, data: { tags: JSON.stringify(tags) } });
+      }),
+    );
+
+    res.json({ updated: tcs.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /seed-template — download a pre-formatted Excel template ───────────
+
+router.get('/seed-template', (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const headers = [
+      'Use Case', 'Title', 'Objective', 'Priority', 'Test Type',
+      'Pre-conditions / Dependencies', 'Test Steps', 'Test Data',
+      'Expected Result', 'Actual Result', 'Notes',
+    ];
+    const samples = [
+      {
+        'Use Case': 'User Login',
+        'Title': 'Verify login with valid credentials',
+        'Objective': 'Ensure a registered user can log in successfully',
+        'Priority': 'HIGH',
+        'Test Type': 'UI',
+        'Pre-conditions / Dependencies': 'User account exists and is active',
+        'Test Steps': '1. Navigate to the login page\n2. Enter valid username\n3. Enter valid password\n4. Click Login button',
+        'Test Data': 'Username: testuser@example.com | Password: Test@123',
+        'Expected Result': 'User is redirected to the dashboard with a welcome message',
+        'Actual Result': '',
+        'Notes': 'Regression – run on every release',
+      },
+      {
+        'Use Case': 'User Login',
+        'Title': 'Verify login with invalid password',
+        'Objective': 'Ensure an error is shown when wrong credentials are used',
+        'Priority': 'HIGH',
+        'Test Type': 'UI',
+        'Pre-conditions / Dependencies': 'User account exists',
+        'Test Steps': '1. Navigate to the login page\n2. Enter valid username\n3. Enter incorrect password\n4. Click Login button',
+        'Test Data': 'Username: testuser@example.com | Password: WrongPass',
+        'Expected Result': 'Error message "Invalid credentials" is displayed. User remains on the login page.',
+        'Actual Result': '',
+        'Notes': '',
+      },
+    ];
+
+    const ws = xlsx.utils.json_to_sheet(samples, { header: headers });
+    // Set column widths
+    ws['!cols'] = [20, 40, 40, 12, 12, 40, 60, 40, 50, 20, 30].map((w) => ({ wch: w }));
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Test Cases');
+    const buf = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="seed-tc-template.xlsx"');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /parse-seed — extract test cases from an uploaded Excel file ──────
+
+router.post('/parse-seed', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { filePath } = req.body as { filePath?: string };
+    if (!filePath) {
+      res.status(400).json({ error: 'filePath is required' });
+      return;
+    }
+
+    const wb = xlsx.readFile(filePath);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(ws);
+
+    const titleKeys       = ['title', 'name', 'test case', 'test case title', 'tc title', 'testcase', 'tc name'];
+    const useCaseKeys     = ['use case', 'usecase', 'use case tag', 'module', 'feature'];
+    const objectiveKeys   = ['objective', 'description', 'test objective', 'purpose'];
+    const priorityKeys    = ['priority'];
+    const typeKeys        = ['test type', 'type', 'testtype'];
+    const preCondKeys     = ['pre-conditions / dependencies', 'pre-conditions', 'preconditions', 'pre conditions', 'prerequisites', 'dependencies', 'pre-condition', 'precondition'];
+    const stepsKeys       = ['test steps', 'steps', 'step', 'test step'];
+    const testDataKeys    = ['test data', 'testdata', 'data'];
+    const expectedKeys    = ['expected result', 'expected results', 'expected outcome', 'expected', 'result'];
+    const notesKeys       = ['notes', 'note', 'comments', 'comment', 'remarks'];
+
+    const findVal = (row: Record<string, unknown>, keys: string[]): string => {
+      const normalised: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(row)) normalised[k.toLowerCase().trim()] = v;
+      for (const k of keys) {
+        const v = normalised[k.toLowerCase().trim()];
+        if (v !== undefined && v !== null && String(v).trim()) return String(v).trim();
+      }
+      return '';
+    };
+
+    const normalizePriority = (v: string): 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | undefined => {
+      const u = v.toUpperCase().trim();
+      if (u === 'CRITICAL' || u === 'P0') return 'CRITICAL';
+      if (u === 'HIGH' || u === 'P1') return 'HIGH';
+      if (u === 'MEDIUM' || u === 'MED' || u === 'NORMAL' || u === 'P2') return 'MEDIUM';
+      if (u === 'LOW' || u === 'P3') return 'LOW';
+      return undefined;
+    };
+
+    const normalizeType = (v: string): 'UI' | 'API' | 'SIT' | undefined => {
+      const u = v.toUpperCase().trim();
+      if (u.includes('API')) return 'API';
+      if (u.includes('SIT') || u.includes('INTEGRAT')) return 'SIT';
+      if (u.includes('UI')) return 'UI';
+      return undefined;
+    };
+
+    const seedTCs = rows
+      .map((row) => {
+        const title = findVal(row, titleKeys);
+        if (!title) return null;
+
+        const stepsRaw = findVal(row, stepsKeys);
+        const steps = stepsRaw
+          .split(/\r?\n/)
+          .map((s) => s.replace(/^\d+\.\s*/, '').trim())
+          .filter(Boolean);
+
+        const priorityRaw = findVal(row, priorityKeys);
+        const typeRaw = findVal(row, typeKeys);
+
+        return {
+          title,
+          steps: steps.length ? steps : (stepsRaw ? [stepsRaw] : []),
+          expectedResult: findVal(row, expectedKeys),
+          useCaseTag: findVal(row, useCaseKeys) || undefined,
+          description: findVal(row, objectiveKeys) || undefined,
+          priority: priorityRaw ? normalizePriority(priorityRaw) : undefined,
+          type: typeRaw ? normalizeType(typeRaw) : undefined,
+          preConditions: findVal(row, preCondKeys) || undefined,
+          testData: findVal(row, testDataKeys) || undefined,
+          notes: findVal(row, notesKeys) || undefined,
+        };
+      })
+      .filter(Boolean);
+
+    res.json({ seedTCs });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET / ─────────────────────────────────────────────────────────────────
+
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { type, status, useCaseTag, search, page = '1', limit = '50' } = req.query as Record<string, string>;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = {
+      projectId: req.project.id,
+      ...(type && { type }),
+      ...(status && { status }),
+      ...(useCaseTag && { useCaseTag }),
+      ...(search && {
+        title: { contains: search },
+      }),
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [testCases, total] = await Promise.all([
+      prisma.testCase.findMany({
+        where,
+        // prerequisiteTc include added — Prisma client regenerated inside Docker picks this up
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        include: { prerequisiteTc: { select: { id: true, tcId: true, title: true } } } as any,
+        orderBy: [{ useCaseTag: 'asc' }, { createdAt: 'desc' }],
+        skip,
+        take: limitNum,
+      }),
+      prisma.testCase.count({ where }),
+    ]);
+
+    // Fetch the last 5 run statuses for each TC in a single query (newest first per TC).
+    const tcIds = testCases.map((tc) => tc.id);
+    const runResultRows = tcIds.length > 0
+      ? await prisma.runResult.findMany({
+          where: {
+            testCaseId: { in: tcIds },
+            status: { in: ['PASSED', 'FAILED', 'SKIPPED'] },
+          },
+          select: { testCaseId: true, status: true, runId: true },
+          orderBy: [{ run: { createdAt: 'desc' } }],
+        })
+      : [];
+
+    // Group newest-first, cap at 5 per TC, then reverse to oldest→newest for display.
+    const recentByTc = new Map<string, Array<{ status: string; runId: string }>>();
+    for (const rr of runResultRows) {
+      const arr = recentByTc.get(rr.testCaseId) ?? [];
+      if (arr.length < 5) arr.push({ status: rr.status, runId: rr.runId });
+      recentByTc.set(rr.testCaseId, arr);
+    }
+
+    res.json({
+      testCases: testCases.map((tc) => ({
+        ...parseTCFields(tc as Record<string, unknown>),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        prerequisiteTc: (tc as any).prerequisiteTc ?? null,
+        // Oldest → newest (right side = most recent run)
+        recentRunStatuses: [...(recentByTc.get(tc.id) ?? [])].reverse(),
+      })),
+      total,
+      page: pageNum,
+      limit: limitNum,
+      pages: Math.ceil(total / limitNum),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST / — save batch ────────────────────────────────────────────────────
+
+function buildTraceScriptFilename(tcId: string, title: string): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  return `${tcId}-${slug}.spec.ts`;
+}
+
+router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = SaveTestCasesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const slug = req.project.slug;
+    const projectId = req.project.id;
+    const baseCount = await prisma.testCase.count({ where: { projectId } });
+    const prefix = slug.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+
+    const created = await prisma.$transaction(
+      parsed.data.testCases.map((tc, i) =>
+        prisma.testCase.create({
+          data: {
+            projectId,
+            tcId: `TC-${prefix}-${String(baseCount + i + 1).padStart(3, '0')}`,
+            title: tc.title,
+            description: tc.description,
+            steps: JSON.stringify(tc.steps),
+            expectedResult: tc.expectedResult,
+            type: tc.type,
+            tags: JSON.stringify(tc.tags),
+            useCaseTag: tc.useCaseTag,
+            priority: tc.priority,
+            status: tc.status,
+            sourceRef: tc.sourceRef,
+            generationHints: tc.generationHints ?? null,
+          },
+        }),
+      ),
+    );
+
+    // Auto-save pre-generated scripts from agent traces (happy-path TC only)
+    for (let i = 0; i < parsed.data.testCases.length; i++) {
+      const tcInput = parsed.data.testCases[i];
+      const savedTc = created[i];
+      if (!tcInput.scriptContent?.trim()) continue;
+
+      const filename = buildTraceScriptFilename(savedTc.tcId, savedTc.title);
+      try {
+        saveScript(projectId, filename, tcInput.scriptContent);
+        const script = await prisma.script.create({
+          data: {
+            projectId,
+            testCaseId: savedTc.id,
+            filename,
+            content: tcInput.scriptContent,
+            isCustomUpload: false,
+            verificationStatus: 'NOT_VERIFIED',
+          },
+        });
+        await prisma.scriptJob.create({
+          data: {
+            projectId,
+            testCaseId: savedTc.id,
+            scriptId: script.id,
+            phase: 'GENERATED',
+            withHeal: false,
+            createdBy: req.user.id,
+          },
+        });
+      } catch (scriptErr) {
+        // Non-fatal: TC is saved, script creation failure is logged but doesn't block the response
+        console.error(`[testCases] Failed to auto-save script for ${savedTc.tcId}:`, (scriptErr as Error).message);
+      }
+    }
+
+    res.status(201).json({ testCases: created.map(parseTCFields), count: created.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /:tcId ─────────────────────────────────────────────────────────────
+
+router.get('/:tcId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tc = await prisma.testCase.findFirst({
+      where: { tcId: req.params['tcId'], projectId: req.project.id },
+    });
+
+    if (!tc) {
+      res.status(404).json({ error: 'Test case not found' });
+      return;
+    }
+
+    res.json({ testCase: parseTCFields(tc as unknown as Record<string, unknown>) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PUT /:tcId ─────────────────────────────────────────────────────────────
+
+router.put('/:tcId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = UpdateTestCaseSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const existing = await prisma.testCase.findFirst({
+      where: { tcId: req.params['tcId'], projectId: req.project.id },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Test case not found' });
+      return;
+    }
+
+    const { steps, tags, prerequisiteTcId, ...rest } = parsed.data;
+
+    // Guard: prevent self-referencing prerequisite
+    if (prerequisiteTcId === existing.id) {
+      res.status(400).json({ error: 'A test case cannot be its own prerequisite' });
+      return;
+    }
+
+    const updated = await prisma.testCase.update({
+      where: { id: existing.id },
+      data: {
+        ...rest,
+        ...(steps !== undefined && { steps: JSON.stringify(steps) }),
+        ...(tags !== undefined && { tags: JSON.stringify(tags) }),
+        ...(prerequisiteTcId !== undefined && { prerequisiteTcId: prerequisiteTcId ?? null }),
+      },
+    });
+
+    res.json({ testCase: parseTCFields(updated as unknown as Record<string, unknown>) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /:tcId ──────────────────────────────────────────────────────────
+
+router.delete('/:tcId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const existing = await prisma.testCase.findFirst({
+      where: { tcId: req.params['tcId'], projectId: req.project.id },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Test case not found' });
+      return;
+    }
+
+    await prisma.testCase.delete({ where: { id: existing.id } });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PATCH /:tcId/hints — save generation hints for a test case ───────────────
+
+router.patch('/:tcId/hints', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hints } = req.body as { hints?: string };
+    const existing = await prisma.testCase.findFirst({
+      where: { tcId: req.params['tcId'], projectId: req.project.id },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Test case not found' });
+      return;
+    }
+    const updated = await prisma.testCase.update({
+      where: { id: existing.id },
+      data: { generationHints: hints?.trim() || null },
+    });
+    res.json({ id: updated.id, generationHints: updated.generationHints });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /agent-trace — start agentic browser trace ───────────────────────
+
+const AgentTraceSchema = z.object({
+  targetUrl: z.string().min(1),
+  menuContext: z.string().min(1),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  additionalContext: z.string().optional(),
+  seedSteps: z.array(z.string()).optional(),
+  testTypes: z.array(z.enum(['UI', 'API', 'SIT'])).optional(),
+  envConfigId: z.string().optional(),
+});
+
+router.post('/agent-trace', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = AgentTraceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const { targetUrl, menuContext, additionalContext, seedSteps, envConfigId } = parsed.data;
+    let { username, password } = parsed.data;
+    const projectId = req.project.id;
+
+    // Resolve credentials from envConfig if provided
+    if (envConfigId) {
+      const envConfig = await prisma.envConfig.findFirst({ where: { id: envConfigId, projectId } });
+      if (envConfig) {
+        username = username ?? envConfig.username ?? '';
+        password = password ?? envConfig.password ?? '';
+      }
+    }
+
+    // Resolve base URL from project or envConfig
+    let baseUrl = req.project.baseUrl ?? '';
+    if (envConfigId) {
+      const envConfig = await prisma.envConfig.findFirst({ where: { id: envConfigId, projectId } });
+      if (envConfig?.baseUrl) baseUrl = envConfig.baseUrl;
+    }
+    if (!baseUrl) {
+      res.status(422).json({ error: 'No baseUrl configured for this project. Set one in Project Settings.' });
+      return;
+    }
+
+    // Require login instructions
+    const projectContext = await prisma.projectContext.findUnique({ where: { projectId } });
+    if (!projectContext?.loginInstructions) {
+      res.status(422).json({
+        error: 'No login instructions found. Run a UI Scan first so the system can detect your login form.',
+      });
+      return;
+    }
+
+    const testGoal = `Trace the "${menuContext}" menu at ${targetUrl}`;
+
+    const agentTrace = await prisma.agentTrace.create({
+      data: { projectId, testGoal, menuContext, targetUrl, status: 'QUEUED' },
+    });
+
+    await addAgentScanJob({
+      agentTraceId: agentTrace.id,
+      projectId,
+      projectName: req.project.name,
+      baseUrl,
+      targetUrl,
+      menuContext,
+      username: username ?? '',
+      password: password ?? '',
+      testGoal,
+      seedSteps,
+      additionalContext,
+      testTypes: parsed.data.testTypes,
+    });
+
+    res.status(201).json({ agentTraceId: agentTrace.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /agent-trace — list recent traces for project ─────────────────────
+
+router.get('/agent-trace', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const traces = await prisma.agentTrace.findMany({
+      where: { projectId: req.project.id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        status: true,
+        testGoal: true,
+        menuContext: true,
+        targetUrl: true,
+        stepCount: true,
+        currentStep: true,
+        errorMessage: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    });
+    res.json(traces);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /agent-trace/:traceId — single trace with action log ──────────────
+
+router.get('/agent-trace/:traceId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const trace = await prisma.agentTrace.findFirst({
+      where: { id: req.params['traceId'], projectId: req.project.id },
+    });
+    if (!trace) {
+      res.status(404).json({ error: 'Agent trace not found' });
+      return;
+    }
+    res.json({
+      ...trace,
+      actionLog: trace.actionLog ? (JSON.parse(trace.actionLog) as RecordedAction[]) : [],
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /agent-trace/:traceId/video — download the .webm recording ────────
+
+router.get('/agent-trace/:traceId/video', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const trace = await prisma.agentTrace.findFirst({
+      where: { id: req.params['traceId'], projectId: req.project.id },
+      select: { videoPath: true, menuContext: true },
+    });
+    if (!trace?.videoPath) {
+      res.status(404).json({ error: 'Recording not available for this trace' });
+      return;
+    }
+    if (!fs.existsSync(trace.videoPath)) {
+      res.status(404).json({ error: 'Recording file missing on disk' });
+      return;
+    }
+    const label = (trace.menuContext ?? 'trace').replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40);
+    res.setHeader('Content-Type', 'video/webm');
+    res.setHeader('Content-Disposition', `attachment; filename="agent-trace-${label}.webm"`);
+    fs.createReadStream(trace.videoPath).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
+export default router;

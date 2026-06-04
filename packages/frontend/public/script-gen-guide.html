@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QA Infinity — Script Generation Guide</title>
+<style>
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --surface2: #222638;
+    --surface3: #2a2f45;
+    --border:   #2e3347;
+    --accent:   #6c63ff;
+    --cyan:     #22d3ee;
+    --emerald:  #2a9d8f;
+    --amber:    #f59e0b;
+    --violet:   #8b5cf6;
+    --rose:     #f43f5e;
+    --fail:     #dc2626;
+    --text:     #e2e8f0;
+    --text-mid: #b0bac9;
+    --text-dim: #8892a4;
+    --code-bg:  #141720;
+    --tag-bg:   #2a2f45;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  /* ── Layout ── */
+  .layout { display: flex; min-height: 100vh; }
+  nav.sidebar {
+    width: 260px; min-width: 260px;
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .sidebar-brand { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .sidebar-brand .logo { font-size: 17px; font-weight: 700; color: var(--accent); }
+  .sidebar-brand .sub  { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .sidebar-section { padding: 8px 20px 4px; font-size: 10px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+  .sidebar a {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 20px; color: var(--text-dim); text-decoration: none;
+    font-size: 13px; transition: all .15s; border-left: 3px solid transparent;
+  }
+  .sidebar a:hover { color: var(--text); background: var(--surface2); }
+  .sidebar a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(108,99,255,.08); }
+  .sidebar .sn {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--tag-bg); font-size: 10px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; color: var(--text-dim);
+  }
+  .sidebar a.active .sn { background: var(--accent); color: #fff; }
+
+  main { flex: 1; padding: 40px 48px; max-width: 900px; }
+
+  /* ── Typography ── */
+  h1 { font-size: 26px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+  h2 { font-size: 19px; font-weight: 700; color: #fff; margin: 44px 0 16px;
+       padding-bottom: 10px; border-bottom: 1px solid var(--border);
+       display: flex; align-items: center; gap: 10px; }
+  h2 .badge {
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 800;
+    padding: 2px 8px; border-radius: 20px; letter-spacing: .05em;
+  }
+  h3 { font-size: 14px; font-weight: 700; color: var(--text); margin: 22px 0 10px; }
+  h4 { font-size: 11px; font-weight: 700; color: var(--text-dim);
+       text-transform: uppercase; letter-spacing: .08em; margin: 18px 0 8px; }
+  p  { color: var(--text-dim); margin-bottom: 12px; }
+  a  { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, rgba(108,99,255,.12), rgba(0,212,170,.06));
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 28px; margin-bottom: 32px;
+  }
+  .hero p { color: var(--text-mid); margin: 0; font-size: 13px; }
+
+  /* ── Steps ── */
+  .steps { display: flex; flex-direction: column; gap: 16px; margin: 16px 0; }
+  .step-row { display: flex; gap: 16px; align-items: flex-start; }
+  .step-circle {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(108,99,255,.15); border: 1px solid rgba(108,99,255,.4);
+    color: var(--accent); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step-body { flex: 1; padding-top: 4px; }
+  .step-body strong { color: var(--text); }
+  .step-body p { margin: 4px 0 0; }
+
+  /* ── Code ── */
+  code {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 6px;
+    font-family: 'Consolas', 'Fira Code', monospace; font-size: 12px;
+    color: var(--cyan);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+    font-family: 'Consolas', 'Fira Code', monospace; font-size: 12px;
+    color: var(--cyan); line-height: 1.6; margin: 12px 0;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 18px; margin: 12px 0;
+  }
+  .card-title {
+    font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  /* ── Callouts ── */
+  .callout {
+    border-radius: 8px; padding: 12px 16px; margin: 12px 0;
+    font-size: 13px; line-height: 1.6;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .callout-icon { flex-shrink: 0; font-size: 15px; margin-top: 1px; }
+  .callout-body { flex: 1; }
+  .callout-body strong { display: block; margin-bottom: 3px; }
+  .callout.tip    { background: rgba(34,211,238,.07); border: 1px solid rgba(34,211,238,.2); color: var(--text-mid); }
+  .callout.tip    strong { color: var(--cyan); }
+  .callout.warn   { background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.2); color: var(--text-mid); }
+  .callout.warn   strong { color: var(--amber); }
+  .callout.danger { background: rgba(220,38,38,.07); border: 1px solid rgba(220,38,38,.2); color: var(--text-mid); }
+  .callout.danger strong { color: var(--fail); }
+  .callout.success{ background: rgba(42,157,143,.07); border: 1px solid rgba(42,157,143,.2); color: var(--text-mid); }
+  .callout.success strong { color: var(--emerald); }
+
+  /* ── Phase table ── */
+  .phase-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
+  .phase-table th {
+    text-align: left; padding: 8px 12px; background: var(--surface3);
+    color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+    border-bottom: 1px solid var(--border);
+  }
+  .phase-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .phase-table tr:last-child td { border-bottom: none; }
+  .phase-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; font-family: 'Consolas', monospace;
+  }
+  .p-queued   { background: rgba(136,146,164,.15); color: var(--text-dim); }
+  .p-gen      { background: rgba(245,158,11,.15);  color: var(--amber); }
+  .p-genned   { background: rgba(42,157,143,.15);  color: var(--emerald); }
+  .p-qverify  { background: rgba(34,211,238,.1);   color: var(--cyan); }
+  .p-verify   { background: rgba(34,211,238,.1);   color: var(--cyan); }
+  .p-healing  { background: rgba(139,92,246,.12);  color: var(--violet); }
+  .p-verified { background: rgba(42,157,143,.15);  color: var(--emerald); }
+  .p-manual   { background: rgba(245,158,11,.12);  color: var(--amber); }
+  .p-failed   { background: rgba(220,38,38,.12);   color: var(--fail); }
+
+  /* ── Pills / tags ── */
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700;
+  }
+  .pill-robot  { background: rgba(42,157,143,.12);  color: var(--emerald); border: 1px solid rgba(42,157,143,.3); }
+  .pill-pw     { background: rgba(34,211,238,.1);   color: var(--cyan);    border: 1px solid rgba(34,211,238,.2); }
+  .pill-new    { background: rgba(108,99,255,.15);  color: var(--accent);  border: 1px solid rgba(108,99,255,.3); }
+
+  /* ── Locator priority bar ── */
+  .loc-bar { display: flex; gap: 0; border-radius: 6px; overflow: hidden; margin: 10px 0; }
+  .loc-seg {
+    flex: 1; padding: 7px 6px; text-align: center; font-size: 10px; font-weight: 700;
+    border-right: 1px solid rgba(0,0,0,.3); cursor: default;
+  }
+  .loc-seg:last-child { border-right: none; }
+  .loc-seg.best { background: rgba(42,157,143,.25); color: var(--emerald); }
+  .loc-seg.good { background: rgba(34,211,238,.12); color: var(--cyan); }
+  .loc-seg.ok   { background: rgba(245,158,11,.1);  color: var(--amber); }
+  .loc-seg.last { background: rgba(220,38,38,.1);   color: var(--fail); }
+
+  /* ── Download banner ── */
+  .dl-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    background: rgba(108,99,255,.1); border: 1px solid rgba(108,99,255,.3);
+    border-radius: 8px; padding: 12px 18px; margin-bottom: 28px;
+  }
+  .dl-banner span { font-size: 12px; color: var(--text-mid); }
+  .dl-btn {
+    padding: 7px 18px; border-radius: 6px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--violet), var(--accent));
+    color: #fff; font-size: 12px; font-weight: 700; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .dl-btn:hover { opacity: .88; text-decoration: none; }
+
+  /* ── Misc ── */
+  ul, ol { padding-left: 20px; color: var(--text-dim); }
+  ul li, ol li { margin-bottom: 5px; }
+  ul li strong, ol li strong { color: var(--text); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .muted { color: var(--text-dim); font-size: 12px; }
+  .mono  { font-family: 'Consolas', monospace; font-size: 12px; }
+  .row   { display: flex; gap: 12px; }
+  .row > .card { flex: 1; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+
+  @media (max-width: 768px) {
+    .layout { flex-direction: column; }
+    nav.sidebar { width: 100%; height: auto; position: static; }
+    main { padding: 24px 20px; }
+    .row { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<!-- ── Sidebar ── -->
+<nav class="sidebar">
+  <div class="sidebar-brand">
+    <div class="logo">QA Infinity</div>
+    <div class="sub">Script Generation Guide · v1.2</div>
+  </div>
+
+  <div class="sidebar-section">Overview</div>
+  <a href="#overview" class="active"><span class="sn">○</span> How it works</a>
+  <a href="#phases"><span class="sn">○</span> Generation phases</a>
+
+  <div class="sidebar-section">Generation</div>
+  <a href="#step1"><span class="sn">1</span> Choose framework &amp; mode</a>
+  <a href="#step2"><span class="sn">2</span> Record with DOM Recorder</a>
+  <a href="#step3"><span class="sn">3</span> Fill context &amp; hints</a>
+  <a href="#step4"><span class="sn">4</span> Link a prerequisite TC</a>
+  <a href="#step5"><span class="sn">5</span> Submit &amp; monitor queue</a>
+
+  <div class="sidebar-section">Fixing Scripts</div>
+  <a href="#manual-review"><span class="sn">!</span> Manual review state</a>
+  <a href="#retry"><span class="sn">↺</span> Retry with feedback</a>
+  <a href="#regen"><span class="sn">↺</span> Regenerate a script</a>
+  <a href="#dom-snippet"><span class="sn">🔍</span> DOM snippet helper</a>
+
+  <div class="sidebar-section">Advanced</div>
+  <a href="#golden"><span class="sn">★</span> Golden scripts</a>
+  <a href="#resources"><span class="sn">📦</span> Resource files</a>
+  <a href="#import"><span class="sn">⬆</span> Import scripts</a>
+  <a href="#troubleshoot"><span class="sn">?</span> Troubleshooting</a>
+</nav>
+
+<!-- ── Main ── -->
+<main>
+
+  <!-- Download -->
+  <div class="dl-banner">
+    <span>📄 Save this guide locally for offline reference</span>
+    <a class="dl-btn" href="/script-gen-guide.html" download="SCRIPT_GEN_GUIDE.html">⬇ Download Guide</a>
+  </div>
+
+  <h1>Script Generation Guide</h1>
+  <p style="color:var(--text-mid); margin-bottom: 20px;">
+    End-to-end walkthrough for generating, reviewing, and manually correcting Robot Framework
+    and Playwright scripts inside QA Infinity — including how to use the DOM Recorder tool
+    to supply verified selectors.
+  </p>
+
+  <!-- ════════ Overview ════════ -->
+  <section id="overview">
+    <h2><span class="badge">OVERVIEW</span> How script generation works</h2>
+
+    <div class="hero">
+      <p>
+        The script agent reads your test case (steps, expected result, use-case tag),
+        any context hints you provide, and optional live DOM recordings. It then calls
+        the AI model to produce a complete, runnable script.  Robot Framework scripts
+        go straight to <strong style="color:var(--emerald)">GENERATED</strong> for manual
+        QA review. Playwright scripts can optionally be live-tested and auto-healed.
+      </p>
+    </div>
+
+    <h3>What the agent uses as input</h3>
+    <div class="row">
+      <div class="card">
+        <div class="card-title">🤖 Always injected</div>
+        <ul>
+          <li>Test case steps &amp; expected result</li>
+          <li>Login flow from UI scanner</li>
+          <li>Navigation map &amp; page locators</li>
+          <li>Shared <code>.robot</code> resource keywords</li>
+          <li>Recent auto-heals (to avoid repeating)</li>
+          <li>Golden script examples (few-shot)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">📝 You supply (optional but powerful)</div>
+        <ul>
+          <li><strong>Context note</strong> — selector hints, routes, quirks</li>
+          <li><strong>DOM Recording</strong> — live session capture with verified selectors</li>
+          <li><strong>DOM Snippet</strong> — paste a single element from DevTools</li>
+          <li><strong>Prerequisite TC</strong> — reuse login/nav from another script</li>
+          <li><strong>Failed step info</strong> — when retrying after a run failure</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">💡</span>
+      <div class="callout-body">
+        <strong>Best result formula</strong>
+        DOM Recording + context note + prerequisite TC linked = the agent has real selectors,
+        knows what's already working for login/nav, and won't invent locators.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Phases ════════ -->
+  <section id="phases">
+    <h2><span class="badge">PHASES</span> Generation lifecycle</h2>
+    <p>Every script job moves through these phases.  Watch the queue panel in the Scripts page.</p>
+
+    <table class="phase-table">
+      <thead>
+        <tr>
+          <th>Phase</th>
+          <th>Icon</th>
+          <th>Meaning</th>
+          <th>Your action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="phase-tag p-queued">QUEUED</span></td>
+          <td>○</td>
+          <td>Waiting for a free worker slot.</td>
+          <td>Wait.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-gen">GENERATING</span></td>
+          <td>⏳</td>
+          <td>AI model is generating the script.</td>
+          <td>Wait (usually 15–40 s).</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-genned">GENERATED</span></td>
+          <td>✓</td>
+          <td><strong>Robot Framework only.</strong> Script written; ready for manual review.</td>
+          <td>Open the script, review &amp; run it manually.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-qverify">QUEUED_VERIFY</span></td>
+          <td>○</td>
+          <td><strong>Playwright only.</strong> Queued for live test run.</td>
+          <td>Wait.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-verify">VERIFYING</span></td>
+          <td>🔬</td>
+          <td>Script is running against the live app.</td>
+          <td>Wait.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-healing">HEALING</span></td>
+          <td>🩹</td>
+          <td>Auto-heal attempt in progress (up to 2 attempts).</td>
+          <td>Wait.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-verified">VERIFIED</span></td>
+          <td>✓</td>
+          <td>Script passed live run. Done.</td>
+          <td>Celebrate 🎉</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-manual">MANUAL_REVIEW</span></td>
+          <td>⚠</td>
+          <td>Auto-heal exhausted or pattern unrecognised. Needs human fix.</td>
+          <td>Read suspected issue → Retry with feedback or Regenerate.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-failed">FAILED</span></td>
+          <td>✕</td>
+          <td>Generation crashed (timeout, missing config, bad TC data).</td>
+          <td>Check error message → fix data → Retry.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <span class="callout-icon">⚠</span>
+      <div class="callout-body">
+        <strong>Robot Framework scripts are always GENERATED, never VERIFIED</strong>
+        The auto-heal pipeline (verify → heal) is Playwright-only. For Robot Framework,
+        you review and run scripts manually via RF CLI or the Execution tab.
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ════════ Step 1 ════════ -->
+  <section id="step1">
+    <h2><span class="badge">STEP 1</span> Choose framework &amp; mode</h2>
+
+    <div class="row">
+      <div class="card">
+        <div class="card-title"><span class="pill pill-robot">🤖 Robot Framework</span></div>
+        <ul>
+          <li>Generates <code>.robot</code> files using <strong>RF Browser</strong> library (Playwright backend)</li>
+          <li>Human-readable keywords — easiest to read and correct manually</li>
+          <li>Injects shared <code>.robot</code> resource files (login, nav, common patterns)</li>
+          <li>Auto-Heal is <strong>disabled</strong> — you review and run manually</li>
+          <li><strong>Default choice for the project</strong></li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="pill pill-pw">⚡ Playwright TS</span></div>
+        <ul>
+          <li>Generates <code>.spec.ts</code> using <code>@playwright/test</code></li>
+          <li>POM (Page Object Model) pattern — imports from <code>./pages/</code></li>
+          <li>Can use <strong>Generate + Heal</strong> mode: live-runs and auto-fixes up to 2×</li>
+          <li>Reading code requires TypeScript knowledge</li>
+          <li>Use when you need full Playwright feature set</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Mode: Generate only vs Generate + Heal</h3>
+    <table class="phase-table">
+      <thead><tr><th>Mode</th><th>What happens</th><th>When to use</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="phase-tag p-gen">⚡ Generate only</span></td>
+          <td>Script is produced and saved. No live test is triggered.</td>
+          <td>Always for Robot; Playwright when app is unavailable or you'll review first.</td>
+        </tr>
+        <tr>
+          <td><span class="phase-tag p-healing">🩹 Generate + Heal</span></td>
+          <td>Script runs immediately. If it fails, AI patches selectors and retries up to 2×.</td>
+          <td>Playwright only — when you want a <em>verified</em> script with no manual effort.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ════════ Step 2 ════════ -->
+  <section id="step2">
+    <h2><span class="badge">STEP 2</span> Record with QA DOM Recorder</h2>
+    <p>
+      The DOM Recorder injects a floating panel into any live page and captures every click, fill,
+      and navigation as structured selector data. Paste the export into the generation modal and
+      the agent uses those selectors verbatim — no guessing.
+    </p>
+
+    <h3>How to inject the recorder</h3>
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-circle">1</div>
+        <div class="step-body">
+          <strong>Open <code>qa-dom-recorder.html</code></strong> in your browser (ask your team lead for the file location).
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">2</div>
+        <div class="step-body">
+          <strong>Option A — Bookmarklet:</strong> drag the <em>"🎬 QA Recorder"</em> button to your bookmarks bar.
+          Click it on any page to inject.<br/>
+          <strong>Option B — Console:</strong> click <em>"Copy Console Script"</em>, open DevTools (F12) in the target app,
+          paste into the Console tab, press Enter.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">3</div>
+        <div class="step-body">
+          <strong>A floating panel appears in the bottom-right corner.</strong>
+          Click <strong>▶ Start</strong> and perform your test scenario manually.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">4</div>
+        <div class="step-body">
+          <strong>Click ⏹ Stop</strong> when done.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">5</div>
+        <div class="step-body">
+          <strong>Click 📋 Export</strong> — the structured recording is copied to your clipboard.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">6</div>
+        <div class="step-body">
+          <strong>Paste into the "DOM Recording" textarea</strong> in the QA Infinity generation modal.
+        </div>
+      </div>
+    </div>
+
+    <h3>What the recorder captures</h3>
+    <table class="phase-table">
+      <thead><tr><th>Event</th><th>What's recorded</th><th>Used for</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>CLICK</code></td>
+          <td>Element tag, id, aria-label, text, classes + ranked selector list</td>
+          <td>Button clicks, links, dropdowns</td>
+        </tr>
+        <tr>
+          <td><code>FILL</code></td>
+          <td>Same as CLICK + the value typed</td>
+          <td>Input fields, search boxes, forms</td>
+        </tr>
+        <tr>
+          <td><code>NAVIGATE</code></td>
+          <td>From/To URLs + sidebar HTML snapshot</td>
+          <td>Page transitions, routing verification</td>
+        </tr>
+        <tr>
+          <td><code>TOAST_APPEARED</code></td>
+          <td>Toast text, selector, duration (short-lived flagged)</td>
+          <td>Success/error message assertions</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Selector ranking (RECOMMENDED = agent locks this)</h3>
+    <div class="loc-bar">
+      <div class="loc-seg best">id<br/>(unique)</div>
+      <div class="loc-seg best">placeholder</div>
+      <div class="loc-seg best">aria-label</div>
+      <div class="loc-seg good">exact text</div>
+      <div class="loc-seg good">role+text</div>
+      <div class="loc-seg ok">class combo</div>
+      <div class="loc-seg last">xpath</div>
+    </div>
+    <p class="muted">The recorder ranks selectors best→worst and marks the top one as RECOMMENDED. The agent uses this as a <strong>locked locator</strong> — it will not substitute or invent alternatives.</p>
+
+    <div class="callout tip">
+      <span class="callout-icon">💡</span>
+      <div class="callout-body">
+        <strong>Toast tip</strong>
+        If the recording captures a <code>TOAST_APPEARED (SHORT-LIVED: Xms)</code>, the agent will
+        add an immediate assertion right after the trigger step — no extra sleep needed.
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <span class="callout-icon">⚠</span>
+      <div class="callout-body">
+        <strong>Keep recordings under ~78 000 characters</strong>
+        If the export is too large, the modal will show a warning. Record only the core happy-path steps.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Step 3 ════════ -->
+  <section id="step3">
+    <h2><span class="badge">STEP 3</span> Fill context &amp; hints</h2>
+
+    <h3>Additional context textarea (optional but high-value)</h3>
+    <p>Use this field to give the agent facts it can't derive from the test case alone:</p>
+    <ul>
+      <li>The exact URL route: <code>The primary sales route is /#/sales/primary-orders</code></li>
+      <li>A specific selector you know works: <code>Submit button: input[type="submit"]</code></li>
+      <li>Post-login quirks: <code>After login a project selector modal appears — dismiss it first</code></li>
+      <li>Two-step login: <code>Enter username → click Login → enter password → click Login again</code></li>
+      <li>Env-specific notes: <code>Use process.env.TEST_DEALER_CODE for the dealer code</code></li>
+    </ul>
+
+    <div class="callout success">
+      <span class="callout-icon">✓</span>
+      <div class="callout-body">
+        <strong>Save as default hints</strong>
+        Check <em>"Save as default hints for this test case"</em> and the text is stored on the TC.
+        Next time you generate or regenerate, it auto-populates the field — you don't retype it.
+      </div>
+    </div>
+
+    <h3>DOM Recording textarea</h3>
+    <p>Paste the output from Step 2 here. When pasted, a green confirmation appears:</p>
+    <div class="card" style="border-color: rgba(42,157,143,.3); background: rgba(42,157,143,.06);">
+      <div style="font-size: 11px; color: var(--emerald);">
+        ✓ Recording attached — agent will use captured selectors as locked locators.
+      </div>
+    </div>
+    <p class="muted" style="margin-top:8px;">Locked locators override the agent's default locator preference — it copies them verbatim.</p>
+  </section>
+
+  <!-- ════════ Step 4 ════════ -->
+  <section id="step4">
+    <h2><span class="badge">STEP 4</span> Link a prerequisite TC</h2>
+    <p>
+      If your test case assumes a working login + navigation already covered by another TC's
+      verified script, link that TC as a prerequisite. The agent imports the login/nav pattern
+      directly from the existing script instead of generating it from scratch.
+    </p>
+
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-circle">1</div>
+        <div class="step-body">
+          <strong>When generating a single TC</strong>, the prerequisite dropdown appears in the modal.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">2</div>
+        <div class="step-body">
+          Search for the TC whose script handles the setup steps (e.g. "Login &amp; Project Select").
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">3</div>
+        <div class="step-body">
+          Select it — a blue banner confirms: <em>"Script will call [TC-001] setup before running its own steps."</em>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">💡</span>
+      <div class="callout-body">
+        <strong>When to use</strong>
+        If 10 TCs all start from the dashboard after login, link TC-001 (the login TC) as
+        the prerequisite for all of them. The agent won't re-generate the login flow 10 times.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Step 5 ════════ -->
+  <section id="step5">
+    <h2><span class="badge">STEP 5</span> Submit &amp; monitor queue</h2>
+
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-circle">1</div>
+        <div class="step-body">
+          <strong>Select TCs</strong> in the left panel by clicking their checkboxes.
+          Already-scripted TCs show ✓ and cannot be re-selected (use Regenerate instead).
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">2</div>
+        <div class="step-body">
+          <strong>Click ⚡ Generate</strong> (top bar) or <strong>🩹 Generate + Heal</strong> (Playwright only).
+          Fill the modal and click Submit.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">3</div>
+        <div class="step-body">
+          <strong>Watch the queue panel</strong> on the right. Jobs appear in real-time.
+          Hover the status icon to see heal attempt counts or error snippets.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">4</div>
+        <div class="step-body">
+          <strong>When GENERATED or VERIFIED</strong>, click the ↗ button on the TC row to open the
+          script in the Monaco editor. Review and run.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ════════ Manual Review ════════ -->
+  <section id="manual-review">
+    <h2><span class="badge">FIX</span> Manual review state</h2>
+    <p>
+      A script enters <span class="phase-tag p-manual">⚠ MANUAL_REVIEW</span> when the auto-heal
+      pipeline ran out of attempts or detected an issue pattern it couldn't resolve automatically.
+    </p>
+
+    <h3>Reading the suspected issue</h3>
+    <p>
+      The queue row shows a short suspected-issue message in amber (e.g. <em>"Selector not found: css=#submit-btn"</em>).
+      This is the AI's diagnosis — use it as the starting point.
+    </p>
+
+    <h3>What typically causes MANUAL_REVIEW</h3>
+    <ul>
+      <li><strong>Wrong selector</strong> — element exists but the generated locator doesn't match</li>
+      <li><strong>Wrong route</strong> — the agent navigated to the wrong URL path</li>
+      <li><strong>Timing</strong> — page takes longer to load than the default 10 s timeout</li>
+      <li><strong>Multi-step login</strong> — login has an extra password confirm or MFA step</li>
+      <li><strong>Post-login modal</strong> — a project selector or onboarding modal blocks navigation</li>
+    </ul>
+  </section>
+
+  <!-- ════════ Retry ════════ -->
+  <section id="retry">
+    <h2><span class="badge">FIX</span> Retry with feedback</h2>
+    <p>
+      For jobs in <span class="phase-tag p-manual">MANUAL_REVIEW</span> or <span class="phase-tag p-failed">FAILED</span>
+      state, click the <strong>↺ Retry</strong> button on the queue row.
+      This opens a feedback modal pre-filled with the last error — you describe what's wrong
+      and the agent re-generates with that context.
+    </p>
+
+    <h3>Writing effective retry feedback</h3>
+    <pre>
+# Example — wrong selector
+The submit button selector should be input[type="submit"], not #btn-login.
+
+# Example — wrong route
+The route after login is /#/FinanceUserListReport, not /finance/reports.
+
+# Example — post-login modal
+After login a project-selector modal appears. Click the first project card
+before attempting to navigate to the dashboard.
+
+# Example — two-step login
+Login is two steps: enter username → click "Next" → enter password → click "Login".
+The agent is combining both into one form which doesn't work.
+    </pre>
+
+    <div class="callout tip">
+      <span class="callout-icon">💡</span>
+      <div class="callout-body">
+        <strong>Combine retry with a DOM Recording</strong>
+        Open the DOM Recorder, record the exact failing scenario manually, then paste the export
+        into the Retry modal's DOM Recording field. The agent gets the exact selectors that work.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Regenerate ════════ -->
+  <section id="regen">
+    <h2><span class="badge">FIX</span> Regenerate a script</h2>
+    <p>
+      Already have a script open in the editor and want to regenerate it?
+      Click <strong>↺ Regenerate</strong> in the toolbar above the editor.
+      This opens the Regenerate modal with all fields pre-populated from the TC's stored hints.
+    </p>
+
+    <h3>Fields in the Regenerate modal</h3>
+    <table class="phase-table">
+      <thead><tr><th>Field</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Issue description</td>
+          <td>Free-text fix guidance (same as retry feedback). Pre-filled with stored hints.</td>
+        </tr>
+        <tr>
+          <td>DOM snippet</td>
+          <td>Paste a single HTML element from DevTools — agent extracts the best locator.</td>
+        </tr>
+        <tr>
+          <td>DOM Recording</td>
+          <td>Full recording export from QA DOM Recorder.</td>
+        </tr>
+        <tr>
+          <td>Failed step &amp; error</td>
+          <td>Auto-filled when you click "Fix with AI" from a run result. Shows the exact step + error.</td>
+        </tr>
+        <tr>
+          <td>Prerequisite TC</td>
+          <td>Change or add a prerequisite link.</td>
+        </tr>
+        <tr>
+          <td>Script Framework</td>
+          <td>Switch between Robot and Playwright (re-generates in the other framework).</td>
+        </tr>
+        <tr>
+          <td>Save as default hints</td>
+          <td>Persists the issue description as the TC's stored hints for next time.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ════════ DOM Snippet ════════ -->
+  <section id="dom-snippet">
+    <h2><span class="badge">FIX</span> DOM snippet helper</h2>
+    <p>
+      When you know exactly which element is failing but don't need a full recording,
+      paste just the element's HTML from Chrome DevTools. The agent extracts the best locator
+      using the priority chain: <code>data-testid &gt; id &gt; aria-label &gt; name &gt; text &gt; css</code>.
+    </p>
+
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-circle">1</div>
+        <div class="step-body">
+          Open the target app in Chrome. Right-click the problem element → <strong>Inspect</strong>.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">2</div>
+        <div class="step-body">
+          In the Elements panel, right-click the highlighted node → <strong>Copy → Copy element</strong>.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">3</div>
+        <div class="step-body">
+          Paste the HTML into the <strong>DOM snippet</strong> textarea in the Regenerate modal.
+        </div>
+      </div>
+    </div>
+
+    <pre>
+&lt;!-- Example paste --&gt;
+&lt;button id="btnLogin" data-testid="login-submit" class="btn btn-primary"&gt;
+  Sign In
+&lt;/button&gt;
+    </pre>
+    <p class="muted">The agent will use <code>data-testid="login-submit"</code> (highest priority) for this element.</p>
+  </section>
+
+  <hr />
+
+  <!-- ════════ Golden Scripts ════════ -->
+  <section id="golden">
+    <h2><span class="badge">ADVANCED</span> Golden scripts</h2>
+    <p>
+      Mark a script as "golden" (⭐) by clicking the star icon on its TC row.
+      Golden scripts are included as <strong>few-shot examples</strong> in the agent prompt
+      for all future generation jobs in the same project.
+    </p>
+    <ul>
+      <li>Use for the cleanest, most representative scripts in your suite</li>
+      <li>The agent learns your project's coding style, keyword naming, and structure</li>
+      <li>2–3 golden scripts is enough — don't mark everything</li>
+      <li>Click the star again to un-mark if a script goes stale</li>
+    </ul>
+
+    <div class="callout tip">
+      <span class="callout-icon">💡</span>
+      <div class="callout-body">
+        <strong>Recommendation</strong>
+        Mark one golden script per use-case tag (Primary Sales, Stock Management, etc.).
+        This gives the agent diverse context for each domain.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Resource Files ════════ -->
+  <section id="resources">
+    <h2><span class="badge">ADVANCED</span> Resource files</h2>
+    <p>
+      Shared <code>.robot</code> files live in <code>scripts/{projectId}/resources/</code>.
+      Every Robot Framework generation job auto-injects <em>all</em> resource files into the script's
+      <code>Resource</code> section, making their keywords available without you mentioning them.
+    </p>
+
+    <h3>Resource health banner</h3>
+    <p>
+      At the top of the Resources file tree, the banner shows total keyword count and script count.
+      A green dot means resources are populated and healthy.
+    </p>
+
+    <h3>Keyword mining (⛏ Mine button)</h3>
+    <p>
+      Click the <strong>⛏ Mine</strong> button to scan all existing <code>.robot</code> scripts for
+      duplicate keyword patterns. The results suggest keyword blocks worth extracting into a shared
+      resource file, reducing repetition across scripts.
+    </p>
+
+    <div class="callout tip">
+      <span class="callout-icon">💡</span>
+      <div class="callout-body">
+        <strong>Upload a resource file</strong>
+        Click <strong>⬆ Upload Resource</strong> in the file tree. Resource files should contain
+        only <code>*** Keywords ***</code> sections (no test cases). Login keywords, navigation keywords,
+        and common assertion patterns are good candidates.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Import ════════ -->
+  <section id="import">
+    <h2><span class="badge">ADVANCED</span> Import scripts</h2>
+    <p>Use <strong>⬆ Import</strong> (top bar) to bring in manually written scripts.</p>
+
+    <table class="phase-table">
+      <thead><tr><th>Mode</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Create TC from script</strong></td>
+          <td>QA Infinity reads the file, extracts the TC title and steps, and creates a new TC in DRAFT status automatically.</td>
+        </tr>
+        <tr>
+          <td><strong>Link to existing TC</strong></td>
+          <td>Associates the uploaded file with a TC you pick from the library. Replaces any existing script for that TC.</td>
+        </tr>
+        <tr>
+          <td><strong>Import standalone</strong></td>
+          <td>No TC link — custom script only. Shows up in the file tree but not tied to a TC.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout success">
+      <span class="callout-icon">✓</span>
+      <div class="callout-body">
+        <strong>SeleniumLibrary auto-conversion</strong>
+        Upload a <code>.robot</code> file that uses SeleniumLibrary keywords — QA Infinity automatically
+        converts them to RF Browser (Playwright backend) equivalents before saving.
+        A conversion confirmation banner appears after upload.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Troubleshooting ════════ -->
+  <section id="troubleshoot">
+    <h2><span class="badge">HELP</span> Troubleshooting quick reference</h2>
+
+    <table class="phase-table">
+      <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Script generated but selector fails at runtime</td>
+          <td>Agent guessed a CSS selector that's not unique or wrong</td>
+          <td>Record with DOM Recorder → Regenerate with recording attached</td>
+        </tr>
+        <tr>
+          <td>Script navigates to the wrong URL</td>
+          <td>Agent didn't know the correct route</td>
+          <td>Add the correct route to context note: <em>"Route is /#/primary-orders"</em></td>
+        </tr>
+        <tr>
+          <td>Login step fails (incorrect username/password field)</td>
+          <td>Login form uses non-standard element structure</td>
+          <td>DOM-record the login manually, paste recording, regenerate</td>
+        </tr>
+        <tr>
+          <td>Script stuck on project selector modal</td>
+          <td>Post-login modal not handled</td>
+          <td>Describe in context note: <em>"A project selector modal appears after login — dismiss it by clicking the first project card"</em></td>
+        </tr>
+        <tr>
+          <td>Toast assertion fails ("element not found")</td>
+          <td>Toast disappears before assertion runs</td>
+          <td>DOM Recorder marks short-lived toasts — regenerate with recording; agent adds immediate assertion with no sleep</td>
+        </tr>
+        <tr>
+          <td>FAILED: "Script Agent is disabled"</td>
+          <td>Script Agent toggled off in AI Usage settings</td>
+          <td>Go to Project Settings → AI Usage → enable Script Agent</td>
+        </tr>
+        <tr>
+          <td>FAILED: "Test case or project missing"</td>
+          <td>TC was deleted while the job was queued</td>
+          <td>Re-create or restore the TC, then re-generate</td>
+        </tr>
+        <tr>
+          <td>Generated script has hardcoded URL</td>
+          <td>Agent ignored BASE_URL rule (rare)</td>
+          <td>Edit the script — replace the hardcoded URL with <code>process.env.BASE_URL</code></td>
+        </tr>
+        <tr>
+          <td>Robot script uses <code>SeleniumLibrary</code> keywords</td>
+          <td>An imported resource file still has old library references</td>
+          <td>Use Import → the auto-converter will fix it, or update the resource file manually</td>
+        </tr>
+        <tr>
+          <td>Multiple TCs all regenerate with the same login pattern that's wrong</td>
+          <td>Stored hints or a golden script contains bad login context</td>
+          <td>Update the golden script first, or clear stored hints on affected TCs</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <span class="callout-icon">🚨</span>
+      <div class="callout-body">
+        <strong>Never hardcode credentials or project slugs in scripts</strong>
+        The agent is instructed to use <code>process.env.BASE_URL</code> and <code>process.env.TEST_PROJECT_SLUG</code>.
+        If you see hardcoded values, either edit them out manually or add an explicit instruction to the context note.
+      </div>
+    </div>
+  </section>
+
+  <hr />
+  <p class="muted" style="text-align:center; padding: 24px 0;">
+    QA Infinity · Script Generation Guide · v1.2 · 2026-06-03
+    · For issues contact the QA Infinity maintainer team.
+  </p>
+
+</main>
+</div>
+
+<script>
+(function() {
+  var sections = document.querySelectorAll('section[id]');
+  var links = document.querySelectorAll('nav.sidebar a[href^="#"]');
+  function onScroll() {
+    var scrollY = window.pageYOffset + 80;
+    var active = null;
+    sections.forEach(function(sec) { if (sec.offsetTop <= scrollY) active = sec.id; });
+    links.forEach(function(a) {
+      a.classList.toggle('active', a.getAttribute('href').slice(1) === active);
+    });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+</script>
+</body>
+</html>
