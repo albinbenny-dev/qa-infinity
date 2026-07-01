@@ -11,8 +11,9 @@ import { prisma } from './prisma.js';
  * Provider is selected by LLM_PROVIDER env var:
  *   "openrouter"  → OpenRouter (default — works with any OpenRouter key)
  *   "anthropic"   → Direct Anthropic API
+ *   "local"       → ITOPS LiteLLM proxy (OpenAI-compatible, on-prem)
  *
- * All 5 agents import this factory so switching provider is a single env change.
+ * All agents import this factory so switching provider is a single env change.
  */
 
 // ── Usage tracker callback ─────────────────────────────────────────────────
@@ -110,6 +111,24 @@ export function createLLM(options?: {
           },
         },
       }),
+    });
+  }
+
+  if (provider === 'local') {
+    const apiKey = process.env.LOCAL_LLM_API_KEY;
+    if (!apiKey) throw new Error('LOCAL_LLM_API_KEY is not set');
+    const model = process.env.LOCAL_LLM_MODEL ?? '6d-devops-llm';
+    const baseURL = process.env.LOCAL_LLM_BASE_URL ?? 'http://10.0.6.31:4000/v1';
+
+    return new ChatOpenAI({
+      modelName: model,
+      openAIApiKey: apiKey,
+      temperature,
+      maxTokens: 8192,
+      callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
+      configuration: {
+        baseURL,
+      },
     });
   }
 
