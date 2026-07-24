@@ -145,6 +145,7 @@ model Script {
   content            String
   scriptType         String      @default("PLAYWRIGHT")     // "PLAYWRIGHT" | "ROBOT"
   isCustomUpload     Boolean     @default(false)
+  useCaseFolder      String?     @default("_uncategorized") // on-disk subfolder under {slug}/scripts/
   isGolden           Boolean     @default(false)           // marked as a reference example for few-shot generation
   verificationStatus String      @default("NOT_VERIFIED")  // "NOT_VERIFIED" | "VERIFIED" | "MANUAL_REVIEW"
   suspectedIssue     String?     // AI-suggested cause when MANUAL_REVIEW

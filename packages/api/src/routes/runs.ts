@@ -91,7 +91,8 @@ async function resolveScriptPaths(
         testCaseId: true,
         filename: true,
         content: true,
-        testCase: { select: { sourceRef: true } },
+        useCaseFolder: true,
+        testCase: { select: { sourceRef: true, useCaseTag: true } },
       },
     }),
   ]);
@@ -101,27 +102,33 @@ async function resolveScriptPaths(
 
   for (const s of scripts.filter((s): s is typeof s & { testCaseId: string } => s.testCaseId !== null)) {
     const slug = project?.slug ?? projectId;
-    const slugScriptsPath = `${SCRIPTS_ROOT}/${slug}/scripts/${s.filename}`;
+    // Derive the use-case folder: prefer useCaseFolder stored on Script, fall back to TC tag
+    const ucFolder = s.useCaseFolder ?? s.testCase?.useCaseTag ?? null;
+    const useCasePath = ucFolder
+      ? `${SCRIPTS_ROOT}/${slug}/scripts/${ucFolder.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)}/${s.filename}`
+      : null;
+    const flatPath = `${SCRIPTS_ROOT}/${slug}/scripts/${s.filename}`;
     const cuidPath = `${SCRIPTS_ROOT}/${projectId}/${s.filename}`;
     const sourceRef = s.testCase?.sourceRef;
     const sourceRefPath = sourceRef ? `${SCRIPTS_ROOT}/${slug}/${sourceRef}` : null;
 
-    if (fs.existsSync(slugScriptsPath)) {
-      results.push({ testCaseId: s.testCaseId, scriptPath: slugScriptsPath });
+    if (useCasePath && fs.existsSync(useCasePath)) {
+      results.push({ testCaseId: s.testCaseId, scriptPath: useCasePath });
+    } else if (fs.existsSync(flatPath)) {
+      results.push({ testCaseId: s.testCaseId, scriptPath: flatPath });
     } else if (fs.existsSync(cuidPath)) {
       results.push({ testCaseId: s.testCaseId, scriptPath: cuidPath });
     } else if (sourceRefPath && fs.existsSync(sourceRefPath)) {
       results.push({ testCaseId: s.testCaseId, scriptPath: sourceRefPath });
     } else if (s.content) {
-      // Script is in the DB but not on disk (e.g. volume was reset, or file was never flushed).
-      // Write it to the canonical slug-based path so the runner can execute it.
-      const dir = path.dirname(slugScriptsPath);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(slugScriptsPath, s.content, 'utf-8');
-      results.push({ testCaseId: s.testCaseId, scriptPath: slugScriptsPath });
+      // Script is in the DB but not on disk — write to use-case path if known, else flat.
+      const targetPath = useCasePath ?? flatPath;
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, s.content, 'utf-8');
+      results.push({ testCaseId: s.testCaseId, scriptPath: targetPath });
     } else {
       // No content anywhere — runner will fail with a clear file-not-found error.
-      results.push({ testCaseId: s.testCaseId, scriptPath: slugScriptsPath });
+      results.push({ testCaseId: s.testCaseId, scriptPath: flatPath });
     }
   }
 

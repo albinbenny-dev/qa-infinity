@@ -324,7 +324,7 @@ async function processVerifyJob(job: Job<ScriptVerifyJobPayload>): Promise<void>
         lastSuspected = `${cls.type}: ${patch.explanation}`;
       }
 
-      saveScript(project.slug, script.filename, currentContent);
+      saveScript(project.slug, script.filename, currentContent, (script as any).useCaseFolder);
       await prisma.script.update({
         where: { id: script.id },
         data: { content: currentContent, updatedAt: new Date() },

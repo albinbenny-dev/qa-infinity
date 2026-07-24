@@ -9,7 +9,8 @@ packages/api/prisma/*.db-journal
 packages/api/prisma/*.db
 .claude/
 llm-audit.jsonl
-scripts/
+scripts/*
+!scripts/.gitkeep
 *.pptx
 *.html
 fix-script-*.js

@@ -7,7 +7,7 @@ import { runBrowserAgent } from '../agents/browserAgent.js';
 import { captureSnapshot } from './domCapture.js';
 import { saveAgentLearnings } from './agentLearningService.js';
 import { addRunJob } from '../lib/queue.js';
-import { saveScript } from './scriptFileService.js';
+import { saveScript, findScriptPath } from './scriptFileService.js';
 import { getRunsNamespace } from '../lib/socket.js';
 import type { LoginInstructions, RecordedAction } from '../types/scanner.js';
 
@@ -394,7 +394,7 @@ export async function triggerHeal(runResultId: string): Promise<void> {
     }
 
     if (autoApply) {
-      saveScript(projectSlug, script.filename, patchResult.patchedScript);
+      saveScript(projectSlug, script.filename, patchResult.patchedScript, (script as any).useCaseFolder);
       // Promote to golden — auto-applied at ≥95% confidence is a trusted fix
       await prisma.script.update({
         where: { id: script.id },
@@ -592,7 +592,7 @@ export async function applyHeal(healId: string): Promise<{
   const projectSlug = heal.runResult.run.project.slug;
   const script = heal.runResult.script;
 
-  saveScript(projectSlug, script.filename, heal.patchedCode);
+  saveScript(projectSlug, script.filename, heal.patchedCode, (script as any).useCaseFolder);
 
   const testCaseId = heal.runResult.testCase.id;
 
@@ -697,7 +697,7 @@ export async function retryHealWithContext(healId: string, userContext: string):
   });
 
   if (autoApply) {
-    saveScript(project.slug, script.filename, patchResult.patchedScript);
+    saveScript(project.slug, script.filename, patchResult.patchedScript, (script as any).useCaseFolder);
     await prisma.script.update({
       where: { id: script.id },
       data: { content: patchResult.patchedScript, isGolden: true },
@@ -743,7 +743,7 @@ export async function requeueHealedTest(opts: {
     runId: run.id,
     projectId: opts.projectId,
     testCaseIds: [opts.testCaseId],
-    scriptPaths: [`${SCRIPTS_ROOT}/${opts.projectSlug}/scripts/${opts.scriptFilename}`],
+    scriptPaths: [findScriptPath(opts.projectSlug, opts.scriptFilename) ?? `${SCRIPTS_ROOT}/${opts.projectSlug}/scripts/${opts.scriptFilename}`],
     environment: opts.environment,
     envBaseUrl: opts.envBaseUrl,
     parallelWorkers: 1,

@@ -6,8 +6,6 @@ volumes:
     driver: local
   qa-pgdata:
     driver: local
-  qa-scripts:
-    driver: local
   qa-artifacts:
     driver: local
   qa-reqdocs:
@@ -100,7 +98,7 @@ services:
         condition: service_healthy
     volumes:
       - qa-data:/data
-      - qa-scripts:/scripts
+      - ./scripts:/scripts
       - qa-artifacts:/artifacts
       - qa-reqdocs:/requirements
       # Mount source so tsx watch picks up changes without a full rebuild
@@ -140,7 +138,7 @@ services:
     ports:
       - "6180:6080"    # noVNC live browser viewer — open in browser to watch tests run
     volumes:
-      - qa-scripts:/scripts
+      - ./scripts:/scripts
       - qa-artifacts:/artifacts
     extra_hosts:
       - "airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local:10.0.12.244"

@@ -121,7 +121,7 @@ router.post('/approve-all-confident', wrap(async (req, res) => {
     if (!heal.runResult.script) continue;
     try {
       try {
-        saveScript(projectSlug, heal.runResult.script.filename, heal.patchedCode);
+        saveScript(projectSlug, heal.runResult.script.filename, heal.patchedCode, (heal.runResult.script as any).useCaseFolder);
       } catch { /* disk write is best-effort */ }
 
       await prisma.$transaction([
@@ -354,7 +354,7 @@ router.post('/:healId/apply', wrap(async (req, res) => {
   const scriptRecord = heal.runResult.script;
 
   try {
-    saveScript(req.project.slug, scriptRecord.filename, heal.patchedCode);
+    saveScript(req.project.slug, scriptRecord.filename, heal.patchedCode, (scriptRecord as any).useCaseFolder);
   } catch (err) {
     console.error('[heals] Failed to write patched script:', (err as Error).message);
   }

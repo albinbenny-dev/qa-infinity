@@ -10,6 +10,8 @@ import {
   saveResourceFile,
   deleteResourceFile,
   listResourceFiles,
+  listScriptFiles,
+  findScriptPath,
   resourcesDir,
   extractRobotKeywordsWithLines,
   BINARY_EXTS,
@@ -372,22 +374,21 @@ router.get('/health', (async (req, res) => {
   const slug = projectSlug(req);
   try {
     const resources = listResourceFiles(slug);
-    const scriptDir = path.join(SCRIPTS_ROOT, projectId);
-
-    let scriptCount = 0;
+    const scriptMetas = listScriptFiles(slug);
+    const scriptCount = scriptMetas.length;
     const keywordUsage: Record<string, number> = {};
-    if (fs.existsSync(scriptDir)) {
-      const robotFiles = fs.readdirSync(scriptDir).filter(f => f.endsWith('.robot'));
-      scriptCount = robotFiles.length;
-      for (const rf of robotFiles) {
-        const content = fs.readFileSync(path.join(scriptDir, rf), 'utf-8');
+    for (const sm of scriptMetas) {
+      const scriptPath = findScriptPath(slug, sm.filename);
+      if (!scriptPath) continue;
+      try {
+        const content = fs.readFileSync(scriptPath, 'utf-8');
         for (const r of resources) {
           const base = r.filename.replace(/\.robot$/, '');
           if (content.includes(`resources/${r.filename}`) || content.includes(base)) {
             keywordUsage[r.filename] = (keywordUsage[r.filename] ?? 0) + 1;
           }
         }
-      }
+      } catch { /* skip unreadable files */ }
     }
 
     const healthData = resources

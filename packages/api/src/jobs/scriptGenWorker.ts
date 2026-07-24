@@ -327,7 +327,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
         .join('\n');
     }
 
-    saveScript(project.slug, filename, result.specContent);
+    saveScript(project.slug, filename, result.specContent, tc.useCaseTag);
     if (result.pomContent && result.pomFilename) {
       savePOM(project.slug, result.pomFilename, result.pomContent);
     }
@@ -336,6 +336,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       where: { projectId, testCaseId: tc.id },
     });
 
+    const ucFolder = tc.useCaseTag ?? '_uncategorized';
     const script = existing
       ? await prisma.script.update({
           where: { id: existing.id },
@@ -343,6 +344,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
             filename,
             content: result.specContent,
             scriptType: result.scriptType,
+            useCaseFolder: ucFolder,
             verificationStatus: withHeal ? 'NOT_VERIFIED' : existing.verificationStatus,
             suspectedIssue: withHeal ? null : existing.suspectedIssue,
             updatedAt: new Date(),
@@ -355,6 +357,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
             filename,
             content: result.specContent,
             scriptType: result.scriptType,
+            useCaseFolder: ucFolder,
             isCustomUpload: false,
           },
         });

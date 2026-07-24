@@ -18,6 +18,7 @@ import {
   listScriptFiles,
   rewriteRobotResourcePaths,
   saveSkillFile,
+  importFromDisk,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
@@ -433,7 +434,7 @@ router.put('/:id/content', async (req: Request, res: Response) => {
       where: { id: script.id },
       data: { content, updatedAt: new Date() },
     });
-    saveScript(req.project.slug, script.filename, content);
+    saveScript(req.project.slug, script.filename, content, (script as any).useCaseFolder);
 
     res.json({ ok: true });
   } catch (err) {
@@ -537,6 +538,7 @@ router.post(
       }
 
       let filename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      let useCaseTag: string | null = null;
 
       if (testCaseId) {
         const tc = await prisma.testCase.findFirst({ where: { id: testCaseId, projectId } });
@@ -544,6 +546,7 @@ router.post(
           res.status(400).json({ error: 'Test case not found in this project' });
           return;
         }
+        useCaseTag = tc.useCaseTag ?? null;
         filename = buildSystemFilename(tc.tcId, tc.title, req.file.originalname);
         const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
         if (existing) {
@@ -552,7 +555,7 @@ router.post(
         }
       }
 
-      saveScript(slug, filename, rawContent);
+      saveScript(slug, filename, rawContent, useCaseTag);
 
       const detectedScriptType = isRobotFile ? 'ROBOT' : 'PLAYWRIGHT';
 
@@ -563,6 +566,7 @@ router.post(
           filename,
           content: rawContent,
           scriptType: detectedScriptType,
+          useCaseFolder: useCaseTag ?? '_uncategorized',
           isCustomUpload: true,
         },
       });
@@ -890,6 +894,70 @@ router.get('/export/zip', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] GET /export/zip', err);
     res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ── POST /import-from-disk — sync scripts placed on disk into the DB ─────────
+// QA engineers can drop .robot / .spec.ts files into the bind-mounted scripts
+// folder in PyCharm or VSCode and hit this route to register them in the DB.
+// Files in use-case subfolders are linked to the matching TC via filename prefix.
+
+router.post('/import-from-disk', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.project.id;
+    const slug = req.project.slug;
+    const diskScripts = importFromDisk(slug);
+
+    let imported = 0;
+    let updated = 0;
+    const errors: string[] = [];
+
+    for (const ds of diskScripts) {
+      try {
+        const existing = await prisma.script.findFirst({
+          where: { projectId, filename: ds.filename },
+        });
+
+        if (existing) {
+          await prisma.script.update({
+            where: { id: existing.id },
+            data: { content: ds.content, useCaseFolder: ds.useCaseFolder, updatedAt: new Date() },
+          });
+          updated++;
+        } else {
+          // Try to link to a TC by matching the TC-XXX-NNN prefix in the filename
+          const tcIdMatch = ds.filename.match(/^(TC-[A-Z]+-\d+)/i) ?? ds.filename.match(/^(TC-\d+)/i);
+          let testCaseId: string | null = null;
+          if (tcIdMatch) {
+            const tc = await prisma.testCase.findFirst({
+              where: { projectId, tcId: { equals: tcIdMatch[1], mode: 'insensitive' } },
+              select: { id: true },
+            });
+            testCaseId = tc?.id ?? null;
+          }
+          const scriptType = ds.filename.endsWith('.robot') ? 'ROBOT' : 'PLAYWRIGHT';
+          await prisma.script.create({
+            data: {
+              projectId,
+              testCaseId,
+              filename: ds.filename,
+              content: ds.content,
+              scriptType,
+              useCaseFolder: ds.useCaseFolder,
+              isCustomUpload: testCaseId === null,
+            },
+          });
+          imported++;
+        }
+      } catch (err: any) {
+        errors.push(`${ds.filename}: ${err.message}`);
+      }
+    }
+
+    res.json({ imported, updated, total: diskScripts.length, errors });
+  } catch (err) {
+    console.error('[scripts] POST /import-from-disk', err);
+    res.status(500).json({ error: 'Import from disk failed' });
   }
 });
 
