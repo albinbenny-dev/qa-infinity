@@ -46,4 +46,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:4000/health || exit 1
 
-CMD sh -c "cd packages/api && ./node_modules/.bin/prisma migrate deploy && cd /app && pnpm --filter @qa-infinity/api dev"
+CMD sh -c "cd packages/api && ./node_modules/.bin/prisma db push --accept-data-loss && cd /app && pnpm --filter @qa-infinity/api dev"

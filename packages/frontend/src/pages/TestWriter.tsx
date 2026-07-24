@@ -1,7 +1,7 @@
 import { useReducer, useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
-import { useProject, useRequirementDocs, useProjectEnvConfigs } from '../hooks/useProjects';
+import { useProject, useProjectEnvConfigs } from '../hooks/useProjects';
 import { useRBAC } from '../hooks/useRBAC';
 import {
   useGenerateTestCases,
@@ -13,12 +13,11 @@ import {
 } from '../hooks/useTestCases';
 import { useProjectContext, useUpdateContext } from '../hooks/useScans';
 import { useAgentConfig, useOpenRouterUsage } from '../hooks/useUsage';
+import { useSkills } from '../hooks/useSkills';
 import InputQueue, { type InputQueueState, type SeedTC } from '../components/writer/InputQueue';
 import GeneratedTCList from '../components/writer/GeneratedTCList';
-import DocsReference from '../components/writer/DocsReference';
-import { api } from '../lib/api';
 import { getToken } from '../lib/auth';
-import type { TestCase, AgentTraceStep } from '../types';
+import type { TestCase, AgentTraceStep, ProjectSkill } from '../types';
 
 const SOCKET_URL = typeof window !== 'undefined'
   ? `${window.location.protocol}//${window.location.host}`
@@ -105,13 +104,100 @@ const initialInputState: InputQueueState = {
   uiScreenUrls: [],
 };
 
+// ── SkillsSidePanel ────────────────────────────────────────────────────────
+
+const SKILL_ICONS: Record<string, string> = {
+  UI_FLOW: '🖥', BUSINESS_USE_CASE: '📋', TEST_DATA: '🗄',
+  HLD: '🏗', API_CONTRACT: '🔌', USER_ROLE: '👤', UX_DESIGN: '🎨', HISTORICAL: '📈',
+};
+const SKILL_COLORS: Record<string, string> = {
+  UI_FLOW: 'var(--emerald)', BUSINESS_USE_CASE: 'var(--violet)', TEST_DATA: 'var(--amber)',
+  HLD: 'var(--cyan)', API_CONTRACT: 'var(--sky)', USER_ROLE: 'var(--rose)',
+  UX_DESIGN: '#a78bfa', HISTORICAL: 'var(--text-dim)',
+};
+
+function SkillsSidePanel({
+  skills,
+  selectedSkillIds,
+  onToggleSkill,
+  projectSlug,
+}: {
+  skills: ProjectSkill[];
+  selectedSkillIds: Set<string>;
+  onToggleSkill: (id: string) => void;
+  projectSlug: string;
+}) {
+  const activeSkills = skills.filter((s) => s.isActive);
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
+      <div style={{ height: '3px', background: 'linear-gradient(90deg, var(--violet), var(--cyan))', flexShrink: 0 }} />
+      <div className="card-header" style={{ flexShrink: 0 }}>
+        <div className="card-title">🧠 Product Skills</div>
+        {activeSkills.length > 0 && (
+          <span className="badge badge-cyan">{selectedSkillIds.size}/{activeSkills.length}</span>
+        )}
+      </div>
+      {activeSkills.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', textAlign: 'center', gap: 8 }}>
+          <div style={{ fontSize: 28, opacity: 0.3 }}>🧠</div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            No skills yet. Add UI flows, business rules, and test data to ground TC generation.
+          </div>
+          <a
+            href={`/projects/${projectSlug}/skills`}
+            style={{ marginTop: 4, padding: '5px 14px', background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.3)', borderRadius: 'var(--radius)', color: 'var(--cyan)', fontSize: 11, fontWeight: 700, textDecoration: 'none' }}
+          >
+            + Add Skills
+          </a>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', padding: '2px 4px 6px', lineHeight: 1.5 }}>
+            Selected skills ground the LLM with real app knowledge.
+          </div>
+          {activeSkills.map((skill) => {
+            const selected = selectedSkillIds.has(skill.id);
+            const icon = SKILL_ICONS[skill.skillType] ?? '📦';
+            const color = SKILL_COLORS[skill.skillType] ?? 'var(--text-dim)';
+            return (
+              <div
+                key={skill.id}
+                onClick={() => onToggleSkill(skill.id)}
+                style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '7px 9px', borderRadius: 'var(--radius)', cursor: 'pointer', background: selected ? 'rgba(37,99,171,0.04)' : 'transparent', border: `1px solid ${selected ? 'rgba(37,99,171,0.2)' : 'transparent'}`, transition: 'all 0.12s' }}
+              >
+                <div style={{ width: 14, height: 14, borderRadius: 3, flexShrink: 0, marginTop: 1, background: selected ? 'var(--cyan)' : 'transparent', border: `1.5px solid ${selected ? 'var(--cyan)' : 'var(--border2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 9 }}>
+                  {selected ? '✓' : ''}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
+                    <span style={{ fontSize: 10 }}>{icon}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.name}</span>
+                  </div>
+                  <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color }}>
+                    {skill.skillType.replace(/_/g, ' ')}
+                    {skill.captureMethod === 'AGENT_RECORDED' && <span style={{ marginLeft: 4 }}>🤖</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4 }}>
+            <a href={`/projects/${projectSlug}/skills`} style={{ display: 'block', textAlign: 'center', fontSize: 10, color: 'var(--cyan)', textDecoration: 'none', fontWeight: 600 }}>
+              + Manage Skills
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TestWriter() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const { canWrite } = useRBAC();
+  const { canWrite, canAccessUIScanner } = useRBAC();
 
   const { data: project } = useProject(slug);
-  const { data: docs = [] } = useRequirementDocs(project?.id);
   const { data: envConfigs = [] } = useProjectEnvConfigs(project?.id);
   const { data: context } = useProjectContext(project?.id);
   const updateCtx = useUpdateContext(project?.id ?? '');
@@ -129,6 +215,18 @@ export default function TestWriter() {
   const uploadMutation = useUploadFile();
   const parseSeedFileMutation = useParseSeedFile(project?.id ?? '');
   const startAgentTrace = useStartAgentTrace(project?.id ?? '');
+
+  const { data: allSkillsData } = useSkills(project?.id);
+  const allSkills = allSkillsData?.skills ?? [];
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
+
+  // Auto-select all active skills on first load
+  useEffect(() => {
+    if (allSkills.length > 0 && selectedSkillIds.size === 0) {
+      setSelectedSkillIds(new Set(allSkills.filter((s) => s.isActive).map((s) => s.id)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allSkills.length]);
 
   const [activeAgentTraceId, setActiveAgentTraceId] = useState<string | null>(null);
   const [agentSteps, setAgentSteps] = useState<AgentTraceStep[]>([]);
@@ -351,12 +449,16 @@ export default function TestWriter() {
         }))
       : undefined;
 
+    // Pass selected skill IDs so the backend only injects those specific skills
+    const selectedSkillIdsArray = Array.from(selectedSkillIds);
+
     try {
       const result = await generateMutation.mutateAsync({
         inputs,
         testTypes: activeTypes,
         additionalContext: additionalContext || undefined,
         seedTestCases: seedTestCasesPayload,
+        skillIds: selectedSkillIdsArray.length > 0 ? selectedSkillIdsArray : undefined,
       });
 
       const newTCs: GeneratedTC[] = result.testCases.map((tc, i) => ({
@@ -415,18 +517,6 @@ export default function TestWriter() {
       }
     },
     [project, saveMutation, slug, navigate, state.generatedTCs],
-  );
-
-  const handleToggleDoc = useCallback(
-    async (docId: string, isActive: boolean) => {
-      if (!project) return;
-      try {
-        await api.patch(`/projects/${project.id}/req-docs/${docId}`, { isActive });
-      } catch {
-        // ignore
-      }
-    },
-    [project],
   );
 
   const handleUploadFile = useCallback(
@@ -694,8 +784,8 @@ export default function TestWriter() {
         </div>
       )}
 
-      {/* Scan draft banner */}
-      {hasScanDraft && (
+      {/* Scan draft banner — only visible to roles with UI Scanner access */}
+      {hasScanDraft && canAccessUIScanner && (
         <div style={{
           margin: '0 24px',
           padding: '10px 16px',
@@ -763,12 +853,18 @@ export default function TestWriter() {
           isSaving={saveMutation.isPending}
         />
 
-        {/* RIGHT */}
-        <DocsReference
-          docs={docs}
-          reqLibraryPath={project?.reqLibraryPath}
-          onToggleDoc={handleToggleDoc}
-          inputCount={inputCount}
+        {/* RIGHT — Product Skills panel */}
+        <SkillsSidePanel
+          skills={allSkills}
+          selectedSkillIds={selectedSkillIds}
+          onToggleSkill={(id) =>
+            setSelectedSkillIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
           projectSlug={slug ?? ''}
         />
       </div>

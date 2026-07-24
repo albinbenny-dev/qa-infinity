@@ -7,7 +7,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
-import { addScriptGenJob } from '../lib/queue.js';
+import { addScriptGenJob, scriptGenQueue } from '../lib/queue.js';
 import { createLLM } from '../lib/llm.js';
 import {
   saveScript,
@@ -16,9 +16,12 @@ import {
   getScriptFileMeta,
   exportZip,
   listScriptFiles,
+  rewriteRobotResourcePaths,
+  saveSkillFile,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
+import { convertCodegenToRobot } from '../agents/codegenConverterAgent.js';
 
 const router = Router({ mergeParams: true });
 
@@ -36,6 +39,7 @@ const GenerateSchema = z.object({
   failedStep: z.string().max(500).optional(),
   failedStepError: z.string().max(2000).optional(),
   scriptMode: z.enum(['PLAYWRIGHT', 'ROBOT']).optional().default('ROBOT'),
+  referenceTcIds: z.array(z.string()).max(5).optional(),
 });
 
 const SaveContentSchema = z.object({
@@ -86,7 +90,7 @@ router.get('/', async (req: Request, res: Response) => {
     });
 
     const enriched = scripts.map((s: (typeof scripts)[number]) => {
-      const meta = getScriptFileMeta(projectId, s.filename);
+      const meta = getScriptFileMeta(req.project.slug, s.filename);
       return {
         id: s.id,
         projectId: s.projectId,
@@ -123,7 +127,7 @@ router.post('/generate', async (req: Request, res: Response) => {
       return;
     }
 
-    const { testCaseIds, withHeal, contextNote, domSnippet, domRecording, failedStep, failedStepError, scriptMode } = parsed.data;
+    const { testCaseIds, withHeal, contextNote, domSnippet, domRecording, failedStep, failedStepError, scriptMode, referenceTcIds } = parsed.data;
     const projectId = req.project.id;
 
     const tcs = await prisma.testCase.findMany({
@@ -163,6 +167,7 @@ router.post('/generate', async (req: Request, res: Response) => {
         domRecording: domRecording || undefined,
         failedStep: failedStep || undefined,
         failedStepError: failedStepError || undefined,
+        referenceTcIds: referenceTcIds?.length ? referenceTcIds : undefined,
         scriptMode,
       });
 
@@ -248,7 +253,13 @@ router.delete('/jobs/finished', async (req: Request, res: Response) => {
 router.delete('/jobs/all', async (req: Request, res: Response) => {
   try {
     const projectId = req.project.id;
+    const jobs = await prisma.scriptJob.findMany({
+      where: { projectId, createdBy: req.user.id },
+      select: { id: true },
+    });
     await prisma.scriptJob.deleteMany({ where: { projectId, createdBy: req.user.id } });
+    // Also remove queued/waiting BullMQ jobs so the worker doesn't pick them up after DB delete
+    await Promise.allSettled(jobs.map((j) => scriptGenQueue.remove(j.id)));
     res.json({ ok: true });
   } catch (err) {
     console.error('[scripts] DELETE /jobs/all', err);
@@ -261,10 +272,13 @@ router.delete('/jobs/all', async (req: Request, res: Response) => {
 router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
   try {
     const projectId = req.project.id;
-    const { contextNote, withHeal, saveHints } = req.body as {
+    const { contextNote, withHeal, saveHints, qaFeedback, saveAsHistoricalSkill, featureGroup } = req.body as {
       contextNote?: string;
       withHeal?: boolean;
       saveHints?: boolean;
+      qaFeedback?: string;
+      saveAsHistoricalSkill?: boolean;
+      featureGroup?: string;
     };
 
     const existingJob = await prisma.scriptJob.findFirst({
@@ -296,6 +310,38 @@ router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
       });
     }
 
+    // Save QA feedback as a Tier 3 Historical skill if requested
+    if (saveAsHistoricalSkill && qaFeedback?.trim()) {
+      const skillName = `${featureGroup ?? tc.useCaseTag ?? 'General'} — QA Correction`;
+      const historicalContent = JSON.stringify({
+        issue: qaFeedback.trim(),
+        correction: qaFeedback.trim(),
+        tcId: tc.tcId,
+        tcTitle: tc.title,
+        source: 'manual_qa_feedback',
+      });
+      const skill = await prisma.projectSkill.create({
+        data: {
+          projectId,
+          skillType: 'HISTORICAL',
+          name: skillName,
+          featureGroup: featureGroup ?? tc.useCaseTag ?? null,
+          tier: 'HISTORICAL',
+          content: historicalContent,
+          humanContext: qaFeedback.trim(),
+          captureMethod: 'MANUAL_QA_FEEDBACK',
+          confidence: 0.9,
+        },
+      });
+      saveSkillFile(req.project.slug, skill.id, {
+        id: skill.id, skillType: skill.skillType, name: skill.name,
+        scope: null, featureGroup: skill.featureGroup, tier: skill.tier,
+        humanContext: skill.humanContext, content: skill.content,
+        confidence: skill.confidence, captureMethod: skill.captureMethod,
+        isActive: skill.isActive, updatedAt: skill.updatedAt.toISOString(),
+      });
+    }
+
     const useHeal = withHeal ?? existingJob.withHeal;
     const newJob = await prisma.scriptJob.create({
       data: {
@@ -314,6 +360,7 @@ router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
       testCaseId: tc.id,
       withHeal: useHeal,
       contextNote: contextNote || undefined,
+      qaFeedback: qaFeedback || undefined,
     });
 
     res.status(202).json({
@@ -348,7 +395,7 @@ router.get('/:id/content', async (req: Request, res: Response) => {
     // Prefer filesystem (always fresh); fall back to DB content
     let content = script.content;
     try {
-      content = readScript(req.project.id, script.filename);
+      content = readScript(req.project.slug, script.filename);
     } catch {
       // file may not exist if volume was reset — fall back to DB
     }
@@ -386,7 +433,7 @@ router.put('/:id/content', async (req: Request, res: Response) => {
       where: { id: script.id },
       data: { content, updatedAt: new Date() },
     });
-    saveScript(req.project.id, script.filename, content);
+    saveScript(req.project.slug, script.filename, content);
 
     res.json({ ok: true });
   } catch (err) {
@@ -442,7 +489,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
     }
 
     await prisma.script.delete({ where: { id: script.id } });
-    deleteScript(req.project.id, script.filename);
+    deleteScript(req.project.slug, script.filename);
 
     res.json({ ok: true });
   } catch (err) {
@@ -476,6 +523,7 @@ router.post(
       }
 
       const projectId = req.project.id;
+      const slug = req.project.slug;
       const testCaseId = (req.body?.testCaseId as string | undefined) || null;
       const isRobotFile = req.file.originalname.toLowerCase().endsWith('.robot');
 
@@ -500,11 +548,11 @@ router.post(
         const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
         if (existing) {
           await prisma.script.delete({ where: { id: existing.id } });
-          deleteScript(projectId, existing.filename);
+          deleteScript(slug, existing.filename);
         }
       }
 
-      saveScript(projectId, filename, rawContent);
+      saveScript(slug, filename, rawContent);
 
       const detectedScriptType = isRobotFile ? 'ROBOT' : 'PLAYWRIGHT';
 
@@ -617,6 +665,21 @@ ${content.slice(0, 6000)}`;
   return { content: converted, converted: true };
 }
 
+/** Derive a best-effort title from raw script text without calling the LLM. */
+function extractTitleFromScriptText(content: string, isRobot: boolean): string {
+  if (isRobot) {
+    // First keyword name under *** Test Cases ***
+    const tcSection = content.match(/\*{3}\s*Test Cases?\s*\*{3}([\s\S]*?)(?:\*{3}|$)/i)?.[1] ?? '';
+    const firstLine = tcSection.split('\n').find((l) => l.trim() && !l.startsWith(' ') && !l.startsWith('\t'));
+    if (firstLine?.trim()) return firstLine.trim().slice(0, 200);
+  } else {
+    // test('...') or describe('...') or test("...")
+    const m = content.match(/(?:test|describe)\s*\(\s*['"`]([^'"`]+)['"`]/);
+    if (m?.[1]) return m[1].trim().slice(0, 200);
+  }
+  return 'Imported Test Case';
+}
+
 async function extractTCFromScript(scriptContent: string, projectId: string, projectName?: string): Promise<{
   title: string;
   description: string;
@@ -625,14 +688,25 @@ async function extractTCFromScript(scriptContent: string, projectId: string, pro
   type: 'UI' | 'API' | 'SIT';
   useCaseTag: string | null;
 }> {
-  const llm = createLLM({ temperature: 0, agentName: 'script-extract', projectId, projectName });
   const capped = scriptContent.slice(0, 8000);
   const isRobot = capped.trimStart().startsWith('*** Settings ***');
 
-  const response = await llm.invoke([
-    new SystemMessage(
-      isRobot
-        ? `You are a QA engineer. Extract test case details from a Robot Framework test script.
+  const minimalFallback = () => ({
+    title: extractTitleFromScriptText(capped, isRobot),
+    description: 'Imported from external script',
+    steps: ['Execute the imported script'],
+    expectedResult: 'Script executes without errors',
+    type: 'UI' as const,
+    useCaseTag: null,
+  });
+
+  try {
+    const llm = createLLM({ temperature: 0, agentName: 'script-agent', projectId, projectName });
+
+    const response = await llm.invoke([
+      new SystemMessage(
+        isRobot
+          ? `You are a QA engineer. Extract test case details from a Robot Framework test script.
 Output ONLY a JSON object — no markdown fences, no explanation:
 {
   "title": "concise test case title (from *** Test Cases *** section, 5-10 words)",
@@ -646,7 +720,7 @@ Rules:
 - steps: translate keywords into human-readable user actions, not Robot syntax
 - type: "UI" for browser tests, "API" for pure API, "SIT" for system integration
 - useCaseTag: functional area if clear (e.g. "Login", "Primary Sales", "Dashboard"), otherwise null`
-        : `You are a QA engineer. Extract test case details from a Playwright TypeScript test script.
+          : `You are a QA engineer. Extract test case details from a Playwright TypeScript test script.
 Output ONLY a JSON object — no markdown fences, no explanation:
 {
   "title": "concise test case title (from describe/test name, 5-10 words)",
@@ -660,35 +734,41 @@ Rules:
 - steps: translate code into human-readable user actions, not TypeScript syntax
 - type: "UI" for browser tests, "API" for pure API, "SIT" for system integration
 - useCaseTag: functional area if clear (e.g. "Login", "Primary Sales", "Dashboard"), otherwise null`,
-    ),
-    new HumanMessage(isRobot
-      ? `Script:\n\`\`\`robot\n${capped}\n\`\`\``
-      : `Script:\n\`\`\`typescript\n${capped}\n\`\`\``),
-  ]);
+      ),
+      new HumanMessage(isRobot
+        ? `Script:\n\`\`\`robot\n${capped}\n\`\`\``
+        : `Script:\n\`\`\`typescript\n${capped}\n\`\`\``),
+    ]);
 
-  const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
-  const cleaned = raw.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim();
+    const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+    const cleaned = raw.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim();
 
-  try {
     const parsed = JSON.parse(cleaned);
     return {
-      title: String(parsed.title || 'Imported Test Case').slice(0, 200),
+      title: String(parsed.title || extractTitleFromScriptText(capped, isRobot)).slice(0, 200),
       description: String(parsed.description || '').slice(0, 500),
       steps: Array.isArray(parsed.steps) ? parsed.steps.map(String).filter(Boolean) : [],
       expectedResult: String(parsed.expectedResult || 'Script executes without errors').slice(0, 1000),
       type: (['UI', 'API', 'SIT'] as const).includes(parsed.type) ? parsed.type : 'UI',
       useCaseTag: parsed.useCaseTag ? String(parsed.useCaseTag).slice(0, 120) : null,
     };
-  } catch {
-    // Fallback: derive title from filename if LLM output is unparseable
-    return {
-      title: 'Imported Test Case',
-      description: 'Imported from external script',
-      steps: ['Execute the imported Playwright script'],
-      expectedResult: 'Script executes without errors',
-      type: 'UI',
-      useCaseTag: null,
-    };
+  } catch (err: unknown) {
+    // Network/LLM unavailable — create a minimal TC from the script text itself
+    const isNetworkError = err instanceof Error && (
+      err.message.includes('ECONNREFUSED') ||
+      err.message.includes('ENOTFOUND') ||
+      err.message.includes('ETIMEDOUT') ||
+      err.message.includes('fetch failed') ||
+      err.message.includes('network') ||
+      err.message.includes('connect')
+    );
+    if (!isNetworkError) {
+      // JSON parse failure from LLM — still use minimal fallback
+      console.warn('[extractTCFromScript] LLM response unparseable, using fallback');
+    } else {
+      console.warn('[extractTCFromScript] LLM unreachable (no internet?), using offline fallback');
+    }
+    return minimalFallback();
   }
 }
 
@@ -715,6 +795,7 @@ router.post(
       }
 
       const projectId = req.project.id;
+      const slug = req.project.slug;
       const isRobotFile = req.file.originalname.toLowerCase().endsWith('.robot');
 
       // Convert SeleniumLibrary → Browser for robot files before extraction
@@ -726,11 +807,17 @@ router.post(
         converted = result.converted;
       }
 
+      // Rewrite relative resource/variable paths to absolute container paths
+      if (isRobotFile) {
+        const { content: rewritten } = rewriteRobotResourcePaths(rawContent, slug);
+        rawContent = rewritten;
+      }
+
       // Extract TC details from script via LLM
       const extracted = await extractTCFromScript(rawContent, projectId, req.project.name);
 
       // Generate a unique tcId
-      const tcId = await nextTcId(projectId, req.project.slug ?? projectId);
+      const tcId = await nextTcId(projectId, slug);
 
       // Rename to system-default convention using extracted TC info
       const filename = buildSystemFilename(tcId, extracted.title, req.file.originalname);
@@ -755,7 +842,7 @@ router.post(
       });
 
       // Save script file and link to the created TC
-      saveScript(projectId, filename, rawContent);
+      saveScript(slug, filename, rawContent);
 
       const script = await prisma.script.create({
         data: {
@@ -794,8 +881,8 @@ router.get('/export/zip', async (req: Request, res: Response) => {
       filenames = scripts.map((s: { filename: string }) => s.filename);
     }
 
-    const buffer = await exportZip(projectId, filenames);
-    const name = `${req.project.slug ?? projectId}-scripts.zip`;
+    const buffer = await exportZip(req.project.slug, filenames);
+    const name = `${req.project.slug}-scripts.zip`;
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
@@ -877,9 +964,13 @@ ${rawContent.slice(0, 6000)}`;
         converted = true;
       }
 
+      // Rewrite relative resource/variable paths to absolute container paths
+      const { content: rewrittenRobot } = rewriteRobotResourcePaths(finalContent, req.project.slug);
+      finalContent = rewrittenRobot;
+
       // Save to filesystem with sanitised filename
       const filename = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
-      saveScript(projectId, filename, finalContent);
+      saveScript(req.project.slug, filename, finalContent);
 
       // Link to a test case if testCaseId provided
       const testCaseId = (req.body?.testCaseId as string | undefined) || null;
@@ -892,7 +983,7 @@ ${rawContent.slice(0, 6000)}`;
         const existing = await prisma.script.findFirst({ where: { projectId, testCaseId } });
         if (existing) {
           await prisma.script.delete({ where: { id: existing.id } });
-          deleteScript(projectId, existing.filename);
+          deleteScript(req.project.slug, existing.filename);
         }
       }
 
@@ -930,14 +1021,15 @@ ${rawContent.slice(0, 6000)}`;
 router.get('/mine-keywords', async (req: Request, res: Response) => {
   try {
     const projectId = req.project.id;
-    const files = listScriptFiles(projectId).filter(f => f.filename.endsWith('.robot'));
+    const slug = req.project.slug;
+    const files = listScriptFiles(slug).filter(f => f.filename.endsWith('.robot'));
 
     // Parse keywords out of each file: a keyword is a non-indented line followed by indented lines
     const keywordBodies: Map<string, { body: string; files: string[] }> = new Map();
 
     for (const { filename } of files) {
       let content: string;
-      try { content = readScript(projectId, filename); } catch { continue; }
+      try { content = readScript(slug, filename); } catch { continue; }
 
       const lines = content.split('\n');
       let inKeywords = false;
@@ -979,6 +1071,103 @@ router.get('/mine-keywords', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] GET /mine-keywords', err);
     res.status(500).json({ error: 'Keyword mining failed' });
+  }
+});
+
+// ── Playwright Codegen recording proxy ────────────────────────────────────
+
+const RUNNER_URL = process.env.RUNNER_PRIMARY_URL ?? process.env.RUNNER_URL ?? 'http://qa-runner:5001';
+
+const RecordStartSchema = z.object({
+  url: z.string().min(1).max(2048),
+  sessionId: z.string().min(1).max(64),
+});
+
+const RecordStopSchema = z.object({
+  sessionId: z.string().min(1).max(64),
+  testCaseId: z.string().optional(),
+  testCaseName: z.string().optional(),
+  saveToScriptId: z.string().optional(),
+});
+
+// POST /projects/:projectId/scripts/record/start
+router.post('/record/start', async (req: Request, res: Response) => {
+  const parsed = RecordStartSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const runnerRes = await fetch(`${RUNNER_URL}/record/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed.data),
+    });
+    const json = await runnerRes.json() as Record<string, unknown>;
+    res.status(runnerRes.status).json(json);
+  } catch (err) {
+    console.error('[scripts] POST /record/start', err);
+    res.status(502).json({ error: 'Runner unreachable' });
+  }
+});
+
+// POST /projects/:projectId/scripts/record/stop
+// Kills the codegen process and returns the raw Playwright TS code (fast, no LLM).
+router.post('/record/stop', async (req: Request, res: Response) => {
+  const parsed = z.object({ sessionId: z.string().min(1).max(64) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const { sessionId } = parsed.data;
+
+  try {
+    const runnerRes = await fetch(`${RUNNER_URL}/record/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    });
+    const json = await runnerRes.json() as { ok?: boolean; playwrightCode?: string; error?: string };
+    if (!runnerRes.ok || !json.ok) {
+      res.status(runnerRes.status).json({ error: json.error ?? 'Runner error' });
+      return;
+    }
+    res.json({ ok: true, playwrightCode: json.playwrightCode ?? '' });
+  } catch (err) {
+    console.error('[scripts] POST /record/stop — runner fetch', err);
+    res.status(502).json({ error: 'Runner unreachable' });
+  }
+});
+
+// POST /projects/:projectId/scripts/record/convert
+// Converts raw Playwright TS (from codegen) to Robot Framework via LLM.
+router.post('/record/convert', async (req: Request, res: Response) => {
+  const parsed = z.object({
+    playwrightCode: z.string().min(1),
+    testCaseName: z.string().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const { playwrightCode, testCaseName } = parsed.data;
+  const projectId = req.params['projectId'] ?? '';
+
+  let projectName = projectId;
+  try {
+    const proj = await prisma.project.findUnique({ where: { id: projectId }, select: { name: true } });
+    if (proj) projectName = proj.name;
+  } catch { /* non-fatal */ }
+
+  try {
+    const robotScript = await convertCodegenToRobot({ playwrightCode, projectId, projectName, testCaseName });
+    res.json({ ok: true, robotScript });
+  } catch (err) {
+    console.error('[scripts] codegen conversion failed', err);
+    res.status(500).json({ error: 'Conversion failed' });
   }
 });
 

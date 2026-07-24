@@ -34,6 +34,11 @@ interface GenerateRequest {
   testTypes: ('UI' | 'API' | 'SIT')[];
   additionalContext?: string;
   seedTestCases?: SeedTCPayload[];
+  /**
+   * IDs of skills to include — when provided, only these skills are injected.
+   * When omitted, the backend auto-selects all active skills by relevance.
+   */
+  skillIds?: string[];
 }
 
 interface GenerateResponse {
@@ -81,7 +86,7 @@ export function useGenerateTestCases(projectId: string) {
       const res = await api.post<GenerateResponse>(
         `/projects/${projectId}/test-cases/generate`,
         req,
-        { timeout: 120_000 },
+        { timeout: 300_000 },
       );
       return res.data;
     },

@@ -6,6 +6,7 @@ import { clearAuth } from '../../lib/auth';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
 import { useHealStats } from '../../hooks/useHeals';
 import { useSchedules } from '../../hooks/useRuns';
+import { useRBAC } from '../../hooks/useRBAC';
 import type { NavSection } from '../../types';
 
 interface SidebarProps {
@@ -26,6 +27,7 @@ export default function Sidebar({ slug }: SidebarProps) {
     navigate('/login', { replace: true });
   }
   const projectId = activeProject?.id ?? '';
+  const { canAccessHealing } = useRBAC();
   const { data: healStats } = useHealStats(projectId || undefined);
   const { data: schedules = [] } = useSchedules(projectId || undefined);
   const activeScheduleCount = schedules.filter((s) => s.isActive).length;
@@ -37,6 +39,7 @@ export default function Sidebar({ slug }: SidebarProps) {
           items: [
             { label: 'Dashboard', path: `/projects/${slug}/dashboard`, icon: '▦' },
             { label: 'TC Library', path: `/projects/${slug}/tc-library`, icon: '📋', badge: activeProject?._count?.testCases ?? undefined, badgeVariant: 'green' },
+            { label: 'Product Skills', path: `/projects/${slug}/skills`, icon: '🧠' },
           ],
         },
         {
@@ -46,7 +49,7 @@ export default function Sidebar({ slug }: SidebarProps) {
             { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨' },
             { label: 'Execution', path: `/projects/${slug}/execution`, icon: '▶' },
             { label: 'Scheduler', path: `/projects/${slug}/scheduler`, icon: '⏰', badge: activeScheduleCount || undefined, badgeVariant: 'blue' },
-            { label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' },
+            ...(canAccessHealing ? [{ label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' as const }] : []),
           ],
         },
         {
@@ -298,7 +301,7 @@ export default function Sidebar({ slug }: SidebarProps) {
                 textTransform: 'uppercase',
               }}
             >
-              {currentUser?.globalRole === 'SUPER_ADMIN' ? 'Super Admin' : 'QA Engineer'}
+              {currentUser?.globalRole?.replace('_', ' ') ?? 'User'}
             </div>
           </div>
 

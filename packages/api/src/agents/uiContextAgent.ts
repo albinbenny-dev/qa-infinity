@@ -1,5 +1,4 @@
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { createLLM } from '../lib/llm.js';
+import { callAgent } from '../lib/skillsContext.js';
 import type { ScanResult } from '../services/uiScannerService.js';
 import type {
   NavNode,
@@ -68,8 +67,6 @@ export async function runUIContextAgent(
   customInstructions?: string,
   reqLibraryContext?: string,
 ): Promise<UIContextResult> {
-  const llm = createLLM({ temperature: 0.2, agentName: 'ui-context-agent' });
-
   const { pages, loginInstructions, navigationMap } = scanResult;
 
   // Build page summaries — keep per-page content tight so the full response fits in
@@ -121,10 +118,13 @@ export async function runUIContextAgent(
     pageSummaries.join('\n\n'),
   ].join('\n');
 
-  const response = await llm.invoke([new SystemMessage(SYSTEM_PROMPT), new HumanMessage(textContent)]);
-
-  const raw =
-    typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+  const raw = await callAgent({
+    systemPrompt: SYSTEM_PROMPT,
+    userContent: textContent,
+    agentName: 'ui-context-agent',
+    maxTokens: 8192,
+    temperature: 0.2,
+  });
 
   const result = parseContextResult(raw, loginInstructions, navigationMap, pages);
   return result;

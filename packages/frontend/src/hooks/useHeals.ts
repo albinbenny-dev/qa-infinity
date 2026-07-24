@@ -41,7 +41,6 @@ export interface TriggerHealResponse {
 export function useTriggerHeal(
   projectId: string,
   onNoHeals?: () => void,
-  onQueued?: (items: Array<{ runResultId: string; tcTitle: string }>) => void,
 ) {
   const qc = useQueryClient();
   return useMutation({
@@ -55,12 +54,19 @@ export function useTriggerHeal(
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ['heals', projectId] });
       void qc.invalidateQueries({ queryKey: ['heal-stats', projectId] });
-      if (data.queued?.length) onQueued?.(data.queued);
       if (data.count === 0) onNoHeals?.();
     },
     onError: () => {
       onNoHeals?.();
     },
+  });
+}
+
+// POST /cancel/:runResultId — remove from queue + delete DB record
+export function useCancelHeal(projectId: string) {
+  return useMutation({
+    mutationFn: (runResultId: string) =>
+      api.post(`/projects/${projectId}/heals/cancel/${runResultId}`).then((r) => r.data),
   });
 }
 

@@ -8,7 +8,6 @@ interface ExecutionMonitorProps {
   projectId?: string;
   scriptName: string;
   onClose: () => void;
-  onFixWithAi?: (failedStep: string, errorMessage: string) => void;
 }
 
 // ── Step indicator helpers ─────────────────────────────────────────────────
@@ -34,7 +33,7 @@ function formatTs(ts: string): string {
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function ExecutionMonitor({
-  runId, scriptName, onClose, onFixWithAi,
+  runId, scriptName, onClose,
 }: ExecutionMonitorProps) {
   const { logs, stats, status, joinRun, leaveRun } = useRunSocket();
 
@@ -91,15 +90,6 @@ export default function ExecutionMonitor({
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
   }, [resizing]);
 
-  // ── Fix with AI ───────────────────────────────────────────────────────────
-
-  const handleFixWithAi = () => {
-    const failLine = [...logs].reverse().find(l => l.kind === 'fail');
-    const errLine = [...logs].reverse().find(l => l.text.toLowerCase().includes('error') || l.text.toLowerCase().includes('timeout'));
-    onFixWithAi?.(failLine?.text ?? `Run failed: ${scriptName}`, errLine?.text ?? '');
-    onClose();
-  };
-
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const isRunning = status === 'running' || status === 'connecting' || status === 'idle';
@@ -139,14 +129,6 @@ export default function ExecutionMonitor({
           {scriptName}
         </span>
         <div style={{ display: 'flex', gap: 6, cursor: 'default' }}>
-          {hasFailed && onFixWithAi && (
-            <button
-              onClick={handleFixWithAi}
-              style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.4)', color: 'var(--rose)' }}
-            >
-              🩹 Fix with AI
-            </button>
-          )}
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}>×</button>
         </div>
       </div>
@@ -193,14 +175,6 @@ export default function ExecutionMonitor({
       <div style={{ display: 'flex', gap: 8, padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.07)', background: 'rgba(0,0,0,0.2)', flexShrink: 0, alignItems: 'center' }}>
         <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>Run: {runId.slice(0, 8)}…</span>
         <div style={{ flex: 1 }} />
-        {hasFailed && onFixWithAi && (
-          <button
-            onClick={handleFixWithAi}
-            style={{ fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 4, cursor: 'pointer', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.35)', color: 'var(--violet)' }}
-          >
-            🩹 Fix with AI
-          </button>
-        )}
       </div>
 
       {/* Resize handle */}

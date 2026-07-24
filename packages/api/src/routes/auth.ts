@@ -76,7 +76,7 @@ router.post('/register', async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { email, name, passwordHash, globalRole: 'USER' },
+      data: { email, name, passwordHash, globalRole: 'STANDARD_USER' },
     });
 
     const token = generateToken({
@@ -241,7 +241,7 @@ router.post('/google', async (req: Request, res: Response) => {
           email,
           name:         gPayload.name ?? email.split('@')[0],
           passwordHash, // unusable — SSO users authenticate via Google
-          globalRole:   'USER',
+          globalRole:   'STANDARD_USER',
         },
       });
       console.log(`[auth/google] New user registered via SSO: ${email}`);

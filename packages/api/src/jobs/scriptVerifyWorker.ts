@@ -5,7 +5,8 @@ import { prisma } from '../lib/prisma.js';
 import { emitToProject } from '../lib/socket.js';
 import type { ScriptVerifyJobPayload } from '../lib/queue.js';
 import { runClassifier, runPatcher } from '../agents/healingAgent.js';
-import { saveScript } from '../services/scriptFileService.js';
+import { saveScript, listResourceFiles, readResourceFile } from '../services/scriptFileService.js';
+import { runScriptAgent, type ResourceFileInfo } from '../agents/scriptAgent.js';
 
 const ARTIFACTS_ROOT = process.env.ARTIFACTS_PATH ?? '/artifacts';
 const SCRIPTS_ROOT = process.env.SCRIPTS_PATH ?? '/scripts';
@@ -59,6 +60,9 @@ async function emitJobUpdate(scriptJobId: string): Promise<void> {
   emitToProject(job.projectId, 'script-job:update', { ...job, testCase });
 }
 
+interface RFTestEntry { name: string; status: 'PASS' | 'FAIL'; durationMs: number; errorMsg: string | null }
+interface RFReport { _robotReport: true; tests: RFTestEntry[]; suiteStatus: 'PASS' | 'FAIL' }
+
 interface SpawnResult {
   passed: boolean;
   errorMessage?: string;
@@ -68,7 +72,7 @@ interface SpawnResult {
 async function runOnce(scriptPath: string, reportFile: string, envBaseUrl: string, envUsername: string, envPassword: string): Promise<SpawnResult> {
   const runnerUrl = process.env.RUNNER_URL ?? 'http://qa-runner:5001';
   const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 120_000);
+  const fetchTimeout = setTimeout(() => controller.abort(), 180_000); // 3 min — RF tests can be slow
 
   try {
     const response = await fetch(`${runnerUrl}/run`, {
@@ -90,11 +94,11 @@ async function runOnce(scriptPath: string, reportFile: string, envBaseUrl: strin
 
     const text = await response.text();
     let exitCode = 1;
-    let reportData: PWReport | undefined;
+    let reportData: PWReport | RFReport | undefined;
     for (const raw of text.split('\n')) {
       const trimmed = raw.trim();
       if (!trimmed) continue;
-      let msg: { type: string; exitCode?: number; reportData?: PWReport | null };
+      let msg: { type: string; exitCode?: number; reportData?: PWReport | RFReport | null };
       try { msg = JSON.parse(trimmed); } catch { continue; }
       if (msg.type === 'done') {
         exitCode = msg.exitCode ?? 1;
@@ -104,21 +108,33 @@ async function runOnce(scriptPath: string, reportFile: string, envBaseUrl: strin
     clearTimeout(fetchTimeout);
 
     if (reportData) {
-      const stats = reportData.stats;
+      // ── Robot Framework report ──────────────────────────────────────────────
+      if ((reportData as RFReport)._robotReport) {
+        const rfReport = reportData as RFReport;
+        const passed = exitCode === 0;
+        if (passed) return { passed: true };
+        const failedTest = (rfReport.tests ?? []).find((t) => t.status === 'FAIL');
+        const errorMessage = failedTest?.errorMsg?.slice(0, 1500) ?? 'Robot test failed — check log.html';
+        return { passed: false, errorMessage };
+      }
+
+      // ── Playwright report ───────────────────────────────────────────────────
+      const pwReport = reportData as PWReport;
+      const stats = pwReport.stats;
       const total = (stats?.expected ?? 0) + (stats?.unexpected ?? 0) + (stats?.skipped ?? 0);
       if (total === 0) {
         return { passed: false, errorMessage: 'No tests ran — possible import or syntax error.' };
       }
       const passed = (stats?.unexpected ?? 1) === 0;
-      if (passed) return { passed: true, reportData };
+      if (passed) return { passed: true, reportData: pwReport };
 
-      const failingResult = (reportData.suites ?? [])
+      const failingResult = (pwReport.suites ?? [])
         .flatMap(flattenTests)
         .flatMap((spec) => spec.tests ?? [])
         .flatMap((tr) => tr.results ?? [])
         .find((r) => r.status !== 'passed');
       const errorMessage = failingResult?.error?.message?.slice(0, 1000) ?? 'Test failed';
-      return { passed: false, errorMessage, reportData };
+      return { passed: false, errorMessage, reportData: pwReport };
     }
     return {
       passed: exitCode === 0,
@@ -131,14 +147,77 @@ async function runOnce(scriptPath: string, reportFile: string, envBaseUrl: strin
   }
 }
 
+// ── RF keyword extractor (same logic as scriptGenWorker) ──────────────────
+function extractRobotKeywords(content: string): string[] {
+  const keywords: string[] = [];
+  let inKeywords = false;
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('*** Keywords ***')) { inKeywords = true; continue; }
+    if (trimmed.startsWith('***')) { inKeywords = false; continue; }
+    if (inKeywords && line.length > 0 && line[0] !== ' ' && line[0] !== '\t' && trimmed.length > 0 && !trimmed.startsWith('#')) {
+      keywords.push(trimmed);
+    }
+  }
+  return keywords;
+}
+
+// ── RF-specific heal: re-generate the script with the error as context ────
+// For Robot Framework we do a full re-generation (not a diff-patch) because
+// the error often reveals a fundamental selector or flow problem that requires
+// understanding the whole test, not just the failing line.
+async function healRobotScript(
+  testCaseId: string,
+  projectId: string,
+  errorMessage: string,
+): Promise<string | null> {
+  const tc = await prisma.testCase.findFirst({
+    where: { id: testCaseId, projectId },
+    select: {
+      id: true, tcId: true, title: true, description: true,
+      steps: true, expectedResult: true, type: true, useCaseTag: true, generationHints: true,
+    },
+  });
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, slug: true, name: true, baseUrl: true, patternMemory: true },
+  });
+  if (!tc || !project) return null;
+
+  const resourceFiles: ResourceFileInfo[] = listResourceFiles(project.slug).map((f) => {
+    let keywords: string[] = [];
+    try { keywords = extractRobotKeywords(readResourceFile(project.slug, f.filename)); } catch { /* skip */ }
+    return { filename: f.filename, keywords };
+  });
+
+  console.log(`[script-verify-worker] RF heal attempt for ${tc.tcId} — error: ${errorMessage.slice(0, 120)}`);
+
+  const result = await runScriptAgent({
+    testCase: {
+      id: tc.id, tcId: tc.tcId, title: tc.title, description: tc.description,
+      steps: tc.steps, expectedResult: tc.expectedResult, type: tc.type,
+      useCaseTag: tc.useCaseTag, generationHints: tc.generationHints,
+    },
+    project: { id: project.id, slug: project.slug, name: project.name, baseUrl: project.baseUrl },
+    existingPOMs: [],
+    scriptMode: 'ROBOT',
+    resourceFiles,
+    patternMemory: project.patternMemory,
+    failedStep: 'Previous run failed',
+    failedStepError: errorMessage,
+  });
+
+  return result.specContent;
+}
+
 async function processVerifyJob(job: Job<ScriptVerifyJobPayload>): Promise<void> {
-  const { scriptJobId, projectId, scriptId } = job.data;
+  const { scriptJobId, projectId, testCaseId, scriptId } = job.data;
 
   const scriptJob = await prisma.scriptJob.findUnique({ where: { id: scriptJobId } });
   if (!scriptJob) return;
   const maxAttempts = scriptJob.maxHealAttempts;
 
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true, slug: true, name: true, baseUrl: true } });
   const script = await prisma.script.findUnique({ where: { id: scriptId } });
   if (!project || !script) {
     await prisma.scriptJob.update({
@@ -148,6 +227,8 @@ async function processVerifyJob(job: Job<ScriptVerifyJobPayload>): Promise<void>
     await emitJobUpdate(scriptJobId);
     return;
   }
+
+  const isRobot = script.filename.endsWith('.robot');
 
   // Resolve env (default EnvConfig, fall back to project.baseUrl + empty creds)
   const env = await prisma.envConfig.findFirst({
@@ -176,10 +257,10 @@ async function processVerifyJob(job: Job<ScriptVerifyJobPayload>): Promise<void>
     return;
   }
 
-  const artifactsDir = path.join(ARTIFACTS_ROOT, projectId, 'script-jobs', scriptJobId);
+  const artifactsDir = path.join(ARTIFACTS_ROOT, project.slug, 'script-jobs', scriptJobId);
   try { fs.mkdirSync(artifactsDir, { recursive: true }); } catch { /* ignore */ }
 
-  const scriptPath = path.join(SCRIPTS_ROOT, projectId, script.filename);
+  const scriptPath = path.join(SCRIPTS_ROOT, project.slug, 'scripts', script.filename);
 
   // ── Attempt 0: initial verify ────────────────────────────────────────────
   await prisma.scriptJob.update({
@@ -210,28 +291,44 @@ async function processVerifyJob(job: Job<ScriptVerifyJobPayload>): Promise<void>
     await emitJobUpdate(scriptJobId);
 
     try {
-      const cls = await runClassifier({
-        errorMessage: result.errorMessage ?? 'Unknown error',
-        scriptContent: currentContent,
-      });
-      lastHealType = cls.type;
+      if (isRobot) {
+        // ── RF heal: full re-generation with error context ──────────────────
+        lastHealType = 'RF_REGEN';
+        const healed = await healRobotScript(
+          testCaseId, projectId, result.errorMessage ?? 'Unknown error',
+        );
+        if (!healed) {
+          lastSuspected = 'RF heal: could not retrieve test case context';
+          break;
+        }
+        currentContent = healed;
+        lastSuspected = `RF regen attempt ${attempt}: regenerated from error context`;
+      } else {
+        // ── Playwright heal: classify + patch ──────────────────────────────
+        const cls = await runClassifier({
+          errorMessage: result.errorMessage ?? 'Unknown error',
+          scriptContent: currentContent,
+        });
+        lastHealType = cls.type;
 
-      const patch = await runPatcher({
-        type: cls.type,
-        errorMessage: result.errorMessage ?? 'Unknown error',
-        originalScript: currentContent,
-        projectName: project.name,
-        baseUrl: project.baseUrl,
-      });
+        const patch = await runPatcher({
+          type: cls.type,
+          errorMessage: result.errorMessage ?? 'Unknown error',
+          originalScript: currentContent,
+          projectName: project.name,
+          baseUrl: project.baseUrl,
+          slug: project.slug,
+        });
 
-      currentContent = patch.patchedScript;
-      saveScript(projectId, script.filename, currentContent);
+        currentContent = patch.patchedScript;
+        lastSuspected = `${cls.type}: ${patch.explanation}`;
+      }
+
+      saveScript(project.slug, script.filename, currentContent);
       await prisma.script.update({
         where: { id: script.id },
         data: { content: currentContent, updatedAt: new Date() },
       });
-
-      lastSuspected = `${cls.type}: ${patch.explanation}`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       lastSuspected = `Healing pipeline error: ${msg}`;

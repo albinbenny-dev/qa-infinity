@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
+import { useRBAC } from '../hooks/useRBAC';
 import { useProject } from '../hooks/useProjects';
 import {
   BarChart,
@@ -167,6 +168,7 @@ export default function Reports() {
   const [days, setDays] = useState(30);
   const [page, setPage] = useState(1);
 
+  const { canAccessHealing } = useRBAC();
   const { data: stats } = useProjectStats(projectId);
   const { data: trend = [] } = useRunTrend(projectId, days);
   const { data: runsData } = useReportRuns(projectId, page);
@@ -243,11 +245,13 @@ export default function Reports() {
             value={stats?.flakyTests.length ?? 0}
             accent="linear-gradient(90deg, var(--amber), var(--skip))"
           />
-          <StatTile
-            label="Pending Heals"
-            value={stats?.pendingHeals ?? 0}
-            accent="linear-gradient(90deg, var(--fail), #b91c1c)"
-          />
+          {canAccessHealing && (
+            <StatTile
+              label="Pending Heals"
+              value={stats?.pendingHeals ?? 0}
+              accent="linear-gradient(90deg, var(--fail), #b91c1c)"
+            />
+          )}
           <StatTile
             label="Avg Run Time"
             value={avgRunTime}

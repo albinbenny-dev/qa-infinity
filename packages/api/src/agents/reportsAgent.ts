@@ -1,5 +1,4 @@
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { createLLM } from '../lib/llm.js';
+import { callAgent } from '../lib/skillsContext.js';
 
 export interface ReportsAgentInput {
   runSummary: {
@@ -56,8 +55,6 @@ export async function runReportsAgent(input: ReportsAgentInput): Promise<Reports
     };
   }
 
-  const llm = createLLM({ temperature: 0, agentName: 'reports-agent' });
-
   const failedList = input.failedTests
     .slice(0, 10)
     .map((t, i) => `${i + 1}. ${t.title}\n   Error: ${t.error.slice(0, 200)}`)
@@ -73,13 +70,12 @@ export async function runReportsAgent(input: ReportsAgentInput): Promise<Reports
 Failed tests (up to 10):
 ${failedList}`;
 
-  const response = await llm.invoke([
-    new SystemMessage(SYSTEM_PROMPT),
-    new HumanMessage(userContent),
-  ]);
-
-  const raw =
-    typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+  const raw = await callAgent({
+    systemPrompt: SYSTEM_PROMPT,
+    userContent,
+    agentName: 'reports-agent',
+    maxTokens: 4096,
+  });
 
   try {
     const clean = raw.replace(/```json\s*/g, '').replace(/```/g, '').trim();

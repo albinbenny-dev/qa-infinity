@@ -23,7 +23,9 @@ export async function requireProjectAccess(
   try {
     const { projectId } = req.params;
     const userId = req.user.id;
-    const isSuperAdmin = req.user.globalRole === 'SUPER_ADMIN';
+    const globalRole = req.user.globalRole;
+    // SUPER_ADMIN and ADMIN both bypass project membership checks
+    const bypassesMembership = globalRole === 'SUPER_ADMIN' || globalRole === 'ADMIN';
 
     // Support lookup by cuid OR slug
     const project = await prisma.project.findFirst({
@@ -35,8 +37,8 @@ export async function requireProjectAccess(
       return;
     }
 
-    // SUPER_ADMIN bypasses membership check
-    if (isSuperAdmin) {
+    // SUPER_ADMIN and ADMIN bypass membership check
+    if (bypassesMembership) {
       req.project = project;
       next();
       return;

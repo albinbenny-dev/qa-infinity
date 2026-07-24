@@ -1,5 +1,6 @@
 import { Router, RequestHandler } from 'express';
 import { z } from 'zod';
+import fs from 'fs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
@@ -29,16 +30,37 @@ async function resolveScriptPaths(
   projectId: string,
   testCaseIds: string[],
 ): Promise<{ testCaseId: string; scriptPath: string }[]> {
-  const scripts = await prisma.script.findMany({
-    where: { projectId, testCaseId: { in: testCaseIds } },
-    select: { testCaseId: true, filename: true },
-  });
+  const [project, scripts] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } }),
+    prisma.script.findMany({
+      where: { projectId, testCaseId: { in: testCaseIds } },
+      select: {
+        testCaseId: true,
+        filename: true,
+        testCase: { select: { sourceRef: true } },
+      },
+    }),
+  ]);
+  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
   return scripts
     .filter((s): s is typeof s & { testCaseId: string } => s.testCaseId !== null)
-    .map((s) => ({
-      testCaseId: s.testCaseId,
-      scriptPath: `/scripts/${projectId}/${s.filename}`,
-    }));
+    .map((s) => {
+      const cuidPath = `${SCRIPTS_ROOT}/${projectId}/${s.filename}`;
+      if (fs.existsSync(cuidPath)) {
+        return { testCaseId: s.testCaseId, scriptPath: cuidPath };
+      }
+      const sourceRef = s.testCase?.sourceRef;
+      if (sourceRef) {
+        const slugPath = `${SCRIPTS_ROOT}/${project?.slug}/${sourceRef}`;
+        if (fs.existsSync(slugPath)) {
+          return { testCaseId: s.testCaseId, scriptPath: slugPath };
+        }
+        if (sourceRef.includes('/')) {
+          return { testCaseId: s.testCaseId, scriptPath: slugPath };
+        }
+      }
+      return { testCaseId: s.testCaseId, scriptPath: cuidPath };
+    });
 }
 
 async function nextRunSeq(): Promise<number> {

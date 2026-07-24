@@ -10,6 +10,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { Page } from 'playwright-core';
 import { createLLM } from '../lib/llm.js';
+import { loadActiveSkills, buildSkillsText } from '../lib/skillsContext.js';
 import {
   compressScreenshot,
   hasPageChangedSignificantly,
@@ -47,6 +48,8 @@ export interface BrowserAgentOptions {
   productContext?: BrowserAgentProductContext;
   projectId: string;
   projectName?: string;
+  /** Project slug — used to load skill files for product context injection */
+  projectSlug?: string;
   onStep: (step: RecordedAction) => Promise<void>;
 }
 
@@ -685,7 +688,7 @@ export async function analyzeTraceToTestCases(
   projectId: string,
   projectName?: string,
 ): Promise<GeneratedAgentTC[]> {
-  const llm = createLLM({ temperature: 0, agentName: 'tc-analyzer', projectId, projectName });
+  const llm = createLLM({ temperature: 0, agentName: 'browser-agent', projectId, projectName });
 
   // Build human-readable login steps from stored instructions
   const loginStepLines: string[] = [];
@@ -834,9 +837,20 @@ export async function runBrowserAgent(opts: BrowserAgentOptions): Promise<Browse
   // 10% of normal input price for it on steps 2–20.
   // For OpenRouter: caching is automatic — this content array form is safe to pass through.
   const systemPromptText = buildSystemPrompt(opts);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const systemContent: Array<{ type: string; text: string; cache_control?: { type: string } }> = [];
+  if (opts.projectSlug) {
+    const skillsText = buildSkillsText(loadActiveSkills(opts.projectSlug));
+    if (skillsText) {
+      systemContent.push({ type: 'text', text: skillsText, cache_control: { type: 'ephemeral' } });
+    }
+  }
+  systemContent.push({ type: 'text', text: systemPromptText, cache_control: { type: 'ephemeral' } });
+
   const systemMsg = new SystemMessage({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    content: [{ type: 'text', text: systemPromptText, cache_control: { type: 'ephemeral' } }] as any,
+    content: systemContent as any,
   });
 
   // history accumulates AIMessages + ToolMessages only (NOT human messages with screenshots)

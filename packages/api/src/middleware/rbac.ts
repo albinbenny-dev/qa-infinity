@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 
-export type ProjectRole = 'ADMIN' | 'QA_ENGINEER' | 'VIEWER';
+export type ProjectRole = 'ADMIN' | 'SUPER_USER' | 'STANDARD_USER';
 
 /**
  * requireRole — project-level RBAC gate.
@@ -9,9 +9,9 @@ export type ProjectRole = 'ADMIN' | 'QA_ENGINEER' | 'VIEWER';
  * SUPER_ADMIN global role bypasses all project-level role checks.
  *
  * Role hierarchy (spec):
- *   ADMIN      — all operations
- *   QA_ENGINEER — read/write TCs, scripts, runs, heals, chat — no project deletion or member management
- *   VIEWER     — GET only everywhere
+ *   ADMIN         — all operations including member management and project deletion
+ *   SUPER_USER    — full feature access for allocated project; no member management or project deletion
+ *   STANDARD_USER — read/write TCs, scripts, runs, scheduler, reports, chat; no UI Scanner or Healing
  *
  * @param roles — project roles that are allowed to perform this action
  *
@@ -19,13 +19,13 @@ export type ProjectRole = 'ADMIN' | 'QA_ENGINEER' | 'VIEWER';
  *   // Only project ADMIN may delete:
  *   router.delete('/:id', requireProjectAccess, requireRole(['ADMIN']), handler);
  *
- *   // ADMIN or QA_ENGINEER may write:
- *   router.post('/', requireProjectAccess, requireRole(['ADMIN', 'QA_ENGINEER']), handler);
+ *   // ADMIN or SUPER_USER may access advanced features:
+ *   router.post('/scan', requireProjectAccess, requireAdvancedFeatures, handler);
  */
 export function requireRole(roles: ProjectRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    // SUPER_ADMIN bypasses all project-level role restrictions
-    if (req.user?.globalRole === 'SUPER_ADMIN') {
+    // SUPER_ADMIN and ADMIN bypass all project-level role restrictions
+    if (req.user?.globalRole === 'SUPER_ADMIN' || req.user?.globalRole === 'ADMIN') {
       next();
       return;
     }
@@ -51,10 +51,16 @@ export function requireRole(roles: ProjectRole[]) {
 }
 
 /**
- * requireWrite — blocks VIEWER role from any mutating operation.
- * Equivalent to requireRole(['ADMIN', 'QA_ENGINEER']).
+ * requireWrite — all project members may mutate.
+ * Equivalent to requireRole(['ADMIN', 'SUPER_USER', 'STANDARD_USER']).
  */
-export const requireWrite = requireRole(['ADMIN', 'QA_ENGINEER']);
+export const requireWrite = requireRole(['ADMIN', 'SUPER_USER', 'STANDARD_USER']);
+
+/**
+ * requireAdvancedFeatures — restricts UI Scanner and Healing Agent to ADMIN and SUPER_USER.
+ * STANDARD_USER does not have access to these features.
+ */
+export const requireAdvancedFeatures = requireRole(['ADMIN', 'SUPER_USER']);
 
 /**
  * requireAdmin — restricts to project ADMIN only.

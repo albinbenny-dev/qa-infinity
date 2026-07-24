@@ -36,6 +36,7 @@ export interface RunJobPayload {
   parallelWorkers: number;
   headless: boolean;
   browser: 'chromium' | 'firefox' | 'webkit';
+  hostBrowser?: boolean;
   triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP' | 'HEAL_RERUN';
 }
 
@@ -91,11 +92,13 @@ export interface ScriptGenJobPayload {
   testCaseId: string;
   withHeal: boolean;
   contextNote?: string;   // ephemeral user-provided hints for this generation run
+  qaFeedback?: string;    // QA engineer's correction from a prior failed run — injected at highest priority
   domSnippet?: string;    // DOM HTML from DevTools to improve locator accuracy
   domRecording?: string;  // QA DOM Recorder export — structured step/selector capture from live session
   failedStep?: string;    // step description that failed (e.g. "Step 5: Click css=#submit-btn")
   failedStepError?: string; // error message from failed step
   scriptMode?: 'PLAYWRIGHT' | 'ROBOT';
+  referenceTcIds?: string[]; // user-selected TCs whose scripts are passed as pattern references
 }
 
 export interface ScriptVerifyJobPayload {

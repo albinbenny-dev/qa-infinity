@@ -2,11 +2,11 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  globalRole: 'SUPER_ADMIN' | 'USER';
+  globalRole: 'SUPER_ADMIN' | 'ADMIN' | 'SUPER_USER' | 'STANDARD_USER';
 }
 
 /** Project-level role assigned to a ProjectMember */
-export type ProjectRole = 'ADMIN' | 'QA_ENGINEER' | 'VIEWER';
+export type ProjectRole = 'ADMIN' | 'SUPER_USER' | 'STANDARD_USER';
 
 export interface AuthResponse {
   token: string;
@@ -38,7 +38,7 @@ export interface Project {
 export interface ProjectMember {
   projectId: string;
   userId: string;
-  role: 'ADMIN' | 'QA_ENGINEER' | 'VIEWER';
+  role: 'ADMIN' | 'SUPER_USER' | 'STANDARD_USER';
   user: {
     id: string;
     name: string;
@@ -81,6 +81,8 @@ export interface TestCase {
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   sourceRef?: string;
   generationHints?: string | null;
+  /** Runtime variables declared for this TC — captured dynamically during execution */
+  runtimeVariables?: Array<{ name: string; captureFrom: string; description?: string }> | null;
   /** ID of the TC whose script covers the setup steps (login + navigation) for this TC */
   prerequisiteTcId?: string | null;
   /** Minimal info about the prerequisite TC for display */
@@ -100,6 +102,7 @@ export interface Run {
   startedAt?: string;
   completedAt?: string;
   triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP' | 'HEAL_RERUN';
+  createdByUserId?: string | null;
   results?: RunResult[];
 }
 
@@ -112,6 +115,8 @@ export interface RunResult {
   errorMessage?: string;
   screenshotPath?: string;
   tracePath?: string;
+  videoPath?: string;
+  rfLogPath?: string;
 }
 
 export interface Schedule {
@@ -161,7 +166,10 @@ export interface ProjectResource {
   originalName: string;
   size: number;
   uploadedAt: string;
-  resourcesDir?: string;
+  /** Full container path: /scripts/{slug}/resources/{filename} */
+  containerPath?: string;
+  /** True for .xlsx, .xls, .pdf and other non-text files */
+  isBinary?: boolean;
 }
 
 export type ScriptJobPhase =
@@ -335,6 +343,7 @@ export interface ReportRun {
     screenshotPath?: string | null;
     tracePath?: string | null;
     videoPath?: string | null;
+    rfLogPath?: string | null;
     testCase: { id: string; tcId: string; title: string; type: string; useCaseTag?: string | null };
   }>;
   _count: { results: number };
@@ -487,4 +496,140 @@ export interface AgentTrace {
   errorMessage?: string | null;
   createdAt: string;
   completedAt?: string | null;
+}
+
+// ── Product Skills ─────────────────────────────────────────────────────────
+
+export type SkillType =
+  | 'UI_FLOW'
+  | 'BUSINESS_USE_CASE'
+  | 'TEST_DATA'
+  | 'HLD'
+  | 'API_CONTRACT'
+  | 'USER_ROLE'
+  | 'UX_DESIGN'
+  | 'HISTORICAL'
+  | 'FUNCTIONAL_RULES'
+  | 'LOCATOR_GUIDE'
+  | 'TEST_CASE_DOC';
+
+export type SkillTier = 'GLOBAL' | 'FEATURE' | 'HISTORICAL';
+
+export type SkillCaptureMethod =
+  | 'AGENT_RECORDED'
+  | 'USER_UPLOADED'
+  | 'MANUALLY_ENTERED'
+  | 'LLM_EXTRACTED'
+  | 'AUTO_ACCUMULATED'
+  | 'USER_RECORDED'
+  | 'MANUAL_QA_FEEDBACK';
+
+export interface ProjectSkill {
+  id: string;
+  projectId: string;
+  skillType: SkillType;
+  name: string;
+  scope?: string | null;
+  featureGroup?: string | null;
+  tier?: SkillTier | null;       // injection scope: GLOBAL | FEATURE | HISTORICAL
+  humanContext?: string | null;  // QA engineer correction text (HISTORICAL skills)
+  content: string; // JSON string — parse before use
+  captureMethod: SkillCaptureMethod;
+  confidence: number;
+  isActive: boolean;
+  capturedAt: string;
+  updatedAt: string;
+}
+
+export interface UIFlowSkillContent {
+  targetUrl: string;
+  navigationPath: string[];
+  locators: Array<{
+    semanticName: string;
+    selector: string;
+    locatorType: string;
+    interactionNote?: string;
+  }>;
+  stateTransitions: Array<{
+    trigger: string;
+    resultState: string;
+    waitCondition?: string;
+  }>;
+  validations: Array<{
+    field: string;
+    rule: string;
+    errorText: string;
+  }>;
+  prerequisiteState?: string;
+  loginRequired: boolean;
+  notes?: string;
+}
+
+export interface BusinessUseCaseSkillContent {
+  useCaseName: string;
+  actors: string[];
+  preconditions: string[];
+  businessRules: string[];
+  successCriteria: string[];
+  edgeCases: string[];
+  relatedScreens: string[];
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  notes?: string;
+}
+
+export interface TestDataSkillContent {
+  scope: string;
+  validData: Record<string, unknown>;
+  invalidData: Record<string, unknown>;
+  boundaryValues: Record<string, unknown>;
+  referenceData: Record<string, unknown>;
+  dataSetupInstructions?: string;
+}
+
+export interface HLDSkillContent {
+  moduleName: string;
+  description: string;
+  components: string[];
+  integrations: Array<{
+    from: string;
+    to: string;
+    trigger: string;
+    async: boolean;
+    delay?: string;
+  }>;
+  apis: string[];
+  notes?: string;
+}
+
+export interface APIContractSkillContent {
+  endpoint: string;
+  method: string;
+  purpose: string;
+  requestSchema: Record<string, unknown>;
+  responses: Record<string, unknown>;
+  authRequired: boolean;
+  notes?: string;
+}
+
+export interface UserRoleSkillContent {
+  roleName: string;
+  testCredentials?: { username: string; password: string };
+  permissions: string[];
+  restrictions: string[];
+  visibleMenuItems: string[];
+  hiddenMenuItems: string[];
+  notes?: string;
+}
+
+export interface UXDesignSkillContent {
+  screen: string;
+  components: Array<{
+    name: string;
+    componentType: string;
+    interaction?: string;
+    required?: boolean;
+  }>;
+  exactCopy: Record<string, string>;
+  requiredFields: string[];
+  notes?: string;
 }

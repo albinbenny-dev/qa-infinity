@@ -44,14 +44,14 @@ router.put('/users/:uid/role', requireSuperAdmin as RequestHandler, async (req: 
     const { uid } = req.params;
     const { globalRole } = req.body as { globalRole: string };
 
-    if (!['SUPER_ADMIN', 'USER'].includes(globalRole)) {
-      res.status(400).json({ error: 'globalRole must be "SUPER_ADMIN" or "USER"' });
+    if (!['SUPER_ADMIN', 'ADMIN', 'SUPER_USER', 'STANDARD_USER'].includes(globalRole)) {
+      res.status(400).json({ error: 'globalRole must be one of: SUPER_ADMIN, ADMIN, SUPER_USER, STANDARD_USER' });
       return;
     }
 
-    // Prevent demoting yourself
+    // Prevent demoting yourself away from SUPER_ADMIN
     if (uid === req.user.id && globalRole !== 'SUPER_ADMIN') {
-      res.status(400).json({ error: 'You cannot demote your own SUPER_ADMIN role' });
+      res.status(400).json({ error: 'You cannot change your own SUPER_ADMIN role' });
       return;
     }
 
@@ -117,10 +117,79 @@ router.delete('/users/:uid', requireSuperAdmin as RequestHandler, async (req: Re
 });
 
 // ── GET /admin/usage ───────────────────────────────────────────────────────
-// OpenRouter key info: credit balance, usage, rate limit.
+// Provider key info: for Anthropic returns local token stats; for OpenRouter fetches credit balance.
 
-router.get('/usage', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/usage', requireSuperAdmin as RequestHandler, async (_req: Request, res: Response, next: NextFunction) => {
   try {
+    const provider = process.env.LLM_PROVIDER ?? 'openrouter';
+
+    // ── Anthropic direct — estimate spend from local LlmCall token log ──
+    if (provider === 'anthropic') {
+      const model = process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
+
+      // Pricing per 1M tokens (Anthropic public rates)
+      // Matches both canonical names and date-suffixed variants (e.g. claude-sonnet-4-20250514)
+      const PRICING: Record<string, { input: number; output: number }> = {
+        'claude-opus-4-8':  { input: 5.00,  output: 25.00 },
+        'claude-opus-4-7':  { input: 5.00,  output: 25.00 },
+        'claude-opus-4-6':  { input: 5.00,  output: 25.00 },
+        'claude-sonnet-5':  { input: 3.00,  output: 15.00 },
+        'claude-sonnet-4-6':{ input: 3.00,  output: 15.00 },
+        'claude-haiku-4-5': { input: 1.00,  output:  5.00 },
+        'claude-fable-5':   { input: 10.00, output: 50.00 },
+      };
+
+      function getPrice(m: string) {
+        if (PRICING[m]) return PRICING[m];
+        // Strip date suffix (e.g. claude-sonnet-4-20250514 → claude-sonnet-4)
+        // then match the longest prefix
+        const base = m.replace(/-\d{8}$/, '');
+        const match = Object.keys(PRICING).find(k => base.startsWith(k) || k.startsWith(base));
+        return match ? PRICING[match] : PRICING['claude-opus-4-8'];
+      }
+
+      // Aggregate all-time tokens grouped by model so mixed-model usage is costed correctly
+      const rows = await prisma.llmCall.groupBy({
+        by: ['model'],
+        _sum: { promptTokens: true, completionTokens: true, totalTokens: true },
+        _count: { id: true },
+      });
+
+      let estimatedCostUsd = 0;
+      let totalTokens = 0;
+      let promptTokens = 0;
+      let completionTokens = 0;
+      let totalCalls = 0;
+
+      for (const row of rows) {
+        const price = getPrice(row.model);
+        const inp = row._sum.promptTokens ?? 0;
+        const out = row._sum.completionTokens ?? 0;
+        estimatedCostUsd += (inp / 1_000_000) * price.input + (out / 1_000_000) * price.output;
+        totalTokens    += row._sum.totalTokens ?? 0;
+        promptTokens   += inp;
+        completionTokens += out;
+        totalCalls     += row._count.id ?? 0;
+      }
+
+      res.json({
+        provider: 'anthropic',
+        model,
+        label: 'Anthropic Direct',
+        usage: estimatedCostUsd,   // estimated USD spend (all-time)
+        limit: null,
+        remaining: null,
+        is_free_tier: false,
+        rate_limit: { requests: 0, interval: 'n/a' },
+        totalTokens,
+        promptTokens,
+        completionTokens,
+        totalCalls,
+      });
+      return;
+    }
+
+    // ── OpenRouter — fetch credit balance from their API ──
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       res.status(503).json({ error: 'OPENROUTER_API_KEY is not configured' });
@@ -149,16 +218,15 @@ router.get('/usage', async (_req: Request, res: Response, next: NextFunction) =>
     const { usage, limit, is_free_tier, rate_limit, label } = body.data;
     const remaining = limit !== null ? Math.max(0, limit - usage) : null;
     const model = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4-5';
-    const provider = process.env.LLM_PROVIDER ?? 'openrouter';
 
-    res.json({ label, usage, limit, remaining, is_free_tier, rate_limit, model, provider });
+    res.json({ label, usage, limit, remaining, is_free_tier, rate_limit, model, provider: 'openrouter' });
   } catch (err) { next(err); }
 });
 
 // ── GET /admin/usage/agents?days=30 ───────────────────────────────────────
 // Per-agent token usage aggregated from local LlmCall log.
 
-router.get('/usage/agents', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/usage/agents', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const days = Math.min(365, Math.max(1, parseInt(req.query['days'] as string || '30', 10)));
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -197,7 +265,7 @@ router.get('/usage/agents', async (req: Request, res: Response, next: NextFuncti
 // ── GET /admin/usage/trend?days=30 ────────────────────────────────────────
 // Daily token totals for sparkline charts.
 
-router.get('/usage/trend', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/usage/trend', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const days = Math.min(90, Math.max(1, parseInt(req.query['days'] as string || '14', 10)));
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -223,7 +291,7 @@ router.get('/usage/trend', async (req: Request, res: Response, next: NextFunctio
 // ── GET /admin/usage/by-project ───────────────────────────────────────────
 // Per-project token usage aggregated from local LlmCall log.
 
-router.get('/usage/by-project', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/usage/by-project', requireSuperAdmin as RequestHandler, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rows = await prisma.llmCall.groupBy({
       by: ['projectId'],
@@ -273,7 +341,7 @@ router.get('/usage/by-project', async (_req: Request, res: Response, next: NextF
 // ── GET /admin/agents ─────────────────────────────────────────────────────
 // Returns every known agent with its enabled flag and settings.
 
-router.get('/agents', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/agents', requireSuperAdmin as RequestHandler, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rows = await prisma.agentConfig.findMany();
     const configMap = new Map(rows.map((r) => [r.agentName, r]));
@@ -304,7 +372,7 @@ router.get('/agents', async (_req: Request, res: Response, next: NextFunction) =
 // ── PATCH /admin/agents/:agentName ────────────────────────────────────────
 // Enable or disable a specific agent. Body: { enabled: boolean }
 
-router.patch('/agents/:agentName', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/agents/:agentName', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { agentName } = req.params;
     const { enabled } = req.body as { enabled: boolean };
@@ -327,7 +395,7 @@ router.patch('/agents/:agentName', async (req: Request, res: Response, next: Nex
 // ── PATCH /admin/agents/:agentName/settings ───────────────────────────────
 // Update agent-specific settings. Body is a settings object validated per agent.
 
-router.patch('/agents/:agentName/settings', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/agents/:agentName/settings', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { agentName } = req.params;
     const body = req.body as Record<string, unknown>;
@@ -362,7 +430,7 @@ router.patch('/agents/:agentName/settings', async (req: Request, res: Response, 
 // Standard Mode: disables scan/heal/report agents; Writer + Script Agents stay ON.
 // Full Mode: re-enables all agents.
 
-router.post('/agents/standard-mode', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/agents/standard-mode', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { enable } = req.body as { enable: boolean }; // true = standard mode, false = full mode
 

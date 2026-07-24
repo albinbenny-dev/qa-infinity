@@ -16,6 +16,7 @@ import Scheduler from './pages/Scheduler';
 import Chat from './pages/Chat';
 import Usage from './pages/Usage';
 import UserManagement from './pages/UserManagement';
+import Skills from './pages/Skills';
 import { isAuthenticated } from './lib/auth';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/projects/:slug/healing"      element={<Healing />} />
         <Route path="/projects/:slug/reports"      element={<Reports />} />
         <Route path="/projects/:slug/chat"         element={<Chat />} />
+        <Route path="/projects/:slug/skills"        element={<Skills />} />
         <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />
         <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
         <Route path="/usage"                       element={<Usage />} />

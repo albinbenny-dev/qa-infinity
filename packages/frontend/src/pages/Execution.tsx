@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import LiveLog from '../components/execution/LiveLog';
 import TCListPanel from '../components/execution/TCListPanel';
+import { getCurrentUser } from '../lib/auth';
 import { useProject } from '../hooks/useProjects';
 import { useProjectEnvConfigs } from '../hooks/useProjects';
 import { useTestCases, useUseCases, useDuplicateTestCase } from '../hooks/useTestCases';
@@ -218,7 +219,7 @@ function JobQueuePanel({ runs, watchedRunId, onSelect }: {
 
 export default function Execution() {
   const { slug } = useParams<{ slug: string }>();
-  const { canWrite } = useRBAC();
+  const { canWrite, canAccessHealing } = useRBAC();
   const navigate = useNavigate();
 
   const { data: project } = useProject(slug);
@@ -346,6 +347,16 @@ export default function Execution() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Leave watched run room on unmount ─────────────────────────────────────
+  const watchedRunIdRef = useRef<string | null>(null);
+  watchedRunIdRef.current = watchedRunId;
+  useEffect(() => {
+    return () => {
+      if (watchedRunIdRef.current) leaveRun(watchedRunIdRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Elapsed timer ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (isRunning) {
@@ -366,15 +377,20 @@ export default function Execution() {
 
   // Auto-heal is handled server-side by runWorker — no frontend trigger needed.
 
-  // ── Auto-attach: join the latest active run when the page opens with no watched run ──
+  // ── Auto-attach: join the latest run started by THIS user when the page opens ──
   // Fires when navigated from TC Library (run already queued but watchedRunId is null).
+  // Scoped to the current user so other users' concurrent runs don't bleed into this session.
   useEffect(() => {
     if (watchedRunId !== null || activeRuns.length === 0) return;
-    const latest = activeRuns[0]; // API returns newest-first
-    setActiveRunId(latest.id);
-    setWatchedRunId(latest.id);
+    const currentUserId = getCurrentUser()?.id;
+    const myLatest = activeRuns.find(
+      (r) => !currentUserId || r.createdByUserId === currentUserId,
+    );
+    if (!myLatest) return;
+    setActiveRunId(myLatest.id);
+    setWatchedRunId(myLatest.id);
     clearLogs();
-    joinRun(latest.id);
+    joinRun(myLatest.id, true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRuns, watchedRunId]);
 
@@ -423,6 +439,7 @@ export default function Execution() {
       return;
     }
 
+    if (watchedRunId) leaveRun(watchedRunId);
     clearLogs();
     hasTriggeredHealRef.current = false;
     setHealTriggered(false);
@@ -438,7 +455,7 @@ export default function Execution() {
       });
       setActiveRunId(run.id);
       setWatchedRunId(run.id);
-      joinRun(run.id);
+      joinRun(run.id, true);
       toast.success(`Run started · ${tcIds.length} test${tcIds.length !== 1 ? 's' : ''}`);
     } catch (err) {
       const msg = (err as Error)?.message ?? 'Failed to start run';
@@ -449,6 +466,7 @@ export default function Execution() {
 
   async function handleRunGroup(useCaseTag: string) {
     if (!projectId) return;
+    if (watchedRunId) leaveRun(watchedRunId);
     clearLogs();
     hasTriggeredHealRef.current = false;
     setHealTriggered(false);
@@ -463,7 +481,7 @@ export default function Execution() {
       });
       setActiveRunId(run.id);
       setWatchedRunId(run.id);
-      joinRun(run.id);
+      joinRun(run.id, true);
       toast.success(`Running group: ${useCaseTag}`);
     } catch (err) {
       toast.error((err as Error)?.message ?? 'Failed to start group run');
@@ -472,6 +490,7 @@ export default function Execution() {
 
   async function handleRunIndividual(tc: TestCase) {
     if (!projectId) return;
+    if (watchedRunId) leaveRun(watchedRunId);
     clearLogs();
     hasTriggeredHealRef.current = false;
     setHealTriggered(false);
@@ -486,7 +505,7 @@ export default function Execution() {
       });
       setActiveRunId(run.id);
       setWatchedRunId(run.id);
-      joinRun(run.id);
+      joinRun(run.id, true);
       toast.success(`Running: ${tc.tcId}`);
     } catch (err) {
       toast.error((err as Error)?.message ?? 'Failed to start individual run');
@@ -719,7 +738,7 @@ export default function Execution() {
             elapsedMs={elapsedMs}
             onStop={handleStopRun}
             isStopping={isStopping}
-            onHeal={handleHeal}
+            onHeal={canAccessHealing ? handleHeal : undefined}
             isHealing={triggerHeal.isPending}
             healTriggered={healTriggered}
           />

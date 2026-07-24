@@ -10,6 +10,11 @@ export interface OpenRouterUsage {
   rate_limit: { requests: number; interval: string };
   model: string;
   provider: string;
+  // Anthropic-only fields (populated when provider === 'anthropic')
+  totalTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalCalls?: number;
 }
 
 export interface AgentUsageRow {

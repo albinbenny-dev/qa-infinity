@@ -96,15 +96,17 @@ export function useCreateIndividualRun(projectId: string) {
       environment,
       browser,
       headless,
+      hostBrowser,
     }: {
       testCaseId: string;
       environment: string;
       browser?: string;
       headless?: boolean;
+      hostBrowser?: boolean;
     }) => {
       const res = await api.post<{ run: Run }>(
         `/projects/${projectId}/runs/individual/${testCaseId}`,
-        { environment, browser, headless },
+        { environment, browser, headless, hostBrowser },
       );
       return res.data.run;
     },
@@ -132,6 +134,19 @@ export function useCancelRun(projectId: string) {
   return useMutation({
     mutationFn: async (runId: string) => {
       await api.post(`/projects/${projectId}/runs/${runId}/cancel`);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['runs', projectId] });
+    },
+  });
+}
+
+export function useRetryRun(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (runId: string) => {
+      const res = await api.post<{ run: Run }>(`/projects/${projectId}/runs/${runId}/retry`);
+      return res.data.run;
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['runs', projectId] });

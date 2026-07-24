@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import path from 'path';
 import fs from 'fs';
+import multer from 'multer';
 import * as xlsx from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import { prisma } from '../lib/prisma.js';
@@ -14,31 +15,30 @@ import {
   fetchUISnapshot,
   readUploadedFile,
   readReferenceTCs,
+  mimeFromPath,
   type UISnapshot,
 } from '../services/inputAdapters.js';
 import { addAgentScanJob } from '../lib/queue.js';
+import { autoScanPage } from '../services/uiAutoScan.js';
 import type { AgentLearning, RecordedAction } from '../types/scanner.js';
-import { saveScript } from '../services/scriptFileService.js';
+import { saveScript, deleteScript } from '../services/scriptFileService.js';
 import { z } from 'zod';
-
-function mimeFromPath(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const map: Record<string, string> = {
-    '.pdf': 'application/pdf',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.xls': 'application/vnd.ms-excel',
-    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.doc': 'application/msword',
-    '.txt': 'text/plain',
-    '.md': 'text/markdown',
-  };
-  return map[ext] ?? 'text/plain';
-}
 
 const router = Router({ mergeParams: true });
 
 router.use(verifyToken as RequestHandler);
 router.use(requireProjectAccess as unknown as RequestHandler);
+
+// Multer for seed Excel upload (memory only — never touches disk)
+const seedUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.xlsx' || ext === '.xls') cb(null, true);
+    else cb(new Error('Only .xlsx / .xls files are accepted'));
+  },
+});
 
 // ── Zod schemas ────────────────────────────────────────────────────────────
 
@@ -66,6 +66,8 @@ const GenerateInputSchema = z.object({
   testTypes: z.array(z.enum(['UI', 'API', 'SIT'])).min(1).default(['UI']),
   additionalContext: z.string().optional(),
   seedTestCases: z.array(SeedTCSchema).optional(),
+  /** Optional: IDs of specific skills to inject; omit to auto-select by relevance */
+  skillIds: z.array(z.string()).optional(),
 }).refine(
   (d) => d.inputs.length > 0 || (d.seedTestCases && d.seedTestCases.length > 0),
   { message: 'Provide at least one input source or one seed test case' },
@@ -103,6 +105,11 @@ const UpdateTestCaseSchema = z.object({
   status: z.enum(['DRAFT', 'APPROVED', 'DEPRECATED']).optional(),
   sourceRef: z.string().optional(),
   prerequisiteTcId: z.string().nullable().optional(),
+  runtimeVariables: z.array(z.object({
+    name: z.string().min(1).max(80),
+    captureFrom: z.string().min(1).max(300),
+    description: z.string().max(300).optional(),
+  })).optional().nullable(),
 });
 
 const BulkApproveSchema = z.object({
@@ -130,6 +137,9 @@ function parseTCFields(tc: Record<string, unknown>) {
     ...tc,
     steps: JSON.parse((tc['steps'] as string) || '[]'),
     tags: JSON.parse((tc['tags'] as string) || '[]'),
+    runtimeVariables: tc['runtimeVariables']
+      ? JSON.parse(tc['runtimeVariables'] as string)
+      : null,
   };
 }
 
@@ -153,6 +163,12 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
 
     const uiSnapshots: UISnapshot[] = [];
 
+    // Fetch default env config for auto-scan login (best-effort)
+    const defaultEnv = await prisma.envConfig.findFirst({
+      where: { projectId: req.project.id, isDefault: true },
+      select: { username: true, password: true },
+    }).catch(() => null);
+
     // Resolve each input through the appropriate adapter in parallel
     const resolvedInputs = await Promise.all(
       inputs.map(async (inp) => {
@@ -166,14 +182,39 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
               content = await fetchUrlContent(inp.content);
               break;
             case 'ui_url': {
-              const snap = await fetchUISnapshot(inp.content);
-              uiSnapshots.push(snap);
-              content = [
-                `[Live UI Screenshot: "${snap.pageTitle}" at ${inp.content}]`,
-                '',
-                'Interactive elements detected on screen:',
-                snap.interactiveElements,
-              ].join('\n');
+              const autoSnaps = await autoScanPage(
+                inp.content,
+                req.project.slug,
+                defaultEnv?.username ? { username: defaultEnv.username, password: defaultEnv.password ?? '' } : null,
+              );
+              if (autoSnaps.length > 0) {
+                for (const s of autoSnaps) {
+                  uiSnapshots.push({
+                    url: s.url,
+                    pageTitle: s.pageTitle,
+                    screenshotBase64: s.screenshotBase64,
+                    interactiveElements: s.interactiveElements,
+                    mediaType: 'image/jpeg',
+                    label: s.label,
+                  });
+                }
+                content = [
+                  `[Auto-scanned UI: ${autoSnaps.length} screenshot(s) of "${autoSnaps[0].pageTitle}" at ${inp.content}]`,
+                  '',
+                  'Interactive elements detected on screen:',
+                  autoSnaps.map((s) => `--- ${s.label} ---\n${s.interactiveElements}`).join('\n\n'),
+                ].join('\n');
+              } else {
+                // Fallback: unauthenticated snapshot
+                const snap = await fetchUISnapshot(inp.content);
+                uiSnapshots.push(snap);
+                content = [
+                  `[Live UI Screenshot: "${snap.pageTitle}" at ${inp.content}]`,
+                  '',
+                  'Interactive elements detected on screen:',
+                  snap.interactiveElements,
+                ].join('\n');
+              }
               break;
             }
             case 'upload':
@@ -280,6 +321,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       uiSnapshots,
       projectLibraryContext,
       projectName: req.project.name,
+      projectSlug: req.project.slug,
       testTypes,
       additionalContext,
       existingUseCaseTags,
@@ -618,6 +660,24 @@ router.post('/bulk-delete', async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
+    const scripts = await prisma.script.findMany({
+      where: { testCaseId: { in: parsed.data.ids }, projectId: req.project.id },
+      select: { id: true, filename: true },
+    });
+
+    if (scripts.length > 0) {
+      const scriptIds = scripts.map((s) => s.id);
+      const resultIds = await prisma.runResult.findMany({
+        where: { scriptId: { in: scriptIds } },
+        select: { id: true },
+      });
+      if (resultIds.length > 0) {
+        await prisma.heal.deleteMany({ where: { runResultId: { in: resultIds.map((r) => r.id) } } });
+      }
+      await prisma.script.deleteMany({ where: { id: { in: scriptIds } } });
+      for (const s of scripts) deleteScript(req.project.slug, s.filename);
+    }
+
     const result = await prisma.testCase.deleteMany({
       where: { id: { in: parsed.data.ids }, projectId: req.project.id },
     });
@@ -713,15 +773,14 @@ router.get('/seed-template', (_req: Request, res: Response, next: NextFunction) 
 
 // ── POST /parse-seed — extract test cases from an uploaded Excel file ──────
 
-router.post('/parse-seed', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/parse-seed', seedUpload.single('file'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { filePath } = req.body as { filePath?: string };
-    if (!filePath) {
-      res.status(400).json({ error: 'filePath is required' });
+    if (!req.file) {
+      res.status(400).json({ error: 'An Excel file is required (multipart field: "file")' });
       return;
     }
 
-    const wb = xlsx.readFile(filePath);
+    const wb = xlsx.read(req.file.buffer, { type: 'buffer' });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(ws);
 
@@ -888,15 +947,24 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const slug = req.project.slug;
     const projectId = req.project.id;
-    const baseCount = await prisma.testCase.count({ where: { projectId } });
     const prefix = slug.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+
+    // Use max numeric suffix so deletions/gaps never cause collisions
+    const existing = await prisma.testCase.findMany({
+      where: { projectId },
+      select: { tcId: true },
+    });
+    const maxNum = existing.reduce((max, { tcId }) => {
+      const m = tcId.match(/(\d+)$/);
+      return m ? Math.max(max, parseInt(m[1], 10)) : max;
+    }, 0);
 
     const created = await prisma.$transaction(
       parsed.data.testCases.map((tc, i) =>
         prisma.testCase.create({
           data: {
             projectId,
-            tcId: `TC-${prefix}-${String(baseCount + i + 1).padStart(3, '0')}`,
+            tcId: `TC-${prefix}-${String(maxNum + i + 1).padStart(3, '0')}`,
             title: tc.title,
             description: tc.description,
             steps: JSON.stringify(tc.steps),
@@ -921,7 +989,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 
       const filename = buildTraceScriptFilename(savedTc.tcId, savedTc.title);
       try {
-        saveScript(projectId, filename, tcInput.scriptContent);
+        saveScript(req.project.slug, filename, tcInput.scriptContent);
         const script = await prisma.script.create({
           data: {
             projectId,
@@ -991,7 +1059,7 @@ router.put('/:tcId', async (req: Request, res: Response, next: NextFunction) => 
       return;
     }
 
-    const { steps, tags, prerequisiteTcId, ...rest } = parsed.data;
+    const { steps, tags, prerequisiteTcId, runtimeVariables, ...rest } = parsed.data;
 
     // Guard: prevent self-referencing prerequisite
     if (prerequisiteTcId === existing.id) {
@@ -1006,6 +1074,7 @@ router.put('/:tcId', async (req: Request, res: Response, next: NextFunction) => 
         ...(steps !== undefined && { steps: JSON.stringify(steps) }),
         ...(tags !== undefined && { tags: JSON.stringify(tags) }),
         ...(prerequisiteTcId !== undefined && { prerequisiteTcId: prerequisiteTcId ?? null }),
+        ...(runtimeVariables !== undefined && { runtimeVariables: runtimeVariables ? JSON.stringify(runtimeVariables) : null }),
       },
     });
 
@@ -1025,6 +1094,24 @@ router.delete('/:tcId', async (req: Request, res: Response, next: NextFunction) 
     if (!existing) {
       res.status(404).json({ error: 'Test case not found' });
       return;
+    }
+
+    const scripts = await prisma.script.findMany({
+      where: { testCaseId: existing.id, projectId: req.project.id },
+      select: { id: true, filename: true },
+    });
+
+    if (scripts.length > 0) {
+      const scriptIds = scripts.map((s) => s.id);
+      const resultIds = await prisma.runResult.findMany({
+        where: { scriptId: { in: scriptIds } },
+        select: { id: true },
+      });
+      if (resultIds.length > 0) {
+        await prisma.heal.deleteMany({ where: { runResultId: { in: resultIds.map((r) => r.id) } } });
+      }
+      await prisma.script.deleteMany({ where: { id: { in: scriptIds } } });
+      for (const s of scripts) deleteScript(req.project.slug, s.filename);
     }
 
     await prisma.testCase.delete({ where: { id: existing.id } });

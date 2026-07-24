@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
@@ -46,20 +48,84 @@ router.use(requireProjectAccess as unknown as RequestHandler);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+const MAX_ACTIVE_RUNS_PER_USER    = 5;
+const MAX_ACTIVE_RUNS_PER_PROJECT = 20;
+
+async function checkRunRateLimit(
+  projectId: string,
+  userId: string,
+  res: Response,
+): Promise<boolean> {
+  const [userActive, projectActive] = await Promise.all([
+    prisma.run.count({
+      where: { createdByUserId: userId, status: { in: ['PENDING', 'RUNNING'] } },
+    }),
+    prisma.run.count({
+      where: { projectId, status: { in: ['PENDING', 'RUNNING'] } },
+    }),
+  ]);
+  if (userActive >= MAX_ACTIVE_RUNS_PER_USER) {
+    res.status(429).json({
+      error: `You already have ${userActive} active run(s) in progress. Wait for them to complete before starting more.`,
+    });
+    return false;
+  }
+  if (projectActive >= MAX_ACTIVE_RUNS_PER_PROJECT) {
+    res.status(429).json({
+      error: `This project has ${projectActive} active run(s) in progress (limit ${MAX_ACTIVE_RUNS_PER_PROJECT}). Wait for existing runs to complete.`,
+    });
+    return false;
+  }
+  return true;
+}
+
 async function resolveScriptPaths(
   projectId: string,
   testCaseIds: string[],
 ): Promise<{ testCaseId: string; scriptPath: string }[]> {
-  const scripts = await prisma.script.findMany({
-    where: { projectId, testCaseId: { in: testCaseIds } },
-    select: { testCaseId: true, filename: true },
-  });
-  return scripts
-    .filter((s): s is typeof s & { testCaseId: string } => s.testCaseId !== null)
-    .map((s) => ({
-      testCaseId: s.testCaseId,
-      scriptPath: `/scripts/${projectId}/${s.filename}`,
-    }));
+  const [project, scripts] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } }),
+    prisma.script.findMany({
+      where: { projectId, testCaseId: { in: testCaseIds } },
+      select: {
+        testCaseId: true,
+        filename: true,
+        content: true,
+        testCase: { select: { sourceRef: true } },
+      },
+    }),
+  ]);
+  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
+
+  const results: { testCaseId: string; scriptPath: string }[] = [];
+
+  for (const s of scripts.filter((s): s is typeof s & { testCaseId: string } => s.testCaseId !== null)) {
+    const slug = project?.slug ?? projectId;
+    const slugScriptsPath = `${SCRIPTS_ROOT}/${slug}/scripts/${s.filename}`;
+    const cuidPath = `${SCRIPTS_ROOT}/${projectId}/${s.filename}`;
+    const sourceRef = s.testCase?.sourceRef;
+    const sourceRefPath = sourceRef ? `${SCRIPTS_ROOT}/${slug}/${sourceRef}` : null;
+
+    if (fs.existsSync(slugScriptsPath)) {
+      results.push({ testCaseId: s.testCaseId, scriptPath: slugScriptsPath });
+    } else if (fs.existsSync(cuidPath)) {
+      results.push({ testCaseId: s.testCaseId, scriptPath: cuidPath });
+    } else if (sourceRefPath && fs.existsSync(sourceRefPath)) {
+      results.push({ testCaseId: s.testCaseId, scriptPath: sourceRefPath });
+    } else if (s.content) {
+      // Script is in the DB but not on disk (e.g. volume was reset, or file was never flushed).
+      // Write it to the canonical slug-based path so the runner can execute it.
+      const dir = path.dirname(slugScriptsPath);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(slugScriptsPath, s.content, 'utf-8');
+      results.push({ testCaseId: s.testCaseId, scriptPath: slugScriptsPath });
+    } else {
+      // No content anywhere — runner will fail with a clear file-not-found error.
+      results.push({ testCaseId: s.testCaseId, scriptPath: slugScriptsPath });
+    }
+  }
+
+  return results;
 }
 
 async function nextRunSeq(): Promise<number> {
@@ -251,6 +317,8 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     }
     const { testCaseIds, environment, parallelWorkers, headless, browser, name } = parsed.data;
 
+    if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
+
     const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
     const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
@@ -266,6 +334,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
         environment,
         status: 'PENDING',
         triggerType: 'MANUAL',
+        createdByUserId: req.user.id,
       },
     });
 
@@ -297,6 +366,9 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
     const environment: string = req.body.environment ?? 'Dev';
     const browser: 'chromium' | 'firefox' | 'webkit' = req.body.browser ?? 'chromium';
     const headless: boolean = req.body.headless ?? true;
+    const hostBrowser: boolean = req.body.hostBrowser ?? false;
+
+    if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
 
     const tc = await prisma.testCase.findFirst({
       where: { id: testCaseId, projectId: req.project.id },
@@ -321,6 +393,7 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
         environment,
         status: 'PENDING',
         triggerType: 'INDIVIDUAL',
+        createdByUserId: req.user.id,
       },
     });
 
@@ -337,6 +410,7 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
       parallelWorkers: 1,
       headless,
       browser,
+      hostBrowser,
       triggerType: 'INDIVIDUAL',
     });
 
@@ -353,6 +427,8 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
       return;
     }
     const { useCaseTag, environment, parallelWorkers, headless, browser } = parsed.data;
+
+    if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
 
     const tcs = await prisma.testCase.findMany({
       where: { projectId: req.project.id, useCaseTag, status: { in: ['APPROVED', 'DRAFT'] } },
@@ -379,6 +455,7 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
         environment,
         status: 'PENDING',
         triggerType: 'GROUP',
+        createdByUserId: req.user.id,
       },
     });
 
@@ -446,6 +523,63 @@ router.get('/:runId', async (req: Request, res: Response, next: NextFunction) =>
     });
     if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
     res.json({ run });
+  } catch (err) { next(err); }
+});
+
+// POST /runs/:runId/retry  → re-run all TCs from a completed run
+router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const run = await prisma.run.findFirst({
+      where: { id: req.params['runId'], projectId: req.project.id },
+      include: { results: { select: { testCaseId: true } } },
+    });
+    if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
+    if (run.status === 'PENDING' || run.status === 'RUNNING') {
+      res.status(400).json({ error: 'Cannot retry an active run' }); return;
+    }
+
+    const testCaseIds = [...new Set(run.results.map((r) => r.testCaseId))];
+    if (testCaseIds.length === 0) {
+      res.status(400).json({ error: 'No test cases in this run to retry' }); return;
+    }
+
+    const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
+    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
+
+    const envConfig = await getEnvConfig(req.project.id, run.environment);
+    const retryRunSeq = await nextRunSeq();
+
+    const newRun = await prisma.run.create({
+      data: {
+        projectId: req.project.id,
+        runSeq: retryRunSeq,
+        name: `Retry #${String(run.runSeq).padStart(4, '0')} — ${run.environment}`,
+        environment: run.environment,
+        status: 'PENDING',
+        triggerType: 'MANUAL',
+        createdByUserId: req.user.id,
+      },
+    });
+
+    await addRunJob({
+      runId: newRun.id,
+      runSeq: retryRunSeq,
+      projectId: req.project.id,
+      testCaseIds: resolved.map((r) => r.testCaseId),
+      scriptPaths: resolved.map((r) => r.scriptPath),
+      skippedTcIds,
+      environment: run.environment,
+      envBaseUrl: envConfig.baseUrl,
+      envUsername: envConfig.username,
+      envPassword: envConfig.password,
+      parallelWorkers: 2,
+      headless: true,
+      browser: 'chromium',
+      triggerType: 'MANUAL',
+    });
+
+    res.status(201).json({ run: newRun });
   } catch (err) { next(err); }
 });
 

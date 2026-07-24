@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import apiRouter from './routes/index.js';
 import { setRunsNamespace, setProjectsNamespace } from './lib/socket.js';
 import { prisma } from './lib/prisma.js';
@@ -16,6 +17,7 @@ import { startScriptGenWorker } from './jobs/scriptGenWorker.js';
 import { startScriptVerifyWorker } from './jobs/scriptVerifyWorker.js';
 import { startAgentScanWorker } from './jobs/agentScanWorker.js';
 import { startRetentionSchedule } from './jobs/retentionWorker.js';
+import { saveSkillFile, deleteSkillFile } from './services/scriptFileService.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -31,11 +33,27 @@ const io = new SocketIOServer(httpServer, {
 
 const runsNamespace = io.of('/runs');
 
-runsNamespace.on('connection', (socket) => {
-  const runId = socket.handshake.query['runId'] as string | undefined;
-  if (runId) {
-    void socket.join(`run:${runId}`);
+// Authenticate every socket connection on the /runs namespace using the JWT
+// passed in socket.handshake.auth.token (same token used for REST requests).
+runsNamespace.use((socket, next) => {
+  const token = socket.handshake.auth['token'] as string | undefined;
+  if (!token) return next(new Error('auth:token-required'));
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return next(new Error('server:misconfiguration'));
+  try {
+    const decoded = jwt.verify(token, secret) as { id: string; globalRole: string };
+    socket.data['userId'] = decoded.id;
+    socket.data['globalRole'] = decoded.globalRole;
+    next();
+  } catch {
+    next(new Error('auth:invalid-token'));
   }
+});
+
+runsNamespace.on('connection', (socket) => {
+  const userId: string = socket.data['userId'];
+  const globalRole: string = socket.data['globalRole'];
+
   socket.on('leaveRun', ({ runId: rid }: { runId: string }) => {
     if (!rid) return;
     void socket.leave(`run:${rid}`);
@@ -43,14 +61,28 @@ runsNamespace.on('connection', (socket) => {
 
   socket.on('joinRun', async ({ runId: rid }: { runId: string }) => {
     if (!rid) return;
-    void socket.join(`run:${rid}`);
-    // Catch up the client if it joined after early events were already emitted
+
+    // Verify the requesting user has access to this run's project
     try {
       const run = await prisma.run.findUnique({
         where: { id: rid },
-        select: { status: true, results: { select: { status: true } } },
+        select: { projectId: true, status: true, results: { select: { status: true } } },
       });
       if (!run) return;
+
+      if (globalRole !== 'SUPER_ADMIN') {
+        const member = await prisma.projectMember.findFirst({
+          where: { projectId: run.projectId, userId },
+        });
+        if (!member) {
+          socket.emit('run:error', 'Access denied');
+          return;
+        }
+      }
+
+      void socket.join(`run:${rid}`);
+
+      // Catch up the client if it joined after early events were already emitted
       if (run.status === 'RUNNING') {
         socket.emit('run:start', { total: run.results.length });
       } else if (run.status === 'PASSED' || run.status === 'FAILED' || run.status === 'CANCELLED') {
@@ -69,13 +101,46 @@ setRunsNamespace(runsNamespace);
 // ── /projects namespace — per-project events (e.g. script generation jobs) ──
 const projectsNamespace = io.of('/projects');
 
-projectsNamespace.on('connection', (socket) => {
-  const projectId = socket.handshake.query['projectId'] as string | undefined;
-  if (projectId) {
-    void socket.join(`project:${projectId}`);
+// Require a valid JWT on every /projects connection, same as /runs.
+projectsNamespace.use((socket, next) => {
+  const token = socket.handshake.auth['token'] as string | undefined;
+  if (!token) return next(new Error('auth:token-required'));
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return next(new Error('server:misconfiguration'));
+  try {
+    const decoded = jwt.verify(token, secret) as { id: string; globalRole: string };
+    socket.data['userId'] = decoded.id;
+    socket.data['globalRole'] = decoded.globalRole;
+    next();
+  } catch {
+    next(new Error('auth:invalid-token'));
   }
+});
+
+projectsNamespace.on('connection', (socket) => {
+  const userId: string = socket.data['userId'];
+  const globalRole: string = socket.data['globalRole'];
+
+  const joinProjectRoom = async (pid: string) => {
+    if (!pid) return;
+    // SUPER_ADMIN may join any project room; others must be a member.
+    if (globalRole !== 'SUPER_ADMIN') {
+      const member = await prisma.projectMember.findFirst({
+        where: { projectId: pid, userId },
+      });
+      if (!member) {
+        socket.emit('project:error', 'Access denied');
+        return;
+      }
+    }
+    void socket.join(`project:${pid}`);
+  };
+
+  const projectId = socket.handshake.query['projectId'] as string | undefined;
+  if (projectId) void joinProjectRoom(projectId);
+
   socket.on('joinProject', ({ projectId: pid }: { projectId: string }) => {
-    if (pid) void socket.join(`project:${pid}`);
+    void joinProjectRoom(pid);
   });
 });
 
@@ -137,6 +202,33 @@ httpServer.listen(PORT, () => {
   console.log(`[qa-api] Environment     → ${process.env.NODE_ENV ?? 'development'}`);
   console.log(`[qa-api] Socket.io       → /runs namespace ready`);
 
+  // Sync all active DB skills to disk so the script agent can read them as files.
+  // Idempotent — running again just overwrites with the current DB state.
+  async function syncSkillFiles(): Promise<void> {
+    try {
+      const projects = await prisma.project.findMany({ select: { id: true, slug: true } });
+      let total = 0;
+      for (const p of projects) {
+        const skills = await prisma.projectSkill.findMany({ where: { projectId: p.id } });
+        for (const s of skills) {
+          if (s.isActive) {
+            saveSkillFile(p.slug, s.id, {
+              id: s.id, skillType: s.skillType, name: s.name, scope: s.scope,
+              content: s.content, confidence: s.confidence, captureMethod: s.captureMethod,
+              isActive: s.isActive, updatedAt: s.updatedAt.toISOString(),
+            });
+            total++;
+          } else {
+            deleteSkillFile(p.slug, s.id);
+          }
+        }
+      }
+      console.log(`[qa-api] Skill file sync: ${total} active skill(s) written to disk`);
+    } catch (err) {
+      console.warn('[qa-api] Skill file sync failed (non-fatal):', (err as Error).message);
+    }
+  }
+
   // Cancel interrupted HEAL_RERUN runs BEFORE workers attach so stalled BullMQ
   // jobs see a terminal status and exit instead of re-executing the healing loop.
   void (async () => {
@@ -151,6 +243,9 @@ httpServer.listen(PORT, () => {
     } catch (err) {
       console.warn('[qa-api] Startup cleanup failed (non-fatal):', (err as Error).message);
     }
+
+    // Sync skill files to disk before workers start (they read skills from files)
+    await syncSkillFiles();
 
     // Start BullMQ workers only after cleanup so they see the cancelled state
     if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {

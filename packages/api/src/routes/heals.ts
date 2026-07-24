@@ -4,9 +4,8 @@ import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { generateLineDiff } from '../services/diffService.js';
 import { applyHeal, rejectHeal, requeueHealedTest, retryHealWithContext } from '../services/healService.js';
-import { addHealJob } from '../lib/queue.js';
-import { writeFileSync } from 'fs';
-import { join } from 'path';
+import { addHealJob, healQueue } from '../lib/queue.js';
+import { saveScript } from '../services/scriptFileService.js';
 
 const router = Router({ mergeParams: true });
 router.use(verifyToken as RequestHandler);
@@ -96,6 +95,8 @@ router.get('/stats', wrap(async (req, res) => {
 router.post('/approve-all-confident', wrap(async (req, res) => {
   const { projectId } = req.params;
 
+  const projectSlug = req.project.slug;
+
   const pendingHighConf = await prisma.heal.findMany({
     where: { projectId, status: 'PENDING', confidence: { gte: 90 } },
     include: {
@@ -115,14 +116,12 @@ router.post('/approve-all-confident', wrap(async (req, res) => {
   }
 
   let approved = 0;
-  const scriptRoot = process.env.SCRIPTS_PATH ?? '/scripts';
 
   for (const heal of pendingHighConf) {
     if (!heal.runResult.script) continue;
     try {
-      const scriptPath = join(scriptRoot, projectId, heal.runResult.script.filename);
       try {
-        writeFileSync(scriptPath, heal.patchedCode, 'utf8');
+        saveScript(projectSlug, heal.runResult.script.filename, heal.patchedCode);
       } catch { /* disk write is best-effort */ }
 
       await prisma.$transaction([
@@ -191,6 +190,30 @@ router.post('/trigger/:runId', wrap(async (req, res) => {
     count: queuedItems.length,
     queued: queuedItems,
   });
+}));
+
+// ── POST /heals/cancel/:runResultId ────────────────────────────────────────
+// Cancel an in-progress heal job: removes it from the BullMQ queue (if waiting)
+// and deletes the DB record so the run result is available for re-healing.
+
+router.post('/cancel/:runResultId', wrap(async (req, res) => {
+  const { projectId, runResultId } = req.params;
+
+  // Remove from BullMQ queue (job may already be active/processing — best-effort)
+  const job = await healQueue.getJob(`heal-${runResultId}`);
+  if (job) {
+    try { await job.remove(); } catch { /* already processing, that's fine */ }
+  }
+
+  // Delete the heal DB record if it exists and belongs to this project
+  const heal = await prisma.heal.findFirst({
+    where: { runResultId, projectId },
+  });
+  if (heal) {
+    await prisma.heal.delete({ where: { id: heal.id } });
+  }
+
+  res.json({ ok: true });
 }));
 
 // ── GET /heals/:healId ─────────────────────────────────────────────────────
@@ -329,10 +352,9 @@ router.post('/:healId/apply', wrap(async (req, res) => {
   if (!heal.runResult.script) { res.status(422).json({ error: 'No script linked to this heal' }); return; }
 
   const scriptRecord = heal.runResult.script;
-  const scriptPath = join(process.env.SCRIPTS_PATH ?? '/scripts', projectId, scriptRecord.filename);
 
   try {
-    writeFileSync(scriptPath, heal.patchedCode, 'utf8');
+    saveScript(req.project.slug, scriptRecord.filename, heal.patchedCode);
   } catch (err) {
     console.error('[heals] Failed to write patched script:', (err as Error).message);
   }

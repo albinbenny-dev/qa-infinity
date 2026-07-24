@@ -3,6 +3,8 @@ import toast from 'react-hot-toast';
 import type { ReportRun } from '../../types';
 import { useReportRun } from '../../hooks/useReports';
 import { useTriggerHeal } from '../../hooks/useHeals';
+import { useRetryRun, useCreateIndividualRun } from '../../hooks/useRuns';
+import { useRBAC } from '../../hooks/useRBAC';
 import { api } from '../../lib/api';
 
 interface RunHistoryTableProps {
@@ -85,7 +87,7 @@ function ErrorCell({ errorMessage }: { errorMessage: string | null }) {
 
   return (
     <td
-      style={{ padding: '7px 12px', maxWidth: 0 }}
+      style={{ padding: '7px 12px', overflow: 'hidden' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -186,13 +188,58 @@ function ExpandedRunDetail({
 }) {
   const { data: run, isLoading } = useReportRun(projectId, runId);
   const [query, setQuery] = useState('');
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const individualRun = useCreateIndividualRun(projectId ?? '');
 
-  async function downloadAsset(resultId: string, type: 'screenshot' | 'trace' | 'video', filename: string) {
+  async function handleRerunTC(testCaseId: string) {
+    if (!run) return;
+    setRetryingIds((prev) => new Set(prev).add(testCaseId));
+    try {
+      await individualRun.mutateAsync({ testCaseId, environment: run.environment });
+      toast.success('Test case queued for re-run');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to re-run test case';
+      toast.error(msg);
+    } finally {
+      setRetryingIds((prev) => { const next = new Set(prev); next.delete(testCaseId); return next; });
+    }
+  }
+
+  async function openRfHtml(resultId: string, type: 'rf-report' | 'rf-log', filename: string) {
     try {
       const response = await api.get(
         `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/${type}`,
         { responseType: 'blob' },
       );
+      const url = URL.createObjectURL(response.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      const axErr = err as { response?: { data?: unknown; status?: number }; message?: string };
+      let msg = axErr?.message ?? 'Download failed';
+      if (axErr?.response?.data instanceof Blob) {
+        try {
+          const text = await (axErr.response.data as Blob).text();
+          const json = JSON.parse(text) as { error?: string };
+          if (json.error) msg = json.error;
+        } catch { /* keep default msg */ }
+      }
+      toast.error(`RF report download failed: ${msg}`);
+    }
+  }
+
+  async function downloadAsset(resultId: string, type: 'screenshot' | 'trace' | 'video', filename: string, videoIndex?: number) {
+    try {
+      const requestUrl = type === 'video' && videoIndex !== undefined
+        ? `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/${type}?index=${videoIndex}`
+        : `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/${type}`;
+      const response = await api.get(requestUrl, { responseType: 'blob' });
       const url = URL.createObjectURL(response.data as Blob);
       const a = document.createElement('a');
       a.href = url;
@@ -259,18 +306,18 @@ function ExpandedRunDetail({
       <div style={{ overflow: 'auto', maxHeight: 300 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
           <colgroup>
-            <col style={{ width: 100 }} />  {/* TC ID */}
-            <col style={{ width: '30%' }} />  {/* Title */}
-            <col style={{ width: '15%' }} />  {/* Suite */}
-            <col style={{ width: 90 }} />  {/* Duration */}
-            <col style={{ width: 100 }} />  {/* Status */}
-            <col style={{ width: 160 }} />  {/* Assets */}
+            <col style={{ width: '35%' }} />  {/* TC ID + Title */}
+            <col style={{ width: '12%' }} />  {/* Suite */}
+            <col style={{ width: 72 }} />  {/* Duration */}
+            <col style={{ width: 80 }} />  {/* Status */}
+            <col style={{ width: 44 }} />   {/* Re-run */}
+            <col style={{ width: 150 }} />  {/* Assets */}
             <col />                          {/* Error — takes remaining space */}
           </colgroup>
           <thead>
             <tr>
-              {['TC ID', 'Title', 'Suite', 'Duration', 'Status', 'Assets', 'Error'].map((h) => (
-                <th key={h} style={{
+              {['Title', 'Suite', 'Duration', 'Status', '', 'Assets', 'Error'].map((h, i) => (
+                <th key={i} style={{
                   padding: '6px 12px',
                   textAlign: 'left',
                   fontSize: 10,
@@ -299,13 +346,17 @@ function ExpandedRunDetail({
               </tr>
             ) : visibleResults.map((r) => (
               <tr key={r.id} style={{ borderBottom: '1px solid var(--border)', background: r.status === 'FAILED' ? 'rgba(220,38,38,0.04)' : r.status === 'SKIPPED' ? 'rgba(251,191,36,0.04)' : 'transparent' }}>
-                <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
-                  {r.testCase.tcId}
+                <td style={{ padding: '7px 12px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1, overflow: 'hidden' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                      {r.testCase.tcId}
+                    </span>
+                    <span style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.testCase.title}
+                    </span>
+                  </div>
                 </td>
-                <td style={{ padding: '7px 12px', color: 'var(--text)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.testCase.title}
-                </td>
-                <td style={{ padding: '7px 12px', color: 'var(--text-dim)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '7px 12px', color: 'var(--text-dim)', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {r.testCase.useCaseTag ?? '—'}
                 </td>
                 <td style={{ padding: '7px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
@@ -315,6 +366,26 @@ function ExpandedRunDetail({
                   <span style={{ fontSize: 10, fontWeight: 700, color: STATUS_COLOR[r.status] ?? 'var(--text-dim)' }}>
                     {r.status}
                   </span>
+                </td>
+                {/* Re-run button */}
+                <td style={{ padding: '7px 8px', whiteSpace: 'nowrap' }}>
+                  <button
+                    onClick={() => handleRerunTC(r.testCase.id)}
+                    disabled={retryingIds.has(r.testCase.id)}
+                    title="Re-run this test case"
+                    style={{
+                      padding: '2px 7px',
+                      borderRadius: 5,
+                      background: retryingIds.has(r.testCase.id) ? 'rgba(37,99,171,0.06)' : 'rgba(37,99,171,0.12)',
+                      color: retryingIds.has(r.testCase.id) ? 'rgba(37,99,171,0.4)' : 'var(--cyan)',
+                      border: '1px solid rgba(37,99,171,0.25)',
+                      cursor: retryingIds.has(r.testCase.id) ? 'not-allowed' : 'pointer',
+                      fontSize: 10,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {retryingIds.has(r.testCase.id) ? '⏳' : '↻'}
+                  </button>
                 </td>
                 <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
                   <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -341,7 +412,13 @@ function ExpandedRunDetail({
                     )}
                     {r.videoPath && (
                       <button
-                        onClick={() => downloadAsset(r.id, 'video', `video-${r.testCase.tcId}.webm`)}
+                        onClick={() => {
+                          const isMultiple = r.videoPath!.startsWith('[');
+                          const filename = isMultiple
+                            ? `videos-${r.testCase.tcId}.zip`
+                            : `video-${r.testCase.tcId}.webm`;
+                          downloadAsset(r.id, 'video', filename);
+                        }}
                         title="Download video recording"
                         style={{
                           padding: '2px 7px',
@@ -381,7 +458,28 @@ function ExpandedRunDetail({
                         🔍 Trace
                       </button>
                     )}
-                    {!r.screenshotPath && !r.videoPath && !r.tracePath && (
+                    {r.rfLogPath && (
+                      <button
+                        onClick={() => openRfHtml(r.id, 'rf-log', `rf-log-${r.testCase.tcId}.html`)}
+                        title="Download RF log"
+                        style={{
+                          padding: '2px 7px',
+                          borderRadius: 5,
+                          background: 'rgba(234,179,8,0.08)',
+                          color: '#ca8a04',
+                          border: '1px solid rgba(234,179,8,0.2)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
+                        Log
+                      </button>
+                    )}
+                    {!r.screenshotPath && !r.videoPath && !r.tracePath && !r.rfLogPath && (
                       <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>
                     )}
                   </div>
@@ -462,9 +560,21 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
     return () => clearTimeout(timer);
   }, [initialExpandedRunId]);
 
+  const { canAccessHealing } = useRBAC();
   const triggerHeal = useTriggerHeal(projectId ?? '', () => {
     toast('No failed tests found in this run', { icon: '⚠️' });
   });
+  const retryRun = useRetryRun(projectId ?? '');
+
+  async function handleRetryRun(runId: string) {
+    try {
+      await retryRun.mutateAsync(runId);
+      toast.success('Run queued for retry');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to retry run';
+      toast.error(msg);
+    }
+  }
 
   async function handleHeal(runId: string) {
     try {
@@ -554,7 +664,24 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
               </div>
               {/* Quick action buttons — stop propagation so they don't toggle the row */}
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-                {failed > 0 && (run.status === 'FAILED') && (
+                {(run.status === 'PASSED' || run.status === 'FAILED' || run.status === 'CANCELLED') && (
+                  <button
+                    onClick={() => handleRetryRun(run.id)}
+                    disabled={retryRun.isPending}
+                    title="Re-run all test cases from this run"
+                    style={{
+                      padding: '3px 10px', borderRadius: 6,
+                      background: retryRun.isPending ? 'rgba(37,99,171,0.06)' : 'rgba(37,99,171,0.12)',
+                      color: retryRun.isPending ? 'rgba(37,99,171,0.4)' : 'var(--cyan)',
+                      border: '1px solid rgba(37,99,171,0.25)',
+                      cursor: retryRun.isPending ? 'not-allowed' : 'pointer',
+                      fontSize: 11, fontWeight: 600,
+                    }}
+                  >
+                    {retryRun.isPending ? '⏳' : '↻'} Retry
+                  </button>
+                )}
+                {canAccessHealing && failed > 0 && (run.status === 'FAILED') && (
                   <button
                     onClick={() => handleHeal(run.id)}
                     disabled={triggerHeal.isPending}

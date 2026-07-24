@@ -1,14 +1,17 @@
 FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
-# Install Node 20 + Python 3 + pip
+# Install Node 20 + Python 3 + pip + VNC tools for live browser viewing
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs tzdata python3 python3-pip python3-venv \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+       nodejs tzdata python3 python3-pip python3-venv \
+       x11vnc novnc python3-websockify \
+       openbox x11-apps \
   && corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 # Install Robot Framework + RF Browser into a venv so it never conflicts with system pip
 RUN python3 -m venv /opt/rfbrowser \
   && /opt/rfbrowser/bin/pip install --upgrade pip \
-  && /opt/rfbrowser/bin/pip install robotframework robotframework-browser
+  && /opt/rfbrowser/bin/pip install robotframework robotframework-browser pandas openpyxl
 
 # Initialise RF Browser — downloads Playwright browsers managed by RF Browser
 RUN /opt/rfbrowser/bin/python -m Browser.entry init || true
@@ -33,6 +36,7 @@ COPY packages/runner/src ./packages/runner/src
 VOLUME ["/scripts", "/artifacts"]
 
 EXPOSE 5001
+EXPOSE 6080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -f http://localhost:5001/health || exit 1

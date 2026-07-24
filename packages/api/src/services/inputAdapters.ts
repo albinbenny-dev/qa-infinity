@@ -1,17 +1,34 @@
 import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
+import path from 'path';
 import * as xlsx from 'xlsx';
 import mammoth from 'mammoth';
 // @ts-ignore
 import pdfParse from 'pdf-parse';
 import { prisma } from '../lib/prisma.js';
 
+export function mimeFromPath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const map: Record<string, string> = {
+    '.pdf':  'application/pdf',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xls':  'application/vnd.ms-excel',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc':  'application/msword',
+    '.txt':  'text/plain',
+    '.md':   'text/markdown',
+  };
+  return map[ext] ?? 'text/plain';
+}
+
 export interface UISnapshot {
   url: string;
   pageTitle: string;
   screenshotBase64: string | null;
   interactiveElements: string;
+  mediaType?: 'image/png' | 'image/jpeg';
+  label?: string;
 }
 
 export async function fetchJiraStory(keyOrUrl: string): Promise<string> {

@@ -173,6 +173,7 @@ export default function TCTableRow({
               />
             )}
             <span
+              title={tc.title}
               style={{
                 fontSize: '11px',
                 fontWeight: 600,
@@ -180,7 +181,7 @@ export default function TCTableRow({
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                maxWidth: '340px',
+                minWidth: 0,
                 display: 'block',
               }}
             >
