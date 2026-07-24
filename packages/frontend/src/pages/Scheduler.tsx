@@ -755,7 +755,10 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds, onSave, onCancel: 
   isSaving: boolean;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
-  const [selectedIds, setSelectedIds] = useState<string[]>(initial?.testCaseIds ?? []);
+  const existingIds = useMemo(() => new Set(testCases.map(tc => tc.id)), [testCases]);
+  const [selectedIds, setSelectedIds] = useState<string[]>(
+    (initial?.testCaseIds ?? []).filter(id => existingIds.has(id)),
+  );
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '7px 10px', boxSizing: 'border-box',
@@ -797,7 +800,7 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds, onSave, onCancel: 
 
 // ── Suite card (left column) ───────────────────────────────────────────────
 
-function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPending, canWrite = true }: {
+function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPending, canWrite = true, existingTcIds = new Set() }: {
   suite: Suite;
   isSelected: boolean;
   onEdit: () => void;
@@ -805,8 +808,10 @@ function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPendin
   onRunNow: () => void;
   runNowPending: boolean;
   canWrite?: boolean;
+  existingTcIds?: Set<string>;
 }) {
   const tcIds = useMemo(() => parseTcIds(suite.testCaseIds), [suite.testCaseIds]);
+  const validCount = useMemo(() => tcIds.filter(id => existingTcIds.has(id)).length, [tcIds, existingTcIds]);
 
   return (
     <div onClick={canWrite ? onEdit : undefined} style={{
@@ -823,7 +828,7 @@ function SuiteCard({ suite, isSelected, onEdit, onDelete, onRunNow, runNowPendin
       <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{suite.name}</span>
       </div>
-      <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>{tcIds.length} test{tcIds.length !== 1 ? 's' : ''}</span>
+      <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>{existingTcIds.size > 0 ? validCount : tcIds.length} test{(existingTcIds.size > 0 ? validCount : tcIds.length) !== 1 ? 's' : ''}</span>
       {canWrite && (
         <div style={{ display: 'flex', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
           <button disabled={runNowPending} onClick={onRunNow} style={{
@@ -1170,6 +1175,7 @@ export default function Scheduler() {
 
   const { data: scripts = [] } = useScripts(projectId);
   const scriptedTcIds = useMemo(() => new Set(scripts.filter(s => s.testCaseId).map(s => s.testCaseId!)), [scripts]);
+  const existingTcIdSet = useMemo(() => new Set(testCases.map(tc => tc.id)), [testCases]);
 
   const { mutateAsync: createSchedule, isPending: creating } = useCreateSchedule(projectId);
   const { mutateAsync: updateSchedule, isPending: updating } = useUpdateSchedule(projectId);
@@ -1416,6 +1422,7 @@ export default function Scheduler() {
                         onRunNow={() => handleSuiteRunNow(suite)}
                         runNowPending={suiteRunNowId === suite.id}
                         canWrite={canWrite}
+                        existingTcIds={existingTcIdSet}
                       />
                     ))}
                     {overflow.length > 0 && (

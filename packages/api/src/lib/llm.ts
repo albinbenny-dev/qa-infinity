@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
@@ -11,7 +12,6 @@ import { prisma } from './prisma.js';
  * Provider is selected by LLM_PROVIDER env var:
  *   "openrouter"  → OpenRouter (default — works with any OpenRouter key)
  *   "anthropic"   → Direct Anthropic API
- *   "local"       → ITOPS LiteLLM proxy (OpenAI-compatible, on-prem)
  *
  * All agents import this factory so switching provider is a single env change.
  */
@@ -80,6 +80,8 @@ export function createLLM(options?: {
    * Default: true (opt-out by passing false)
    */
   enableCaching?: boolean;
+  /** Override the model name — only honoured for the local and openrouter providers. */
+  modelOverride?: string;
 }): BaseChatModel {
   const temperature = options?.temperature ?? 0.2;
   const agentName = options?.agentName ?? 'unknown';
@@ -91,7 +93,7 @@ export function createLLM(options?: {
   if (provider === 'anthropic') {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-    const model = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514';
+    const model = process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
 
     return new ChatAnthropic({
       apiKey,
@@ -111,24 +113,6 @@ export function createLLM(options?: {
           },
         },
       }),
-    });
-  }
-
-  if (provider === 'local') {
-    const apiKey = process.env.LOCAL_LLM_API_KEY;
-    if (!apiKey) throw new Error('LOCAL_LLM_API_KEY is not set');
-    const model = process.env.LOCAL_LLM_MODEL ?? '6d-devops-llm';
-    const baseURL = process.env.LOCAL_LLM_BASE_URL ?? 'http://10.0.6.31:4000/v1';
-
-    return new ChatOpenAI({
-      modelName: model,
-      openAIApiKey: apiKey,
-      temperature,
-      maxTokens: 8192,
-      callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
-      configuration: {
-        baseURL,
-      },
     });
   }
 
@@ -152,4 +136,18 @@ export function createLLM(options?: {
       },
     },
   });
+}
+
+/**
+ * Returns a native @anthropic-ai/sdk Anthropic client when ANTHROPIC_API_KEY is set.
+ * Returns null when only OpenRouter is configured (SDK cannot speak to OpenRouter directly).
+ * Use this for features that require native Anthropic capabilities:
+ *   - system prompt caching via cache_control document blocks
+ *   - output_config structured JSON output
+ *   - adaptive thinking
+ */
+export function createAnthropicDirectClient(): Anthropic | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  return new Anthropic({ apiKey });
 }

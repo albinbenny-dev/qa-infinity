@@ -23,6 +23,10 @@ import {
   useUploadResource,
   useSaveResource,
   useDeleteResource,
+  useCreateFolder,
+  useDeleteFolder,
+  useMoveResource,
+  downloadResource,
 } from '../hooks/useResources';
 import { useScriptJobs } from '../hooks/useScriptJobs';
 import { useExecutionStore } from '../stores/executionStore';
@@ -162,12 +166,15 @@ function TCScriptRow({
 
       {/* Title + TC ID */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 11,
-          fontWeight: isScripted ? 400 : 600,
-          color: isScripted ? 'var(--text-dim)' : 'var(--text)',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
+        <div
+          title={tc.title}
+          style={{
+            fontSize: 11,
+            fontWeight: isScripted ? 400 : 600,
+            color: isScripted ? 'var(--text-dim)' : 'var(--text)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+        >
           {tc.title}
         </div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 1 }}>
@@ -661,7 +668,7 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, singleTc
 
 interface RetryFeedbackModalProps {
   job: ScriptJob;
-  onConfirm: (opts: { contextNote: string; withHeal: boolean; saveHints: boolean }) => void;
+  onConfirm: (opts: { contextNote: string; withHeal: boolean; saveHints: boolean; qaFeedback: string; saveAsHistoricalSkill: boolean; featureGroup: string }) => void;
   onClose: () => void;
 }
 
@@ -669,13 +676,15 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   const [note, setNote] = useState('');
   const [heal, setHeal] = useState(job.withHeal);
   const [save, setSave] = useState(false);
+  const [saveAsSkill, setSaveAsSkill] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const errorText = job.suspectedIssue ?? job.lastError ?? null;
+  const featureGroup = job.testCase?.useCaseTag ?? '';
 
   async function handleSubmit() {
     setBusy(true);
-    await onConfirm({ contextNote: note, withHeal: heal, saveHints: save });
+    await onConfirm({ contextNote: note, withHeal: heal, saveHints: save, qaFeedback: note, saveAsHistoricalSkill: saveAsSkill, featureGroup });
     setBusy(false);
   }
 
@@ -725,6 +734,19 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
               <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--violet)', cursor: 'pointer' }} />
               <span style={{ fontSize: 11, color: 'var(--text-mid)' }}>Save as default hints for this test case</span>
             </label>
+            {featureGroup && (
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', userSelect: 'none', padding: '7px 10px', borderRadius: 6, background: saveAsSkill ? 'rgba(139,92,246,0.08)' : 'transparent', border: `1px solid ${saveAsSkill ? 'rgba(139,92,246,0.35)' : 'var(--border)'}`, transition: 'all 0.15s' }}>
+                <input type="checkbox" checked={saveAsSkill} onChange={(e) => setSaveAsSkill(e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--violet)', cursor: 'pointer', marginTop: 1, flexShrink: 0 }} />
+                <div>
+                  <span style={{ fontSize: 11, color: saveAsSkill ? 'var(--violet)' : 'var(--text-mid)', fontWeight: saveAsSkill ? 700 : 400 }}>
+                    Remember this correction for future <strong style={{ color: 'var(--text)' }}>{featureGroup}</strong> scripts
+                  </span>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2, lineHeight: 1.5 }}>
+                    Saves as a Tier 3 Historical skill — auto-injected whenever a {featureGroup} test case is generated
+                  </div>
+                </div>
+              </label>
+            )}
 
             <div style={{ display: 'flex', gap: 8 }}>
               {([false, true] as const).map((v) => (
@@ -771,100 +793,6 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   );
 }
 
-// ── ResourceHealthBanner ─────────────────────────────────────────────────────
-
-function ResourceHealthBanner({ projectId, resourceCount }: { projectId: string | undefined; resourceCount: number }) {
-  const [health, setHealth] = useState<{ scriptCount: number; resources: Array<{ filename: string; keywordCount: number; usedInScripts: number; lastUpdated: string }> } | null>(null);
-  const [mining, setMining] = useState(false);
-  const [candidates, setCandidates] = useState<Array<{ body: string; usedInFiles: string[]; count: number }>>([]);
-  const [showCandidates, setShowCandidates] = useState(false);
-
-  useEffect(() => {
-    if (!projectId || resourceCount === 0) return;
-    api.get<typeof health>(`/projects/${projectId}/resources/health`)
-      .then(r => setHealth(r.data))
-      .catch(() => {});
-  }, [projectId, resourceCount]);
-
-  async function runMining() {
-    if (!projectId) return;
-    setMining(true);
-    try {
-      const r = await api.get<{ candidates: typeof candidates; analysedFiles: number }>(`/projects/${projectId}/scripts/mine-keywords`);
-      setCandidates(r.data.candidates);
-      setShowCandidates(true);
-    } catch {
-      toast.error('Keyword mining failed');
-    }
-    setMining(false);
-  }
-
-  return (
-    <div style={{ background: 'rgba(42,157,143,0.05)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-      <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ fontSize: 10, color: 'var(--text-dim)', lineHeight: 1.5, flex: 1 }}>
-          Shared <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>.robot</code> files auto-injected into generated Robot scripts.
-        </div>
-        {health && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-              {health.resources.reduce((s, r) => s + r.keywordCount, 0)} keywords · {health.scriptCount} scripts
-            </span>
-            <div
-              style={{
-                width: 8, height: 8, borderRadius: '50%',
-                background: resourceCount > 0 ? 'var(--emerald)' : 'var(--text-dim)',
-                flexShrink: 0,
-              }}
-              title={`Resource health: ${resourceCount} files`}
-            />
-          </div>
-        )}
-        <button
-          onClick={runMining}
-          disabled={mining}
-          title="Scan all .robot scripts for duplicate keyword patterns (suggests extractions)"
-          style={{
-            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3, cursor: mining ? 'wait' : 'pointer',
-            background: 'transparent', border: '1px solid rgba(139,92,246,0.3)',
-            color: 'var(--violet)', flexShrink: 0, opacity: mining ? 0.6 : 1,
-          }}
-        >
-          {mining ? '⏳' : '⛏ Mine'}
-        </button>
-      </div>
-      {showCandidates && candidates.length > 0 && (
-        <div style={{ padding: '0 12px 10px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--violet)', marginBottom: 6, marginTop: 8 }}>
-            ⛏ Suggested Optimisations — Duplicate Keywords Found
-          </div>
-          {candidates.slice(0, 5).map((c, i) => (
-            <div key={i} style={{ marginBottom: 6, background: 'rgba(139,92,246,0.06)', borderRadius: 5, padding: '6px 8px', border: '1px solid rgba(139,92,246,0.15)' }}>
-              <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 3 }}>
-                Found in <strong style={{ color: 'var(--violet)' }}>{c.count} scripts</strong>: {c.usedInFiles.map(f => f.replace(/\.robot$/, '')).join(', ')}
-              </div>
-              <pre style={{ fontSize: 9, color: 'var(--text-mid)', margin: 0, fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                {c.body.slice(0, 150)}{c.body.length > 150 ? '…' : ''}
-              </pre>
-            </div>
-          ))}
-          <button
-            onClick={() => setShowCandidates(false)}
-            style={{ fontSize: 9, color: 'var(--text-dim)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-          >
-            ✕ Dismiss
-          </button>
-        </div>
-      )}
-      {showCandidates && candidates.length === 0 && (
-        <div style={{ padding: '0 12px 8px', fontSize: 9, color: 'var(--emerald)' }}>
-          ✓ No duplicate keyword patterns found across scripts.
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── RegenerateModal ──────────────────────────────────────────────────────────
 
 interface RegenerateModalProps {
@@ -872,7 +800,7 @@ interface RegenerateModalProps {
   tc: TestCase | undefined;
   /** Pre-filled from "Fix with AI" button on a failed run result */
   fixContext?: { failedStep?: string; errorMessage?: string };
-  onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string }) => void;
+  onConfirm: (opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string; referenceTcIds?: string[] }) => void;
   onClose: () => void;
 }
 
@@ -895,7 +823,7 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
   const [scriptMode, setScriptMode] = useState<'PLAYWRIGHT' | 'ROBOT'>(
     (script as any).scriptType === 'PLAYWRIGHT' ? 'PLAYWRIGHT' : 'ROBOT',
   );
-  const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc?.prerequisiteTcId ?? null);
+  const [referenceTcIds, setReferenceTcIds] = useState<string[]>([]);
   const [automatedTcs, setAutomatedTcs] = useState<Array<{ id: string; tcId: string; title: string }>>([]);
   const [prereqOpen, setPrereqOpen] = useState(false);
   const [prereqSearch, setPrereqSearch] = useState('');
@@ -926,10 +854,6 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
 
   async function handleSubmit() {
     setBusy(true);
-    // Persist prerequisite change to DB before regenerating so the worker picks it up
-    if (tc && prerequisiteTcId !== (tc.prerequisiteTcId ?? null)) {
-      await api.patch(`/projects/${tc.projectId}/test-cases/${tc.tcId}`, { prerequisiteTcId }).catch(() => {});
-    }
     await onConfirm({
       withHeal: scriptMode === 'ROBOT' ? false : heal,
       contextNote: note,
@@ -939,6 +863,7 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
       domRecording: domRecording.trim() || undefined,
       failedStep: failedStep.trim() || undefined,
       failedStepError: failedStepError.trim() || undefined,
+      referenceTcIds: referenceTcIds.length > 0 ? referenceTcIds : undefined,
     });
     setBusy(false);
   }
@@ -1055,28 +980,42 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
             )}
           </div>
 
-          {/* Prerequisite TC picker */}
+          {/* Reference Scripts multi-select */}
           {tc && (
             <div>
               <span style={LABEL_STYLE}>
-                ⛓ Prerequisite TC{' '}
-                <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — reuse login/nav from another script)</span>
+                📎 Reference Scripts{' '}
+                <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — agent learns patterns from these verified scripts)</span>
               </span>
               <div ref={prereqRef} style={{ position: 'relative' }}>
                 <div
                   onClick={() => setPrereqOpen((o) => !o)}
                   style={{
                     background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
-                    color: prerequisiteTcId ? 'var(--text)' : 'var(--text-dim)',
+                    color: referenceTcIds.length > 0 ? 'var(--text)' : 'var(--text-dim)',
                     fontSize: 11, padding: '7px 10px', cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none',
+                    minHeight: 34,
                   }}
                 >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {prerequisiteTcId
-                      ? (() => { const f = automatedTcs.find((t) => t.id === prerequisiteTcId); return f ? `${f.tcId} — ${f.title}` : '(loading…)'; })()
-                      : 'None — generate standalone script'}
-                  </span>
+                  {referenceTcIds.length === 0 ? (
+                    <span>None — generate without reference scripts</span>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1 }}>
+                      {referenceTcIds.map((id) => {
+                        const f = automatedTcs.find((t) => t.id === id);
+                        return f ? (
+                          <span key={id} style={{ fontSize: 10, background: 'rgba(37,99,171,0.25)', border: '1px solid rgba(37,99,171,0.4)', borderRadius: 4, padding: '1px 6px', color: 'var(--cyan)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            {f.tcId}
+                            <span
+                              onMouseDown={(e) => { e.stopPropagation(); setReferenceTcIds((prev) => prev.filter((x) => x !== id)); }}
+                              style={{ cursor: 'pointer', opacity: 0.7, lineHeight: 1 }}
+                            >×</span>
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
                   <span style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>▾</span>
                 </div>
                 {prereqOpen && (
@@ -1084,58 +1023,63 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
                     position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 60,
                     background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8,
                     boxShadow: '0 8px 24px rgba(0,0,0,0.4)', overflow: 'hidden',
-                    maxHeight: 200, display: 'flex', flexDirection: 'column',
+                    maxHeight: 280, display: 'flex', flexDirection: 'column',
                   }}>
-                    <div style={{ padding: 8, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                    <div style={{ padding: 8, borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input
                         autoFocus
-                        placeholder="Search automated TCs…"
+                        placeholder="Search scripts…"
                         value={prereqSearch}
                         onChange={(e) => setPrereqSearch(e.target.value)}
-                        style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6, color: 'var(--text)', fontSize: 11, padding: '5px 8px', outline: 'none', boxSizing: 'border-box' }}
+                        style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6, color: 'var(--text)', fontSize: 11, padding: '5px 8px', outline: 'none', boxSizing: 'border-box' }}
                       />
-                    </div>
-                    <div style={{ overflowY: 'auto', flex: 1 }}>
-                      <div
-                        onClick={() => { setPrerequisiteTcId(null); setPrereqOpen(false); setPrereqSearch(''); }}
-                        style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', color: prerequisiteTcId === null ? 'var(--cyan)' : 'var(--text-dim)', background: prerequisiteTcId === null ? 'var(--cyan-dim)' : 'transparent' }}
-                      >
-                        {prerequisiteTcId === null && '✓ '}None — generate standalone script
-                      </div>
-                      {automatedTcs
-                        .filter((t) => prereqSearch === '' || t.tcId.toLowerCase().includes(prereqSearch.toLowerCase()) || t.title.toLowerCase().includes(prereqSearch.toLowerCase()))
-                        .map((t) => (
-                          <div
-                            key={t.id}
-                            onClick={() => { setPrerequisiteTcId(t.id); setPrereqOpen(false); setPrereqSearch(''); }}
-                            style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', borderTop: '1px solid var(--border)', background: prerequisiteTcId === t.id ? 'var(--cyan-dim)' : 'transparent', color: prerequisiteTcId === t.id ? 'var(--cyan)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}
-                          >
-                            {prerequisiteTcId === t.id && <span>✓</span>}
-                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{t.tcId}</span>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
-                            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8, background: 'rgba(42,157,143,0.15)', color: 'var(--emerald)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(42,157,143,0.3)' }}>⚡ automated</span>
-                          </div>
-                        ))}
-                      {automatedTcs.length === 0 && (
-                        <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-dim)' }}>No automated TCs found yet.</div>
+                      {referenceTcIds.length > 0 && (
+                        <button
+                          onMouseDown={(e) => { e.stopPropagation(); setReferenceTcIds([]); }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', whiteSpace: 'nowrap', padding: '4px 6px' }}
+                        >
+                          Clear all
+                        </button>
                       )}
                     </div>
+                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                      {automatedTcs
+                        .filter((t) => prereqSearch === '' || t.tcId.toLowerCase().includes(prereqSearch.toLowerCase()) || t.title.toLowerCase().includes(prereqSearch.toLowerCase()))
+                        .map((t) => {
+                          const selected = referenceTcIds.includes(t.id);
+                          return (
+                            <div
+                              key={t.id}
+                              onClick={() => {
+                                setReferenceTcIds((prev) =>
+                                  selected ? prev.filter((x) => x !== t.id) : [...prev, t.id],
+                                );
+                              }}
+                              style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', borderTop: '1px solid var(--border)', background: selected ? 'rgba(37,99,171,0.15)' : 'transparent', color: selected ? 'var(--cyan)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                            >
+                              <span style={{ width: 14, height: 14, border: `1.5px solid ${selected ? 'var(--cyan)' : 'var(--border2)'}`, borderRadius: 3, background: selected ? 'var(--cyan)' : 'transparent', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {selected && <span style={{ color: 'var(--surface)', fontSize: 9, lineHeight: 1, fontWeight: 700 }}>✓</span>}
+                              </span>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{t.tcId}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{t.title}</span>
+                              <span style={{ flexShrink: 0, fontSize: 8, background: 'rgba(42,157,143,0.15)', color: 'var(--emerald)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(42,157,143,0.3)' }}>⚡ automated</span>
+                            </div>
+                          );
+                        })}
+                      {automatedTcs.filter((t) => prereqSearch === '' || t.tcId.toLowerCase().includes(prereqSearch.toLowerCase()) || t.title.toLowerCase().includes(prereqSearch.toLowerCase())).length === 0 && (
+                        <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-dim)' }}>
+                          {prereqSearch ? 'No matches.' : 'No automated scripts found yet.'}
+                        </div>
+                      )}
+                    </div>
+                    {referenceTcIds.length > 0 && (
+                      <div style={{ padding: '6px 12px', borderTop: '1px solid var(--border)', flexShrink: 0, fontSize: 10, color: 'var(--text-dim)' }}>
+                        {referenceTcIds.length} script{referenceTcIds.length !== 1 ? 's' : ''} selected
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-              {prerequisiteTcId && (() => {
-                const f = automatedTcs.find((t) => t.id === prerequisiteTcId);
-                if (!f) return null;
-                return (
-                  <div style={{ marginTop: 6, padding: '7px 10px', background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.25)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 11 }}>⛓</span>
-                    <span style={{ flex: 1, fontSize: 10, color: 'var(--cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      Script generator will reuse setup from: <strong>{f.tcId} — {f.title}</strong>
-                    </span>
-                    <button onClick={() => setPrerequisiteTcId(null)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 13, padding: '0 2px' }}>×</button>
-                  </div>
-                );
-              })()}
             </div>
           )}
 
@@ -1497,6 +1441,36 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
 
 // ── Main page ───────────────────────────────────────────────────────────────
 
+// ── RF Go-to-Definition helper ───────────────────────────────────────────────
+// Scans the line at `position` for a keyword from the index.
+// Returns the matching keyword name, or null. Handles multi-word RF keywords
+// by checking full phrase matches rather than single-word tokenisation.
+function findRFKeywordAtPosition(
+  model: any,
+  position: { lineNumber: number; column: number },
+  index: Record<string, { filename: string; line: number }>,
+): string | null {
+  if (!model || !position) return null;
+  const lineContent: string = model.getLineContent(position.lineNumber);
+  const col = position.column; // 1-based
+  const lineLower = lineContent.toLowerCase();
+  // Sort by length descending so longer matches win (e.g. "Login As Admin" before "Login")
+  const keywords = Object.keys(index).sort((a, b) => b.length - a.length);
+  for (const kw of keywords) {
+    const kwLower = kw.toLowerCase();
+    let searchFrom = 0;
+    while (true) {
+      const idx = lineLower.indexOf(kwLower, searchFrom);
+      if (idx === -1) break;
+      const start = idx + 1; // convert to 1-based column
+      const end = idx + kw.length + 1; // exclusive
+      if (col >= start && col < end) return kw;
+      searchFrom = idx + 1;
+    }
+  }
+  return null;
+}
+
 export default function Scripts() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
@@ -1520,7 +1494,31 @@ export default function Scripts() {
   const uploadResource = useUploadResource(projectId ?? '');
   const saveResource = useSaveResource(projectId ?? '');
   const deleteResource = useDeleteResource(projectId ?? '');
+  const deleteFolder = useDeleteFolder(projectId ?? '');
+  const moveResource = useMoveResource(projectId ?? '');
   const resourceFileRef = useRef<HTMLInputElement>(null);
+  const createFolder = useCreateFolder(projectId ?? '');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [uploadFolder, setUploadFolder] = useState<string>('');
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [deletingResourceFile, setDeletingResourceFile] = useState<string | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
+  const [movingResource, setMovingResource] = useState<string | null>(null);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [newFolderInput, setNewFolderInput] = useState('');
+  // Path of the last clicked folder or file — shown as the "use this in your script" path
+  const [selectedResourcePath, setSelectedResourcePath] = useState<string>('');
+  const [pathCopied, setPathCopied] = useState(false);
+
+  // Base container path shared by all resources: /scripts/{slug}/resources
+  const resourcesBase = useMemo(() => {
+    for (const r of resources) {
+      if (r.containerPath && r.filename) {
+        return r.containerPath.slice(0, r.containerPath.length - r.filename.length - 1);
+      }
+    }
+    return null;
+  }, [resources]);
   const { setSelected: setExecutionSelected } = useExecutionStore();
 
   // ── Derived data ─────────────────────────────────────────────────────────
@@ -1539,6 +1537,23 @@ export default function Scripts() {
   const pendingCount = allTCs.filter((tc) => !scriptedTcIds.has(tc.id)).length;
 
   const groups = useMemo(() => buildGroups(allTCs, useCases), [allTCs, useCases]);
+
+  const [tcSearch, setTcSearch] = useState('');
+
+  const filteredGroups = useMemo(() => {
+    const q = tcSearch.trim().toLowerCase();
+    if (!q) return groups;
+    return groups
+      .map((g) => ({
+        ...g,
+        tcs: g.tcs.filter(
+          (tc) =>
+            tc.title.toLowerCase().includes(q) ||
+            tc.tcId.toLowerCase().includes(q),
+        ),
+      }))
+      .filter((g) => g.tcs.length > 0);
+  }, [groups, tcSearch]);
 
   // ── Left panel state ─────────────────────────────────────────────────────
 
@@ -1648,6 +1663,89 @@ export default function Scripts() {
   const { data: quickRunData } = useRun(projectId, quickRunId);
   const quickRunStatus = quickRunData?.status ?? null;
 
+  // ── Host-browser run state (▶ Run in Host Browser) ───────────────────────
+
+  const [hostRunId, setHostRunId] = useState<string | null>(null);
+  const [hostRunning, setHostRunning] = useState(false);
+  const { data: hostRunData } = useRun(projectId, hostRunId);
+  const hostRunStatus = hostRunData?.status ?? null;
+
+  // ── Playwright codegen recording state ───────────────────────────────────
+
+  const [showRecordModal, setShowRecordModal] = useState(false);
+  const [recordUrl, setRecordUrl] = useState('');
+  const [recordSessionId, setRecordSessionId] = useState('');
+  const [recordingActive, setRecordingActive] = useState(false);
+  const [recordBusy, setRecordBusy] = useState(false);
+  const [recordBusyLabel, setRecordBusyLabel] = useState('');
+  const [recordedScript, setRecordedScript] = useState('');
+  const [recordedPlaywrightCode, setRecordedPlaywrightCode] = useState('');
+
+  async function handleStartRecording() {
+    if (!projectId || !recordUrl.trim()) return;
+    setRecordBusy(true);
+    const sid = `rec-${Date.now()}`;
+    try {
+      await api.post(`/projects/${projectId}/scripts/record/start`, { url: recordUrl, sessionId: sid });
+      setRecordSessionId(sid);
+      setRecordingActive(true);
+      window.open(`http://${window.location.hostname}:6180/vnc.html?autoconnect=1&resize=remote&quality=6`, '_blank');
+      toast.success('Recording started — interact with the browser in the noVNC tab');
+    } catch {
+      toast.error('Failed to start recording — is the runner container running?');
+    } finally {
+      setRecordBusy(false);
+    }
+  }
+
+  async function handleStopRecording() {
+    if (!projectId || !recordSessionId) return;
+    setRecordBusy(true);
+    setRecordBusyLabel('Stopping…');
+    try {
+      // Step 1: stop the runner process (fast — just kills codegen and reads file)
+      const stopRes = await api.post<{ ok?: boolean; playwrightCode?: string; error?: string }>(
+        `/projects/${projectId}/scripts/record/stop`,
+        { sessionId: recordSessionId },
+      );
+      setRecordingActive(false);
+      const pwCode = stopRes.data.playwrightCode ?? '';
+      if (!pwCode.trim()) {
+        toast('No actions were recorded', { icon: 'ℹ️' });
+        return;
+      }
+      setRecordedPlaywrightCode(pwCode);
+
+      // Step 2: convert Playwright TS → RF via LLM (slow — separate call, no timeout risk)
+      setRecordBusyLabel('Converting to Robot Framework…');
+      const convertRes = await api.post<{ ok?: boolean; robotScript?: string }>(
+        `/projects/${projectId}/scripts/record/convert`,
+        { playwrightCode: pwCode, testCaseName: activeScript?.testCase?.title ?? 'Recorded Test' },
+        { timeout: 180_000 },
+      );
+      setRecordedScript(convertRes.data.robotScript ?? '');
+      toast.success('Recording converted — review the script below');
+    } catch {
+      toast.error('Failed to stop recording');
+    } finally {
+      setRecordBusy(false);
+      setRecordBusyLabel('');
+    }
+  }
+
+  function handleAcceptRecordedScript() {
+    if (!recordedScript) return;
+    if (!activeTabId) {
+      toast('Open a test case script on the left first, then accept', { icon: '⚠️' });
+      return;
+    }
+    setTabContents((prev) => ({ ...prev, [activeTabId]: recordedScript }));
+    setDirtyTabs((prev) => new Set(prev).add(activeTabId));
+    setRecordedScript('');
+    setShowRecordModal(false);
+    toast.success('Recorded script loaded into editor — save when ready');
+  }
+
   async function handleQuickRun() {
     if (!projectId || !activeScript?.testCaseId) return;
     const defaultEnv =
@@ -1684,12 +1782,58 @@ export default function Scripts() {
     }
   }
 
+  async function handleHostBrowserRun() {
+    if (!projectId || !activeScript?.testCaseId) return;
+    const defaultEnv = envConfigs.find((e) => e.isDefault) ?? envConfigs[0];
+    if (!defaultEnv) {
+      toast.error('No environment configured — add one in Project Settings first.');
+      return;
+    }
+    if (activeTabId && dirtyTabs.has(activeTabId)) {
+      try {
+        await save.mutateAsync({ scriptId: activeTabId, content: tabContents[activeTabId] ?? '' });
+        setDirtyTabs((prev) => { const n = new Set(prev); n.delete(activeTabId); return n; });
+      } catch {
+        toast.error('Save failed — cannot run unsaved script.');
+        return;
+      }
+    }
+    // Open noVNC viewer in a new tab.
+    // reconnect=true + reconnect_delay_ms=2000 means noVNC will keep retrying
+    // every 2 seconds until the VNC stack inside the runner is fully ready —
+    // this avoids the one-shot "Failed to connect" error on first open.
+    const vncUrl = `http://${window.location.hostname}:6180/vnc.html?autoconnect=true&reconnect=true&reconnect_delay_ms=2000&resize=scale`;
+    window.open(vncUrl, 'qa-vnc-viewer');
+    setHostRunning(true);
+    setHostRunId(null);
+    try {
+      const run = await createIndividualRun.mutateAsync({
+        testCaseId: activeScript.testCaseId,
+        environment: defaultEnv.name,
+        hostBrowser: true,
+      });
+      setHostRunId(run.id);
+      setMonitorRunId(run.id);
+      setMonitorScript(activeScript?.filename ?? 'script');
+      setShowMonitor(true);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? 'Failed to start host-browser run');
+      setHostRunning(false);
+    }
+  }
+
   // Once run finishes, stop the "running" spinner
   useEffect(() => {
     if (quickRunStatus && quickRunStatus !== 'PENDING' && quickRunStatus !== 'RUNNING') {
       setQuickRunning(false);
     }
   }, [quickRunStatus]);
+
+  useEffect(() => {
+    if (hostRunStatus && hostRunStatus !== 'PENDING' && hostRunStatus !== 'RUNNING') {
+      setHostRunning(false);
+    }
+  }, [hostRunStatus]);
 
   // ── Import script modal state ─────────────────────────────────────────────
 
@@ -1718,13 +1862,23 @@ export default function Scripts() {
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [loadingContent, setLoadingContent] = useState(false);
 
+  // ── Go-to-Definition refs ─────────────────────────────────────────────────
+  const monacoEditorRef = useRef<any>(null);
+  const pendingRevealLineRef = useRef<number | null>(null);
+  const keywordIndexRef = useRef<Record<string, { filename: string; line: number }>>({});
+  const rfLangRegisteredRef = useRef(false);
+  const openResourceTabRef = useRef<(filename: string, line?: number) => void>(() => {});
+
   const activeTab = openTabs.find((t) => t.id === activeTabId) ?? null;
   const activeScript = activeTab?.kind === 'script' ? activeTab.script : null;
   const activeContent = activeTabId ? (tabContents[activeTabId] ?? '') : '';
   const activeTc = allTCs.find((tc) => tc.id === activeScript?.testCaseId) ?? undefined;
 
-  // Clear quick-run badge when the user switches to a different script tab
-  useEffect(() => { setQuickRunId(null); setQuickRunning(false); }, [activeTabId]);
+  // Clear run badges when the user switches to a different script tab
+  useEffect(() => {
+    setQuickRunId(null); setQuickRunning(false);
+    setHostRunId(null);  setHostRunning(false);
+  }, [activeTabId]);
 
   // ── Open a tab ───────────────────────────────────────────────────────────
 
@@ -1753,7 +1907,8 @@ export default function Scripts() {
   );
 
   const openResourceTab = useCallback(
-    async (filename: string) => {
+    async (filename: string, revealLine?: number) => {
+      if (revealLine) pendingRevealLineRef.current = revealLine;
       const tabId = `resource:${filename}`;
       const tab: EditorTab = { kind: 'resource', id: tabId, filename };
       setActiveTabId(tabId);
@@ -1764,7 +1919,7 @@ export default function Scripts() {
         setLoadingContent(true);
         try {
           const res = await api.get<{ content: string }>(
-            `/projects/${projectId}/resources/${encodeURIComponent(filename)}/content`,
+            `/projects/${projectId}/resources/${filename}/content`,
           );
           setTabContents((prev) => ({ ...prev, [tabId]: res.data.content }));
         } catch {
@@ -1823,6 +1978,29 @@ export default function Scripts() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [saveActiveTab]);
+
+  // Keep openResourceTabRef pointing at the latest callback (avoids stale closure in onMount)
+  useEffect(() => { openResourceTabRef.current = openResourceTab; }, [openResourceTab]);
+
+  // Fetch keyword index whenever the project changes
+  useEffect(() => {
+    if (!projectId) return;
+    api.get<Record<string, { filename: string; line: number }>>(`/projects/${projectId}/resources/keywords/index`)
+      .then((res) => { keywordIndexRef.current = res.data; })
+      .catch(() => {});
+  }, [projectId]);
+
+  // After switching to a resource tab, reveal the pending line once content is loaded
+  useEffect(() => {
+    const line = pendingRevealLineRef.current;
+    if (!line || !activeTabId || !monacoEditorRef.current) return;
+    if (!tabContents[activeTabId]) return;
+    pendingRevealLineRef.current = null;
+    setTimeout(() => {
+      monacoEditorRef.current?.revealLineInCenter(line);
+      monacoEditorRef.current?.setPosition({ lineNumber: line, column: 1 });
+    }, 80);
+  }, [activeTabId, tabContents]);
 
   // ── Open TC's script in editor ────────────────────────────────────────────
 
@@ -1949,17 +2127,24 @@ export default function Scripts() {
 
   // ── Retry with feedback ───────────────────────────────────────────────────
 
-  async function handleRetryConfirm(opts: { contextNote: string; withHeal: boolean; saveHints: boolean }) {
+  async function handleRetryConfirm(opts: { contextNote: string; withHeal: boolean; saveHints: boolean; qaFeedback: string; saveAsHistoricalSkill: boolean; featureGroup: string }) {
     if (!projectId || !retryJob) return;
     const job = retryJob;
     setRetryJob(null);
     try {
       await api.post(
         `/projects/${projectId}/scripts/jobs/${job.id}/retry`,
-        { contextNote: opts.contextNote || undefined, withHeal: opts.withHeal, saveHints: opts.saveHints },
+        {
+          contextNote: opts.contextNote || undefined,
+          withHeal: opts.withHeal,
+          saveHints: opts.saveHints,
+          qaFeedback: opts.qaFeedback || undefined,
+          saveAsHistoricalSkill: opts.saveAsHistoricalSkill || undefined,
+          featureGroup: opts.featureGroup || undefined,
+        },
         { timeout: 30_000 },
       );
-      toast.success('Retry queued');
+      toast.success(opts.saveAsHistoricalSkill ? 'Retry queued — correction saved as Historical skill' : 'Retry queued');
     } catch (err) {
       const msg = (err as any)?.response?.data?.error ?? (err as Error)?.message ?? 'Failed to retry';
       toast.error(msg);
@@ -1968,7 +2153,7 @@ export default function Scripts() {
 
   // ── Regenerate active script ──────────────────────────────────────────────
 
-  async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string }) {
+  async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string; referenceTcIds?: string[] }) {
     if (!projectId || !activeScript?.testCaseId) return;
     setShowRegenModal(false);
     setRegenFixContext(undefined);
@@ -1993,6 +2178,7 @@ export default function Scripts() {
           failedStep: opts.failedStep || undefined,
           failedStepError: opts.failedStepError || undefined,
           scriptMode: opts.scriptMode,
+          referenceTcIds: opts.referenceTcIds?.length ? opts.referenceTcIds : undefined,
         },
         { timeout: 30_000 },
       );
@@ -2092,10 +2278,6 @@ export default function Scripts() {
           projectId={projectId}
           scriptName={monitorScript}
           onClose={() => setShowMonitor(false)}
-          onFixWithAi={(failedStep, errorMessage) => {
-            setRegenFixContext({ failedStep, errorMessage });
-            setShowRegenModal(true);
-          }}
         />
       )}
 
@@ -2107,6 +2289,137 @@ export default function Scripts() {
           preSelectedTcId={importPreTcId}
           onClose={() => setShowImportModal(false)}
         />
+      )}
+
+      {/* ── Playwright Codegen Record Modal ──────────────────────────────── */}
+      {showRecordModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={(e) => { if (e.target === e.currentTarget && !recordingActive) setShowRecordModal(false); }}>
+          <div style={{
+            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+            padding: 28, width: 540, maxWidth: '95vw', display: 'flex', flexDirection: 'column', gap: 18,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>🎥 Record Script with Playwright</span>
+              {!recordingActive && (
+                <button onClick={() => setShowRecordModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 18 }}>✕</button>
+              )}
+            </div>
+
+            {!recordingActive && !recordedScript && (
+              <>
+                <p style={{ color: 'var(--text-dim)', fontSize: 12, margin: 0 }}>
+                  Playwright will open a browser on the runner. Perform the test steps manually — every click, fill,
+                  and navigation is captured. When done, click <strong>Stop &amp; Convert</strong> to get a ready-to-run RF script.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 600 }}>START URL</label>
+                  <input
+                    value={recordUrl}
+                    onChange={(e) => setRecordUrl(e.target.value)}
+                    placeholder="https://your-app-url.example.com/login"
+                    style={{
+                      padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                      background: 'var(--surface-raised)', color: 'var(--text)', fontSize: 13,
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={handleStartRecording}
+                  disabled={recordBusy || !recordUrl.trim()}
+                  style={{
+                    padding: '10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    background: 'linear-gradient(135deg, var(--violet), var(--6d-orange-deep))',
+                    color: 'white', fontWeight: 700, fontSize: 13,
+                    opacity: recordBusy || !recordUrl.trim() ? 0.5 : 1,
+                  }}
+                >
+                  {recordBusy ? 'Starting…' : '▶ Start Recording'}
+                </button>
+              </>
+            )}
+
+            {recordingActive && !recordedScript && (
+              <>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '12px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                }}>
+                  <span style={{ fontSize: 20 }}>🔴</span>
+                  <div>
+                    <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: 13 }}>Recording in progress</div>
+                    <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>The browser is running on the runner. Interact with it in the noVNC tab that opened.</div>
+                  </div>
+                </div>
+                <a
+                  href={`http://${window.location.hostname}:6180/vnc.html?autoconnect=1&resize=remote&quality=6`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12, color: 'var(--cyan)', textDecoration: 'underline' }}
+                >
+                  Open noVNC viewer ↗
+                </a>
+                <button
+                  onClick={handleStopRecording}
+                  disabled={recordBusy}
+                  style={{
+                    padding: '10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    background: 'rgba(239,68,68,0.85)', color: 'white', fontWeight: 700, fontSize: 13,
+                    opacity: recordBusy ? 0.6 : 1,
+                  }}
+                >
+                  {recordBusy ? (recordBusyLabel || 'Stopping…') : '⏹ Stop & Convert to Robot Framework'}
+                </button>
+              </>
+            )}
+
+            {recordedScript && (
+              <>
+                <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                  Conversion complete. Click a test case on the left to open its script, then click <strong>Accept</strong> to load this recording into the editor.
+                </div>
+                <pre style={{
+                  background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 12, fontSize: 11, color: 'var(--text)', overflowX: 'auto', maxHeight: 320,
+                  whiteSpace: 'pre', fontFamily: 'var(--font-mono)',
+                }}>
+                  {recordedScript}
+                </pre>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={handleAcceptRecordedScript}
+                    style={{
+                      flex: 1, padding: '9px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                      background: 'var(--emerald)', color: 'white', fontWeight: 700, fontSize: 13,
+                    }}
+                  >
+                    ✓ Accept & Load into Editor
+                  </button>
+                  <button
+                    onClick={() => { setRecordedScript(''); setRecordingActive(false); }}
+                    style={{
+                      padding: '9px 14px', borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid var(--border)', background: 'none', color: 'var(--text-dim)', fontSize: 13,
+                    }}
+                  >
+                    Re-record
+                  </button>
+                  <button
+                    onClick={() => setShowRecordModal(false)}
+                    style={{
+                      padding: '9px 14px', borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid var(--border)', background: 'none', color: 'var(--text-dim)', fontSize: 13,
+                    }}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Topbar */}
@@ -2158,6 +2471,15 @@ export default function Scripts() {
             {canWrite && (
               <TbBtn variant="ghost" onClick={() => handleOpenImport()}>
                 ⬆ Import Script
+              </TbBtn>
+            )}
+            {canWrite && (
+              <TbBtn
+                variant="ghost"
+                onClick={() => { setRecordedScript(''); setRecordingActive(false); setShowRecordModal(true); }}
+                title="Record a test by interacting with the live app — Playwright captures every action"
+              >
+                🎥 Record
               </TbBtn>
             )}
             <TbBtn
@@ -2261,7 +2583,7 @@ export default function Scripts() {
                   fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 10,
                   background: 'rgba(42,157,143,0.18)', color: 'var(--emerald)', lineHeight: '14px',
                 }}>
-                  {resources.length}
+                  {resources.filter(r => !r.filename.endsWith('.gitkeep')).length}
                 </span>
               )}
             </button>
@@ -2383,20 +2705,62 @@ export default function Scripts() {
                     )}
                   </div>
 
+                  {/* Search */}
+                  <div style={{
+                    padding: '6px 10px',
+                    borderBottom: '1px solid var(--border)',
+                    flexShrink: 0,
+                    background: 'var(--surface)',
+                  }}>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <span style={{
+                        position: 'absolute', left: 8, fontSize: 11,
+                        color: 'var(--text-dim)', pointerEvents: 'none',
+                      }}>🔍</span>
+                      <input
+                        type="text"
+                        placeholder="Search by title or TC ID…"
+                        value={tcSearch}
+                        onChange={(e) => setTcSearch(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '5px 26px 5px 26px',
+                          fontSize: 11,
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                          background: 'var(--surface2)',
+                          color: 'var(--text)',
+                          outline: 'none',
+                          fontFamily: 'var(--font-ui)',
+                        }}
+                      />
+                      {tcSearch && (
+                        <button
+                          onClick={() => setTcSearch('')}
+                          style={{
+                            position: 'absolute', right: 6, background: 'none',
+                            border: 'none', cursor: 'pointer', color: 'var(--text-dim)',
+                            fontSize: 12, padding: '0 2px', lineHeight: 1,
+                          }}
+                        >✕</button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Groups */}
                   <div style={{ flex: 1, overflowY: 'auto' }}>
                     {tcsLoading ? (
                       <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: 'var(--text-dim)' }}>
                         Loading…
                       </div>
-                    ) : groups.length === 0 ? (
+                    ) : filteredGroups.length === 0 ? (
                       <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
-                        <div style={{ fontSize: 32, marginBottom: 10 }}>📋</div>
-                        No test cases yet.
+                        <div style={{ fontSize: 32, marginBottom: 10 }}>{tcSearch ? '🔍' : '📋'}</div>
+                        {tcSearch ? `No results for "${tcSearch}"` : 'No test cases yet.'}
                       </div>
                     ) : (
-                      groups.map((group) => {
-                        const isOpen = expandedGroups.has(group.name);
+                      filteredGroups.map((group) => {
+                        const isOpen = tcSearch ? true : expandedGroups.has(group.name);
                         const pending = group.tcs.filter((tc) => !scriptedTcIds.has(tc.id));
                         const done = group.tcs.length - pending.length;
                         const selCount = pending.filter((tc) => tcSelected.has(tc.id)).length;
@@ -2577,74 +2941,183 @@ export default function Scripts() {
           {/* ── RESOURCES TAB ── */}
           {leftTab === 'resources' && (
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-              {/* Accent + description + health badge */}
-              <ResourceHealthBanner projectId={projectId} resourceCount={resources.length} />
-
-              {/* Upload + Init Defaults bar */}
+              {/* Toolbar: New Folder + Upload */}
               {canWrite && (
-                <div style={{
-                  padding: '8px 10px', borderBottom: '1px solid var(--border)',
-                  flexShrink: 0, display: 'flex', gap: 6,
-                }}>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const res = await api.post<{ created: string[]; skipped: string[] }>(
-                          `/projects/${projectId}/resources/init-defaults`,
-                        );
-                        if (res.data.created.length > 0) {
-                          toast.success(`Created: ${res.data.created.join(', ')}`);
-                          void qc.invalidateQueries({ queryKey: ['resources', projectId] });
-                        } else {
-                          toast('All default files already exist', { icon: 'ℹ️' });
+                <div style={{ flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+                  {/* Absolute path display — updates on every folder/file click */}
+                  {(() => {
+                    const uploadTargetPath = resourcesBase
+                      ? (uploadFolder ? `${resourcesBase}/${uploadFolder}` : resourcesBase)
+                      : uploadFolder || '';
+                    const displayPath = selectedResourcePath || uploadTargetPath || resourcesBase || '';
+                    return (
+                      <div style={{
+                        padding: '6px 10px', borderBottom: '1px solid var(--border)',
+                        background: 'rgba(42,157,143,0.06)',
+                      }}>
+                        <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+                          {selectedResourcePath ? 'Selected path' : 'Upload target'}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span
+                            style={{
+                              flex: 1, fontFamily: 'var(--font-mono)', fontSize: 10,
+                              color: 'var(--emerald)', fontWeight: 600,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                            title={displayPath}
+                          >
+                            {displayPath}
+                          </span>
+                          <button
+                            onClick={() => {
+                              if (!displayPath) return;
+                              const finish = () => { setPathCopied(true); setTimeout(() => setPathCopied(false), 1500); };
+                              try {
+                                navigator.clipboard.writeText(displayPath).then(finish).catch(() => {
+                                  const ta = document.createElement('textarea');
+                                  ta.value = displayPath; ta.style.cssText = 'position:fixed;opacity:0';
+                                  document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                                  document.body.removeChild(ta); finish();
+                                });
+                              } catch {
+                                const ta = document.createElement('textarea');
+                                ta.value = displayPath; ta.style.cssText = 'position:fixed;opacity:0';
+                                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                                document.body.removeChild(ta); finish();
+                              }
+                            }}
+                            title="Copy path to clipboard"
+                            style={{
+                              flexShrink: 0, padding: '2px 7px', fontSize: 9, fontWeight: 700,
+                              background: pathCopied ? 'rgba(42,157,143,0.25)' : 'rgba(42,157,143,0.1)',
+                              border: `1px solid rgba(42,157,143,${pathCopied ? '0.5' : '0.25'})`,
+                              borderRadius: 3, cursor: 'pointer',
+                              color: pathCopied ? 'var(--emerald)' : 'var(--text-dim)',
+                              transition: 'all 0.15s',
+                            }}
+                          >
+                            {pathCopied ? '✓ copied' : '⎘ copy'}
+                          </button>
+                          {(uploadFolder || selectedResourcePath) && (
+                            <button
+                              onClick={() => { setUploadFolder(''); setSelectedResourcePath(''); }}
+                              title="Reset to root"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 11, padding: '1px 3px', flexShrink: 0 }}
+                            >✕</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div style={{ padding: '6px 8px', display: 'flex', gap: 5 }}>
+                    <button
+                      onClick={() => { setShowNewFolder(v => !v); setNewFolderInput(''); }}
+                      title="Create a new folder"
+                      style={{
+                        padding: '5px 7px', fontSize: 10, fontWeight: 700,
+                        background: showNewFolder ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.08)',
+                        border: '1px solid rgba(99,102,241,0.35)', borderRadius: 4, cursor: 'pointer',
+                        color: '#a5b4fc', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      📁 New Folder
+                    </button>
+                    <button
+                      onClick={() => resourceFileRef.current?.click()}
+                      style={{
+                        flex: 1, padding: '5px 7px',
+                        background: 'linear-gradient(90deg, rgba(42,157,143,0.8), rgba(34,211,238,0.7))',
+                        border: 'none', borderRadius: 4, cursor: 'pointer',
+                        color: '#fff', fontWeight: 700, fontSize: 10, whiteSpace: 'nowrap',
+                      }}
+                    >
+                      ⬆ Upload
+                    </button>
+                    <input
+                      ref={resourceFileRef}
+                      type="file"
+                      accept=".robot,.py,.yaml,.yml,.txt,.csv,.tsv,.resource,.xlsx,.xls,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp"
+                      style={{ display: 'none' }}
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        try {
+                          const result = await uploadResource.mutateAsync({ file: f, folder: uploadFolder });
+                          toast.success(`Uploaded ${result.filename}`);
+                          openResourceTab(result.filename);
+                        } catch {
+                          toast.error('Upload failed');
                         }
-                      } catch {
-                        toast.error('Failed to init defaults');
-                      }
-                    }}
-                    title="Auto-create common_keywords, variables, navigation_helpers, assertions .robot files"
-                    style={{
-                      padding: '6px 8px',
-                      background: 'rgba(42,157,143,0.12)',
-                      border: '1px solid rgba(42,157,143,0.3)', borderRadius: 5, cursor: 'pointer',
-                      color: 'var(--emerald)', fontWeight: 700, fontSize: 10,
-                    }}
-                  >
-                    ✦ Init Defaults
-                  </button>
-                  <button
-                    onClick={() => resourceFileRef.current?.click()}
-                    style={{
-                      flex: 1, padding: '6px 8px',
-                      background: 'linear-gradient(90deg, rgba(42,157,143,0.8), rgba(34,211,238,0.7))',
-                      border: 'none', borderRadius: 5, cursor: 'pointer',
-                      color: '#fff', fontWeight: 700, fontSize: 11,
-                    }}
-                  >
-                    ⬆ Upload .robot resource
-                  </button>
-                  <input
-                    ref={resourceFileRef}
-                    type="file"
-                    accept=".robot"
-                    style={{ display: 'none' }}
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) return;
-                      try {
-                        const result = await uploadResource.mutateAsync(f);
-                        toast.success(`Uploaded ${result.filename}`);
-                        openResourceTab(result.filename);
-                      } catch {
-                        toast.error('Upload failed');
-                      }
-                      e.target.value = '';
-                    }}
-                  />
+                        e.target.value = '';
+                      }}
+                    />
+                  </div>
+
+                  {/* New Folder inline form */}
+                  {showNewFolder && (
+                    <div style={{
+                      padding: '6px 8px 8px', display: 'flex', gap: 5, alignItems: 'center',
+                      background: 'rgba(99,102,241,0.06)', borderTop: '1px solid rgba(99,102,241,0.2)',
+                    }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                        📁 {uploadFolder ? `${uploadFolder}/` : ''}
+                      </span>
+                      <input
+                        autoFocus
+                        value={newFolderInput}
+                        onChange={e => setNewFolderInput(e.target.value)}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter') {
+                            const name = newFolderInput.trim().replace(/[^a-zA-Z0-9._\-/]/g, '_');
+                            if (!name) return;
+                            const fullPath = uploadFolder ? `${uploadFolder}/${name}` : name;
+                            try {
+                              await createFolder.mutateAsync(fullPath);
+                              setExpandedFolders(prev => new Set([...prev, fullPath.split('/')[0], fullPath]));
+                              toast.success(`Created folder: ${fullPath}`);
+                              setShowNewFolder(false);
+                              setNewFolderInput('');
+                            } catch { toast.error('Failed to create folder'); }
+                          }
+                          if (e.key === 'Escape') { setShowNewFolder(false); setNewFolderInput(''); }
+                        }}
+                        placeholder="folder-name  (Enter to create)"
+                        style={{
+                          flex: 1, padding: '4px 7px', fontSize: 10,
+                          background: 'var(--bg-2)', border: '1px solid rgba(99,102,241,0.4)',
+                          borderRadius: 4, color: 'var(--text)', outline: 'none',
+                          fontFamily: 'var(--font-mono)',
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          const name = newFolderInput.trim().replace(/[^a-zA-Z0-9._\-/]/g, '_');
+                          if (!name) return;
+                          const fullPath = uploadFolder ? `${uploadFolder}/${name}` : name;
+                          try {
+                            await createFolder.mutateAsync(fullPath);
+                            setExpandedFolders(prev => new Set([...prev, fullPath.split('/')[0], fullPath]));
+                            toast.success(`Created folder: ${fullPath}`);
+                            setShowNewFolder(false);
+                            setNewFolderInput('');
+                          } catch { toast.error('Failed to create folder'); }
+                        }}
+                        style={{
+                          padding: '4px 8px', fontSize: 10, fontWeight: 700,
+                          background: 'rgba(99,102,241,0.25)', border: '1px solid rgba(99,102,241,0.4)',
+                          borderRadius: 4, cursor: 'pointer', color: '#a5b4fc',
+                        }}
+                      >
+                        Create
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Resource file list */}
+              {/* Resource file tree */}
               <div style={{ flex: 1, overflowY: 'auto' }}>
                 {resourcesLoading ? (
                   <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>
@@ -2660,52 +3133,279 @@ export default function Scripts() {
                       ))}
                     </div>
                   </div>
-                ) : (
-                  resources.map((r) => (
-                    <div
-                      key={r.id}
-                      onClick={() => openResourceTab(r.filename)}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '8px 12px', cursor: 'pointer',
-                        background: activeTabId === `resource:${r.filename}` ? 'rgba(42,157,143,0.1)' : 'transparent',
-                        borderBottom: '1px solid var(--border)',
-                        borderLeft: activeTabId === `resource:${r.filename}` ? '2px solid var(--emerald)' : '2px solid transparent',
-                        transition: 'all 0.12s',
-                      }}
-                    >
-                      <span style={{ fontSize: 13 }}>🤖</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {r.filename}
-                        </div>
-                        <div style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                          {(r.size / 1024).toFixed(1)} KB · {new Date(r.uploadedAt).toLocaleDateString()}
-                        </div>
-                      </div>
-                      {canWrite && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!window.confirm(`Delete "${r.filename}"?`)) return;
-                            deleteResource.mutateAsync(r.filename).then(() => {
-                              closeTab(`resource:${r.filename}`);
-                              toast.success('Deleted');
-                            }).catch(() => toast.error('Delete failed'));
+                ) : (() => {
+                  // Build tree from flat file list
+                  type RTreeNode =
+                    | { type: 'file'; name: string; path: string; resource: typeof resources[0] }
+                    | { type: 'folder'; name: string; path: string; children: RTreeNode[] };
+
+                  function buildTree(files: typeof resources): RTreeNode[] {
+                    const root: RTreeNode[] = [];
+                    for (const r of [...files].sort((a, b) => a.filename.localeCompare(b.filename))) {
+                      const parts = r.filename.split('/');
+                      let current = root;
+                      let curPath = '';
+                      for (let i = 0; i < parts.length - 1; i++) {
+                        curPath = curPath ? `${curPath}/${parts[i]}` : parts[i];
+                        let folder = current.find(n => n.type === 'folder' && n.name === parts[i]) as (RTreeNode & { type: 'folder' }) | undefined;
+                        if (!folder) {
+                          folder = { type: 'folder', name: parts[i], path: curPath, children: [] };
+                          current.push(folder);
+                        }
+                        current = folder.children;
+                      }
+                      current.push({ type: 'file', name: parts[parts.length - 1], path: r.filename, resource: r });
+                    }
+                    return root;
+                  }
+
+                  const fileIcon = (name: string) => {
+                    if (name.endsWith('.robot') || name.endsWith('.resource')) return '🤖';
+                    if (name.endsWith('.py')) return '🐍';
+                    if (name.endsWith('.yaml') || name.endsWith('.yml')) return '📋';
+                    if (name.endsWith('.csv') || name.endsWith('.tsv') || name.endsWith('.txt')) return '📄';
+                    return '📎';
+                  };
+                  const isEditable = (name: string) =>
+                    ['.robot', '.resource', '.py', '.yaml', '.yml', '.csv', '.tsv', '.txt'].some(ext => name.endsWith(ext));
+
+                  function renderTree(nodes: RTreeNode[], depth: number): React.ReactNode {
+                    return nodes.map(node => {
+                      if (node.type === 'folder') {
+                        const isOpen = expandedFolders.has(node.path);
+                        const isTarget = uploadFolder === node.path;
+                        const isDragTarget = dragOverFolder === node.path;
+                        return (
+                          <React.Fragment key={node.path}>
+                            <div
+                              onClick={() => {
+                                setExpandedFolders(prev => {
+                                  const next = new Set(prev);
+                                  isOpen ? next.delete(node.path) : next.add(node.path);
+                                  return next;
+                                });
+                                setUploadFolder(node.path);
+                                const fullPath = resourcesBase ? `${resourcesBase}/${node.path}` : node.path;
+                                setSelectedResourcePath(fullPath);
+                              }}
+                              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverFolder(node.path); }}
+                              onDragLeave={(e) => { e.stopPropagation(); setDragOverFolder(null); }}
+                              onDrop={(e) => {
+                                e.preventDefault(); e.stopPropagation();
+                                const filename = e.dataTransfer.getData('text/plain');
+                                setDragOverFolder(null);
+                                if (!filename || filename.startsWith(node.path + '/')) return;
+                                moveResource.mutateAsync({ filename, destination: node.path }).then(() => {
+                                  closeTab(`resource:${filename}`);
+                                  toast.success(`Moved to ${node.name}`);
+                                }).catch(() => toast.error('Move failed'));
+                              }}
+                              title={resourcesBase ? `${resourcesBase}/${node.path}` : node.path}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: `5px 12px 5px ${12 + depth * 14}px`,
+                                cursor: 'pointer', userSelect: 'none',
+                                borderBottom: '1px solid var(--border)',
+                                background: isDragTarget ? 'rgba(99,102,241,0.25)' : isTarget ? 'rgba(99,102,241,0.1)' : 'transparent',
+                                borderLeft: isDragTarget ? '2px solid #818cf8' : isTarget ? '2px solid #818cf8' : '2px solid transparent',
+                                outline: isDragTarget ? '1px dashed #818cf8' : 'none',
+                              }}
+                            >
+                              <span style={{ fontSize: 9, color: 'var(--text-dim)', width: 10, flexShrink: 0 }}>
+                                {isOpen ? '▾' : '▸'}
+                              </span>
+                              <span style={{ fontSize: 12 }}>{isOpen ? '📂' : '📁'}</span>
+                              <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: isTarget ? '#a5b4fc' : 'var(--text)' }}>{node.name}</span>
+                              {canWrite && (
+                                deletingFolder === node.path ? (
+                                  <div style={{ display: 'flex', gap: 3, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                                    <span style={{ fontSize: 9, color: 'var(--fail)', whiteSpace: 'nowrap' }}>Delete folder?</span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        deleteFolder.mutateAsync(node.path).then(() => {
+                                          setDeletingFolder(null);
+                                          if (uploadFolder === node.path) setUploadFolder('');
+                                          toast.success('Folder deleted');
+                                        }).catch(() => toast.error('Delete failed'));
+                                      }}
+                                      style={{ background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer', color: 'var(--rose)', fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}
+                                    >Yes</button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setDeletingFolder(null); }}
+                                      style={{ background: 'none', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 9, padding: '1px 5px', borderRadius: 3 }}
+                                    >No</button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setDeletingFolder(node.path); }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12, padding: '2px 4px', lineHeight: 1, borderRadius: 3 }}
+                                    title="Delete folder"
+                                  >✕</button>
+                                )
+                              )}
+                            </div>
+                            {isOpen && renderTree(node.children, depth + 1)}
+                          </React.Fragment>
+                        );
+                      }
+                      // Hidden placeholder for empty folders — don't render
+                      if (node.name === '.gitkeep') return null;
+                      const r = node.resource;
+                      const tabId = `resource:${r.filename}`;
+                      const isActive = activeTabId === tabId;
+                      const isBinary = r.isBinary ?? false;
+                      const canEdit = !isBinary && isEditable(node.name);
+                      return (
+                        <div
+                          key={node.path}
+                          draggable={canWrite}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', r.filename);
+                            e.dataTransfer.effectAllowed = 'move';
+                          }}
+                          onClick={() => {
+                            setSelectedResourcePath(r.containerPath ?? (resourcesBase ? `${resourcesBase}/${r.filename}` : r.filename));
+                            if (canEdit) openResourceTab(r.filename);
                           }}
                           style={{
-                            background: 'none', border: 'none', cursor: 'pointer',
-                            color: 'var(--text-dim)', fontSize: 12, padding: '2px 4px',
-                            lineHeight: 1, borderRadius: 3,
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: `7px 12px 7px ${22 + depth * 14}px`,
+                            cursor: canWrite ? 'grab' : canEdit ? 'pointer' : 'default',
+                            background: isActive ? 'rgba(42,157,143,0.1)' : 'transparent',
+                            borderBottom: '1px solid var(--border)',
+                            borderLeft: isActive ? '2px solid var(--emerald)' : '2px solid transparent',
+                            transition: 'all 0.12s',
                           }}
-                          title="Delete resource file"
                         >
-                          ✕
-                        </button>
+                          <span style={{ fontSize: 11 }}>{isBinary ? (node.name.endsWith('.pdf') ? '📑' : '📊') : fileIcon(node.name)}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {node.name}
+                            </div>
+                            <div style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                              {r.size >= 1024 * 1024
+                                ? `${(r.size / 1024 / 1024).toFixed(1)} MB`
+                                : `${(r.size / 1024).toFixed(1)} KB`} · {new Date(r.uploadedAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadResource(projectId ?? '', r.filename);
+                              toast.success(`Downloading ${node.name}`);
+                            }}
+                            style={{
+                              background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)',
+                              cursor: 'pointer', color: 'var(--cyan)', fontSize: 10, padding: '2px 6px',
+                              borderRadius: 3, fontWeight: 600, flexShrink: 0,
+                            }}
+                            title="Download file"
+                          >↓</button>
+                          {canWrite && movingResource === r.filename ? (
+                            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                              <span style={{ fontSize: 9, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>Move to:</span>
+                              <select
+                                autoFocus
+                                defaultValue="__placeholder__"
+                                onChange={(e) => {
+                                  const dest = e.target.value === '__root__' ? '' : e.target.value;
+                                  moveResource.mutateAsync({ filename: r.filename, destination: dest }).then(() => {
+                                    setMovingResource(null);
+                                    closeTab(`resource:${r.filename}`);
+                                    toast.success('Moved');
+                                  }).catch(() => toast.error('Move failed'));
+                                }}
+                                style={{ fontSize: 9, background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 3px' }}
+                              >
+                                <option value="__placeholder__" disabled>Select folder…</option>
+                                <option value="__root__">(root)</option>
+                                {Array.from(new Set(resources.map(f => {
+                                  const parts = f.filename.split('/');
+                                  return parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+                                }).filter(Boolean) as string[])).sort().map(folder => (
+                                  <option key={folder} value={folder}>{folder}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setMovingResource(null); }}
+                                style={{ background: 'none', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 9, padding: '1px 5px', borderRadius: 3 }}
+                              >✕</button>
+                            </div>
+                          ) : canWrite && (
+                            deletingResourceFile === r.filename ? (
+                              <div style={{ display: 'flex', gap: 3, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                                <span style={{ fontSize: 9, color: 'var(--fail)', whiteSpace: 'nowrap' }}>Delete?</span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteResource.mutateAsync(r.filename).then(() => {
+                                      closeTab(`resource:${r.filename}`);
+                                      setDeletingResourceFile(null);
+                                      toast.success('Deleted');
+                                    }).catch(() => toast.error('Delete failed'));
+                                  }}
+                                  style={{ background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer', color: 'var(--rose)', fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}
+                                >Yes</button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setDeletingResourceFile(null); }}
+                                  style={{ background: 'none', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 9, padding: '1px 5px', borderRadius: 3 }}
+                                >No</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setMovingResource(r.filename); setDeletingResourceFile(null); }}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 10, padding: '2px 4px', lineHeight: 1, borderRadius: 3 }}
+                                  title="Move file"
+                                >⇄</button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setDeletingResourceFile(r.filename); setMovingResource(null); }}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12, padding: '2px 4px', lineHeight: 1, borderRadius: 3 }}
+                                  title="Delete resource file"
+                                >✕</button>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      );
+                    });
+                  }
+
+                  const rootDropActive = dragOverFolder === '__root__';
+                  return (
+                    <>
+                      {canWrite && (
+                        <div
+                          onDragOver={(e) => { e.preventDefault(); setDragOverFolder('__root__'); }}
+                          onDragLeave={() => setDragOverFolder(null)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const filename = e.dataTransfer.getData('text/plain');
+                            setDragOverFolder(null);
+                            if (!filename || !filename.includes('/')) return;
+                            moveResource.mutateAsync({ filename, destination: '' }).then(() => {
+                              closeTab(`resource:${filename}`);
+                              toast.success('Moved to root');
+                            }).catch(() => toast.error('Move failed'));
+                          }}
+                          style={{
+                            padding: '4px 12px',
+                            fontSize: 9, color: rootDropActive ? '#a5b4fc' : 'var(--text-dim)',
+                            background: rootDropActive ? 'rgba(99,102,241,0.15)' : 'transparent',
+                            borderBottom: '1px solid var(--border)',
+                            outline: rootDropActive ? '1px dashed #818cf8' : 'none',
+                            textAlign: 'center',
+                            transition: 'all 0.1s',
+                          }}
+                        >
+                          {rootDropActive ? '📂 Drop here to move to root' : '↑ Drop here for root'}
+                        </div>
                       )}
-                    </div>
-                  ))
-                )}
+                      {renderTree(buildTree(resources), 0)}
+                    </>
+                  );
+                })()}
               </div>
 
             </div>
@@ -2747,11 +3447,19 @@ export default function Scripts() {
                 borderBottom: '1px solid rgba(255,255,255,0.05)',
                 minHeight: 32,
               }}>
-                {activeTab?.kind === 'resource' && (
-                  <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginRight: 'auto' }}>
-                    resources/{activeTab.filename}
-                  </span>
-                )}
+                {activeTab?.kind === 'resource' && (() => {
+                  const r = resources.find(res => res.filename === activeTab.filename);
+                  const cp = r?.containerPath ?? `resources/${activeTab.filename}`;
+                  return (
+                    <span
+                      style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginRight: 'auto', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={`Click to copy: ${cp}`}
+                      onClick={() => navigator.clipboard.writeText(cp)}
+                    >
+                      {cp}
+                    </span>
+                  );
+                })()}
                 {activeTab?.kind === 'script' && canWrite && activeScript?.testCaseId && (
                   <button
                     onClick={() => setShowRegenModal(true)}
@@ -2816,7 +3524,7 @@ export default function Scripts() {
                     <button
                       onClick={handleQuickRun}
                       disabled={quickRunning || quickRunStatus === 'PENDING' || quickRunStatus === 'RUNNING'}
-                      title={`Run this script against the default environment${envConfigs.find(e => e.isDefault) ? ` (${envConfigs.find(e => e.isDefault)!.name})` : ''}`}
+                      title={`Run this script inside Docker against the default environment${envConfigs.find(e => e.isDefault) ? ` (${envConfigs.find(e => e.isDefault)!.name})` : ''}`}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 5,
                         padding: '3px 11px', borderRadius: 5, cursor: (quickRunning || quickRunStatus === 'RUNNING' || quickRunStatus === 'PENDING') ? 'not-allowed' : 'pointer',
@@ -2843,7 +3551,39 @@ export default function Scripts() {
                         : <>▶ Run</>}
                     </button>
 
-                    {/* Inline result badge */}
+                    {/* ▶ Run in Host Browser button — connects to Chrome on the host via CDP */}
+                    <button
+                      onClick={handleHostBrowserRun}
+                      disabled={hostRunning || hostRunStatus === 'PENDING' || hostRunStatus === 'RUNNING'}
+                      title={`Run in your host Chrome browser (requires Chrome running with --remote-debugging-port=9222)`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '3px 11px', borderRadius: 5,
+                        cursor: (hostRunning || hostRunStatus === 'RUNNING' || hostRunStatus === 'PENDING') ? 'not-allowed' : 'pointer',
+                        fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                        border: '1px solid rgba(96,165,250,0.5)',
+                        background: 'rgba(96,165,250,0.1)',
+                        color: 'var(--sky)',
+                        opacity: (hostRunning || hostRunStatus === 'RUNNING' || hostRunStatus === 'PENDING') ? 0.6 : 1,
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!hostRunning) {
+                          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(96,165,250,0.2)';
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(96,165,250,0.8)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = 'rgba(96,165,250,0.1)';
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(96,165,250,0.5)';
+                      }}
+                    >
+                      {(hostRunning || hostRunStatus === 'PENDING' || hostRunStatus === 'RUNNING')
+                        ? <>⏳ Running in Host…</>
+                        : <>🌐 Run in Host Browser</>}
+                    </button>
+
+                    {/* Inline result badge — Docker run */}
                     {quickRunId && !quickRunning && quickRunStatus && quickRunStatus !== 'PENDING' && quickRunStatus !== 'RUNNING' && (
                       <>
                         <span
@@ -2873,7 +3613,6 @@ export default function Scripts() {
                           {quickRunStatus === 'PASSED' ? '✅ PASSED' : quickRunStatus === 'FAILED' ? '❌ FAILED' : `⚠ ${quickRunStatus}`}
                           <span style={{ fontSize: 9, opacity: 0.7 }}>↗</span>
                         </span>
-                        {/* Re-open monitor */}
                         {quickRunId && (
                           <button
                             onClick={() => { setMonitorRunId(quickRunId); setMonitorScript(activeScript?.filename ?? ''); setShowMonitor(true); }}
@@ -2887,8 +3626,67 @@ export default function Scripts() {
                             ◫ Monitor
                           </button>
                         )}
-                        {/* Fix with AI — only on failure */}
                         {quickRunStatus === 'FAILED' && activeScript?.testCaseId && (
+                          <button
+                            onClick={() => {
+                              setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
+                              setShowRegenModal(true);
+                            }}
+                            style={{
+                              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                              background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)',
+                              color: 'var(--violet)', fontFamily: 'var(--font-ui)',
+                            }}
+                          >
+                            🩹 Fix with AI
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    {/* Inline result badge — Host browser run */}
+                    {hostRunId && !hostRunning && hostRunStatus && hostRunStatus !== 'PENDING' && hostRunStatus !== 'RUNNING' && (
+                      <>
+                        <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)' }}>🌐</span>
+                        <span
+                          title="Click to view host-browser run results"
+                          onClick={() => navigate(`/projects/${slug}/execution?runId=${hostRunId}`)}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                            border: hostRunStatus === 'PASSED'
+                              ? '1px solid rgba(96,165,250,0.5)'
+                              : hostRunStatus === 'FAILED'
+                              ? '1px solid rgba(248,113,113,0.5)'
+                              : '1px solid rgba(255,255,255,0.15)',
+                            background: hostRunStatus === 'PASSED'
+                              ? 'rgba(96,165,250,0.1)'
+                              : hostRunStatus === 'FAILED'
+                              ? 'rgba(248,113,113,0.1)'
+                              : 'rgba(255,255,255,0.05)',
+                            color: hostRunStatus === 'PASSED'
+                              ? 'var(--sky)'
+                              : hostRunStatus === 'FAILED'
+                              ? 'var(--rose)'
+                              : 'var(--text-dim)',
+                          }}
+                        >
+                          {hostRunStatus === 'PASSED' ? '✅ PASSED' : hostRunStatus === 'FAILED' ? '❌ FAILED' : `⚠ ${hostRunStatus}`}
+                          <span style={{ fontSize: 9, opacity: 0.7 }}>↗</span>
+                        </span>
+                        <button
+                          onClick={() => { setMonitorRunId(hostRunId); setMonitorScript(activeScript?.filename ?? ''); setShowMonitor(true); }}
+                          title="Open host-browser execution monitor"
+                          style={{
+                            fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
+                            background: 'transparent', border: '1px solid rgba(96,165,250,0.2)',
+                            color: 'var(--sky)', fontFamily: 'var(--font-ui)',
+                          }}
+                        >
+                          ◫ Monitor
+                        </button>
+                        {hostRunStatus === 'FAILED' && activeScript?.testCaseId && (
                           <button
                             onClick={() => {
                               setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
@@ -2922,7 +3720,65 @@ export default function Scripts() {
                 )}
                 <Editor
                   height="100%"
-                  language={activeTab?.kind === 'resource' || activeScript?.filename?.endsWith('.robot') ? 'plaintext' : 'typescript'}
+                  onMount={(editor, monaco) => {
+                    monacoEditorRef.current = editor;
+
+                    // Register language + providers once — they're global to the Monaco instance
+                    if (!rfLangRegisteredRef.current) {
+                      rfLangRegisteredRef.current = true;
+                      monaco.languages.register({ id: 'robotframework' });
+                      monaco.languages.registerHoverProvider('robotframework', {
+                        provideHover: (model: any, position: any) => {
+                          const kw = findRFKeywordAtPosition(model, position, keywordIndexRef.current);
+                          if (!kw) return null;
+                          const def = keywordIndexRef.current[kw];
+                          return {
+                            contents: [
+                              { value: `**${kw}**` },
+                              { value: `Defined in \`${def.filename}\` — line ${def.line}` },
+                              { value: '_Ctrl+Click or F12 to go to definition_' },
+                            ],
+                          };
+                        },
+                      });
+                    }
+
+                    // F12 — go to keyword definition
+                    editor.addAction({
+                      id: 'go-to-rf-keyword-definition',
+                      label: 'Go to Keyword Definition (Robot Framework)',
+                      keybindings: [monaco.KeyCode.F12],
+                      run: (ed) => {
+                        const pos = ed.getPosition();
+                        if (!pos) return;
+                        const kw = findRFKeywordAtPosition(ed.getModel(), pos, keywordIndexRef.current);
+                        if (kw) openResourceTabRef.current(keywordIndexRef.current[kw].filename, keywordIndexRef.current[kw].line);
+                      },
+                    });
+
+                    // Ctrl+Click — go to keyword definition
+                    editor.onMouseDown((e) => {
+                      if (!(e.event.ctrlKey || e.event.metaKey)) return;
+                      if (e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
+                      const pos = e.target.position;
+                      if (!pos) return;
+                      const kw = findRFKeywordAtPosition(editor.getModel(), pos, keywordIndexRef.current);
+                      if (kw) {
+                        e.event.preventDefault();
+                        openResourceTabRef.current(keywordIndexRef.current[kw].filename, keywordIndexRef.current[kw].line);
+                      }
+                    });
+                  }}
+                  language={
+                    activeScript?.filename?.endsWith('.robot') ? 'robotframework'
+                    : activeTab?.kind === 'resource'
+                      ? (activeTab.filename.endsWith('.py') ? 'python'
+                        : activeTab.filename.endsWith('.yaml') || activeTab.filename.endsWith('.yml') ? 'yaml'
+                        : activeTab.filename.endsWith('.csv') || activeTab.filename.endsWith('.tsv') ? 'plaintext'
+                        : (activeTab.filename.endsWith('.robot') || activeTab.filename.endsWith('.resource')) ? 'robotframework'
+                        : 'plaintext')
+                    : 'typescript'
+                  }
                   theme="vs-dark"
                   value={activeContent}
                   onChange={(v) => {

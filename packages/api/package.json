@@ -13,6 +13,7 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.50.0",
     "@langchain/anthropic": "^0.2.15",
     "@langchain/community": "^0.2.28",
     "@langchain/openai": "^0.2.8",

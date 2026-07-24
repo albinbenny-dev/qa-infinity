@@ -248,3 +248,25 @@ export function useDeleteReqDoc(projectId: string) {
     },
   });
 }
+
+export interface UserSearchResult {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export function useUserSearch(projectId: string, query: string) {
+  return useQuery({
+    queryKey: ['user-search', projectId, query],
+    queryFn: async () => {
+      if (!projectId || query.trim().length < 2) return [];
+      const res = await api.get<{ users: UserSearchResult[] }>(
+        `/projects/${projectId}/users/search`,
+        { params: { q: query.trim() } },
+      );
+      return res.data.users;
+    },
+    enabled: !!projectId && query.trim().length >= 2,
+    staleTime: 10_000,
+  });
+}

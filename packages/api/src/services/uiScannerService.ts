@@ -342,7 +342,7 @@ async function executePostLoginNavigation(page: Page, instructions: string): Pro
     }
 
     // ── Ask LLM which element to click ────────────────────────────────────
-    const llm = createLLM({ temperature: 0, agentName: 'ui-scanner' });
+    const llm = createLLM({ temperature: 0, agentName: 'ui-context-agent' });
     const prompt = [
       `Custom scan instructions: "${instructions}"`,
       '',

@@ -283,6 +283,43 @@ projectRouter.delete(
 
 // ── Members ────────────────────────────────────────────────────────────────
 
+// GET /api/projects/:projectId/users/search?q= — search registered users for member autocomplete
+projectRouter.get(
+  '/users/search',
+  requireProjectAdmin as RequestHandler,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const q = (req.query.q as string ?? '').trim();
+      if (!q || q.length < 2) {
+        res.json({ users: [] });
+        return;
+      }
+      const existingMemberIds = (
+        await prisma.projectMember.findMany({
+          where: { projectId: req.project.id },
+          select: { userId: true },
+        })
+      ).map((m) => m.userId);
+
+      const users = await prisma.user.findMany({
+        where: {
+          id: { notIn: existingMemberIds },
+          OR: [
+            { email: { contains: q, mode: 'insensitive' } },
+            { name: { contains: q, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, name: true, email: true },
+        take: 8,
+        orderBy: { email: 'asc' },
+      });
+      res.json({ users });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /api/projects/:projectId/members — list all members of a project
 projectRouter.get('/members', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -427,11 +464,25 @@ projectRouter.put(
 // GET /api/projects/:projectId/envs
 projectRouter.get('/envs', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const isAdmin =
+      req.user.globalRole === 'SUPER_ADMIN' ||
+      req.user.globalRole === 'ADMIN' ||
+      req.projectMember?.role === 'ADMIN';
+
     const envs = await prisma.envConfig.findMany({
       where: { projectId: req.project.id },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
     });
-    res.json({ envs });
+
+    // Only project ADMINs and global admins receive the raw password; all other
+    // roles receive a masked placeholder so they know a password exists without
+    // being able to read it.
+    const sanitized = envs.map((e) => ({
+      ...e,
+      password: isAdmin ? e.password : e.password ? '••••••••' : null,
+    }));
+
+    res.json({ envs: sanitized });
   } catch (err) {
     next(err);
   }

@@ -11,6 +11,7 @@ import {
   type AdminUser,
 } from '../hooks/useAdminUsers';
 import { getInitials } from '../lib/utils';
+import { ROLES } from '../lib/roles';
 
 const LABEL_STYLE: React.CSSProperties = {
   display: 'block',
@@ -160,6 +161,129 @@ function ResetPasswordDialog({
   );
 }
 
+// ── Role Permissions Matrix ────────────────────────────────────────────────
+
+type PermRow = {
+  section: string;
+  feature: string;
+  SUPER_ADMIN: boolean;
+  ADMIN: boolean;
+  SUPER_USER: boolean;
+  STANDARD_USER: boolean;
+};
+
+const PERMISSIONS: PermRow[] = [
+  // Platform
+  { section: 'Platform',  feature: 'User Management',   SUPER_ADMIN: true,  ADMIN: false, SUPER_USER: false, STANDARD_USER: false },
+  { section: 'Platform',  feature: 'All Projects',       SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: false, STANDARD_USER: false },
+  { section: 'Platform',  feature: 'AI Usage',           SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  // Overview
+  { section: 'Overview',  feature: 'Dashboard',          SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Overview',  feature: 'TC Library',         SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  // Agents
+  { section: 'Agents',    feature: 'Test Writer',        SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Agents',    feature: 'Script Agent',       SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Agents',    feature: 'Execution',          SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Agents',    feature: 'Scheduler',          SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Agents',    feature: 'UI Scanner',         SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: false },
+  { section: 'Agents',    feature: 'Healing Agent',      SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: false },
+  // Analytics
+  { section: 'Analytics', feature: 'Reports',            SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Analytics', feature: 'Chat Agent',         SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  // Project Tools
+  { section: 'Project Tools', feature: 'Copy / Export',  SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
+  { section: 'Project Tools', feature: 'Project Settings', SUPER_ADMIN: true, ADMIN: true, SUPER_USER: false, STANDARD_USER: false },
+  { section: 'Project Tools', feature: 'Member Management', SUPER_ADMIN: true, ADMIN: true, SUPER_USER: false, STANDARD_USER: false },
+];
+
+function PermCell({ allowed }: { allowed: boolean }) {
+  return (
+    <td style={{ textAlign: 'center', padding: '8px 6px' }}>
+      {allowed ? (
+        <span style={{ color: 'var(--pass)', fontSize: '14px', fontWeight: 700 }}>✓</span>
+      ) : (
+        <span style={{ color: 'var(--fail)', fontSize: '13px', opacity: 0.6 }}>✕</span>
+      )}
+    </td>
+  );
+}
+
+function RolePermissionsMatrix() {
+  const sections = [...new Set(PERMISSIONS.map((p) => p.section))];
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table className="data-table" style={{ minWidth: '600px' }}>
+        <thead>
+          <tr>
+            <th style={{ width: '90px', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>Section</th>
+            <th style={{ minWidth: '140px' }}>Feature</th>
+            {ROLES.map((r) => (
+              <th key={r.key} style={{ textAlign: 'center', minWidth: '110px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                  <span className={`badge ${r.badge}`} style={{ fontSize: '9px', letterSpacing: '0.5px' }}>
+                    {r.icon} {r.label}
+                  </span>
+                  <span style={{ fontSize: '9px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontWeight: 400 }}>
+                    {r.tier}
+                  </span>
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sections.map((section) => {
+            const rows = PERMISSIONS.filter((p) => p.section === section);
+            return rows.map((row, idx) => (
+              <tr key={row.feature}>
+                {idx === 0 && (
+                  <td
+                    rowSpan={rows.length}
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      letterSpacing: '1px',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-dim)',
+                      verticalAlign: 'middle',
+                      paddingLeft: '14px',
+                      borderRight: '1px solid var(--border)',
+                      background: 'var(--surface2)',
+                    }}
+                  >
+                    {section}
+                  </td>
+                )}
+                <td style={{ fontFamily: 'var(--font-ui)', fontSize: '12px', color: 'var(--text-mid)', paddingLeft: '14px' }}>
+                  {row.feature}
+                </td>
+                <PermCell allowed={row.SUPER_ADMIN} />
+                <PermCell allowed={row.ADMIN} />
+                <PermCell allowed={row.SUPER_USER} />
+                <PermCell allowed={row.STANDARD_USER} />
+              </tr>
+            ));
+          })}
+        </tbody>
+      </table>
+
+      {/* Role descriptions */}
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', padding: '16px 14px', borderTop: '1px solid var(--border)' }}>
+        {ROLES.map((r) => (
+          <div key={r.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flex: 1, minWidth: '200px' }}>
+            <span className={`badge ${r.badge}`} style={{ flexShrink: 0, marginTop: '1px', fontSize: '9px' }}>
+              {r.icon} {r.label}
+            </span>
+            <p style={{ fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.5, margin: 0 }}>{r.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function UserManagement() {
   const { currentUser } = useProjectStore();
@@ -207,9 +331,10 @@ export default function UserManagement() {
 
   const totalUsers       = users.length;
   const superAdminCount  = users.filter((u) => u.globalRole === 'SUPER_ADMIN').length;
+  const adminCount       = users.filter((u) => u.globalRole === 'ADMIN').length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Topbar
         breadcrumbs={[
           { label: 'Admin' },
@@ -217,7 +342,7 @@ export default function UserManagement() {
         ]}
       />
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Page header */}
         <div>
           <div className="page-eyebrow">Administration</div>
@@ -228,9 +353,10 @@ export default function UserManagement() {
         {/* Stats row */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px' }}>
           {[
-            { label: 'Total Users',   value: totalUsers,      color: 'var(--cyan)' },
-            { label: 'Super Admins',  value: superAdminCount, color: 'var(--6d-orange)' },
-            { label: 'Regular Users', value: totalUsers - superAdminCount, color: 'var(--pass)' },
+            { label: 'Total Users',    value: totalUsers,                              color: 'var(--cyan)' },
+            { label: 'Super Admins',   value: superAdminCount,                         color: 'var(--6d-orange)' },
+            { label: 'Admins',         value: adminCount,                              color: 'var(--pass)' },
+            { label: 'Project Users',  value: totalUsers - superAdminCount - adminCount, color: 'var(--violet)' },
           ].map((s) => (
             <div key={s.label} className="stat-card" style={{ padding: '14px' }}>
               <div className="stat-label">{s.label}</div>
@@ -245,8 +371,9 @@ export default function UserManagement() {
             <div className="card-title">All Users</div>
             <span className="badge badge-draft">{totalUsers}</span>
           </div>
+          <div style={{ height: '380px', overflowY: 'auto' }}>
           <table className="data-table">
-            <thead>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--surface)' }}>
               <tr>
                 <th>User</th>
                 <th>Email</th>
@@ -316,15 +443,20 @@ export default function UserManagement() {
                             autoFocus
                             onChange={(e) => void handleRoleChange(u.id, e.target.value)}
                             onBlur={() => setChangingRoleId(null)}
-                            style={{ fontSize: '11px', padding: '3px 8px', width: '140px', fontFamily: 'var(--font-ui)' }}
+                            style={{ fontSize: '11px', padding: '3px 8px', width: '160px', fontFamily: 'var(--font-ui)' }}
                           >
-                            <option value="USER">USER</option>
-                            <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                            <option value="SUPER_ADMIN">⭐ SUPER_ADMIN</option>
+                            <option value="ADMIN">🛡 ADMIN</option>
+                            <option value="SUPER_USER">👤 SUPER_USER</option>
+                            <option value="STANDARD_USER">👥 STANDARD_USER</option>
                           </select>
                         ) : (
                           <button
                             type="button"
-                            className={`badge ${u.globalRole === 'SUPER_ADMIN' ? 'badge-cyan' : 'badge-draft'}`}
+                            className={`badge ${
+                              u.globalRole === 'SUPER_ADMIN' ? 'badge-cyan' :
+                              u.globalRole === 'ADMIN' ? 'badge-pass' : 'badge-draft'
+                            }`}
                             title={isSelf ? 'Cannot change own role' : 'Click to change role'}
                             onClick={() => { if (!isSelf) setChangingRoleId(u.id); }}
                             style={{
@@ -333,7 +465,9 @@ export default function UserManagement() {
                               opacity: isSelf ? 0.7 : 1,
                             }}
                           >
-                            {u.globalRole === 'SUPER_ADMIN' ? '⭐ SUPER_ADMIN' : 'USER'}
+                            {u.globalRole === 'SUPER_ADMIN' ? '⭐ SUPER_ADMIN' :
+                             u.globalRole === 'ADMIN' ? '🛡 ADMIN' :
+                             u.globalRole === 'SUPER_USER' ? '👤 SUPER_USER' : '👥 STANDARD_USER'}
                             {!isSelf && ' ✎'}
                           </button>
                         )}
@@ -398,32 +532,18 @@ export default function UserManagement() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
-        {/* Role legend */}
+        {/* Role Permissions Matrix */}
         <div className="card">
           <div className="card-header">
-            <div className="card-title">Role Reference</div>
+            <div className="card-title">Role Permissions</div>
+            <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+              Platform &amp; project-level access control
+            </span>
           </div>
-          <div className="card-body" style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-            {[
-              {
-                role: 'SUPER_ADMIN',
-                badge: 'badge-cyan',
-                desc: 'Full platform access. Bypasses all project membership checks. Can manage users, view all projects, and access admin panel.',
-              },
-              {
-                role: 'USER',
-                badge: 'badge-draft',
-                desc: 'Standard user. Access is controlled by per-project membership. Must be added to each project individually with a project-level role.',
-              },
-            ].map((r) => (
-              <div key={r.role} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flex: 1, minWidth: '260px' }}>
-                <span className={`badge ${r.badge}`} style={{ flexShrink: 0, marginTop: '1px' }}>{r.role}</span>
-                <p style={{ fontSize: '12px', color: 'var(--text-mid)', lineHeight: 1.55 }}>{r.desc}</p>
-              </div>
-            ))}
-          </div>
+          <RolePermissionsMatrix />
         </div>
       </div>
 

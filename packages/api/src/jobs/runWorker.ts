@@ -6,6 +6,7 @@ import { emitToRun } from '../lib/socket.js';
 import type { RunJobPayload } from '../lib/queue.js';
 import { generateReport } from '../services/reportService.js';
 import { isAgentEnabled } from '../lib/agentConfig.js';
+import { updatePatternMemory } from '../services/patternExtractor.js';
 
 const ARTIFACTS_ROOT = process.env.ARTIFACTS_PATH ?? '/artifacts';
 
@@ -62,11 +63,20 @@ function flattenTests(suite: PWSuite): PWTestCase[] {
 async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   const { runId, runSeq, projectId, testCaseIds, scriptPaths, skippedTcIds = [],
     environment, envBaseUrl,
-    envUsername = '', envPassword = '', parallelWorkers, headless, browser } = job.data;
+    envUsername = '', envPassword = '', parallelWorkers, headless, browser, hostBrowser = false } = job.data;
 
   const total = scriptPaths.length;
   const runLabel = `RUN-${String(runSeq).padStart(4, '0')}`;
-  const artifactsDir = path.join(ARTIFACTS_ROOT, projectId, `${runLabel}_${runId}`);
+
+  // Resolve project slug once — used for artifact dir naming and passed to the runner
+  // so it can find project resources at /scripts/{slug}/resources/
+  const projectRecord = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { slug: true },
+  });
+  const projectSlug = projectRecord?.slug ?? projectId;
+
+  const artifactsDir = path.join(ARTIFACTS_ROOT, projectSlug, `${runLabel}_${runId}`);
 
   try {
     fs.mkdirSync(artifactsDir, { recursive: true });
@@ -201,7 +211,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       scriptPath,
       reportFile,
       outputDir,
-      { parallelWorkers, headless, browser, envBaseUrl, envUsername, envPassword, environment },
+      { parallelWorkers, headless, browser, hostBrowser, envBaseUrl, envUsername, envPassword, environment, projectSlug },
       (line) => emitLog(runId, 'run', line),
       runAbortController.signal,
     );
@@ -225,6 +235,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     let screenshotPath: string | undefined;
     let tracePath: string | undefined;
     let videoPath: string | undefined;
+    let rfLogPath: string | undefined;
 
     if (result.reportData?._robotReport) {
       // ── Robot Framework report ──────────────────────────────────────────
@@ -242,6 +253,9 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       // Assets captured by the runner's post-run directory scan
       if (result.screenshotPath) screenshotPath = result.screenshotPath;
       if (result.videoPath) videoPath = result.videoPath;
+      // RF HTML log written to the outputDir
+      const rfLog_ = path.join(outputDir, 'log.html');
+      if (fs.existsSync(rfLog_)) rfLogPath = rfLog_;
     } else if (result.reportData) {
       const stats = result.reportData.stats;
       const totalTests = (stats?.expected ?? 0) + (stats?.unexpected ?? 0) + (stats?.skipped ?? 0);
@@ -295,6 +309,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
           screenshotPath: screenshotPath ?? null,
           tracePath: tracePath ?? null,
           videoPath: videoPath ?? null,
+          rfLogPath: rfLogPath ?? null,
         },
       });
     }
@@ -304,6 +319,8 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       emitLog(runId, 'pass', `✓ ${scriptName} PASSED · ${(duration / 1000).toFixed(1)}s`);
       // Write verified locators back to generationHints so next generation starts with proven selectors
       void extractAndLockLocators(testCaseId, scriptPath).catch(() => {});
+      // Rebuild project-level pattern memory so future scripts learn from this passing run
+      void updatePatternMemory(projectId).catch(() => {});
     } else {
       totalFailed++;
       emitLog(runId, 'fail', `✗ ${scriptName} FAILED · ${errorMessage ?? 'Unknown error'}`);
@@ -418,6 +435,7 @@ interface SpawnResult {
   reportData?: PWReport;
   screenshotPath?: string;
   videoPath?: string;
+  videoPaths?: string[];
   errorSnippet?: string;
 }
 
@@ -425,12 +443,16 @@ async function spawnPlaywright(
   scriptPath: string,
   reportFile: string,
   outputDir: string,
-  opts: { parallelWorkers: number; headless: boolean; browser: string; envBaseUrl: string; envUsername: string; envPassword: string; environment: string },
+  opts: { parallelWorkers: number; headless: boolean; browser: string; hostBrowser?: boolean; envBaseUrl: string; envUsername: string; envPassword: string; environment: string; projectSlug?: string },
   onLine: (line: string) => void,
   externalSignal?: AbortSignal,
 ): Promise<SpawnResult> {
   const start = Date.now();
-  const runnerUrl = process.env.RUNNER_URL ?? 'http://qa-runner:5001';
+  // hostBrowser tests must land on the primary runner (the one with VNC exposed on
+  // port 6080). Headless tests can go to any runner via the load balancer.
+  const lbUrl      = process.env.RUNNER_URL          ?? 'http://qa-runner:5001';
+  const primaryUrl = process.env.RUNNER_PRIMARY_URL  ?? 'http://qa-runner:5001';
+  const runnerUrl  = opts.hostBrowser ? primaryUrl : lbUrl;
 
   // Hard cap: runner HARD_KILL_MS (900 s) + 60 s cleanup buffer
   const controller = new AbortController();
@@ -454,45 +476,80 @@ async function spawnPlaywright(
         browser: opts.browser,
         workers: opts.parallelWorkers,
         headless: opts.headless,
+        hostBrowser: opts.hostBrowser ?? false,
         baseUrl: opts.envBaseUrl || '',
         username: opts.envUsername || '',
         password: opts.envPassword || '',
         environment: opts.environment,
+        projectSlug: opts.projectSlug || '',
       }),
     });
 
-    // Read chunked NDJSON response line by line
+    // Stream chunked NDJSON line by line — do NOT buffer with response.text()
+    // because that blocks live log delivery and prevents abort from closing the
+    // runner connection mid-test (abort signal cannot interrupt a buffered read).
     let exitCode = 1;
     let reportData: PWReport | undefined;
     let rfScreenshotPath: string | undefined;
     let rfVideoPath: string | undefined;
+    let rfVideoPaths: string[] | undefined;
     let rfErrorSnippet: string | undefined;
-    const text = await response.text();
 
-    for (const raw of text.split('\n')) {
+    const processLine = (raw: string) => {
       const trimmed = raw.trim();
-      if (!trimmed) continue;
-      let msg: { type: string; text?: string; exitCode?: number; reportData?: PWReport | null; screenshotPath?: string | null; videoPath?: string | null; errorSnippet?: string | null };
+      if (!trimmed) return;
+      let msg: { type: string; text?: string; exitCode?: number; reportData?: PWReport | null; screenshotPath?: string | null; videoPath?: string | null; videoPaths?: string[] | null; errorSnippet?: string | null };
       try {
         msg = JSON.parse(trimmed);
       } catch {
         onLine(trimmed);
-        continue;
+        return;
       }
-      if (msg.type === 'log' && msg.text) {
+      if (msg.type === 'heartbeat') {
+        return; // keepalive — prevents TCP idle timeout on long-running tests
+      } else if (msg.type === 'log' && msg.text) {
         onLine(msg.text);
       } else if (msg.type === 'done') {
         exitCode = msg.exitCode ?? 1;
         reportData = msg.reportData ?? undefined;
         if (msg.screenshotPath) rfScreenshotPath = msg.screenshotPath;
-        if (msg.videoPath) rfVideoPath = msg.videoPath;
+        if (msg.videoPaths && Array.isArray(msg.videoPaths) && msg.videoPaths.length > 0) {
+          rfVideoPaths = msg.videoPaths;
+          rfVideoPath = msg.videoPaths.length === 1 ? msg.videoPaths[0] : JSON.stringify(msg.videoPaths);
+        } else if (msg.videoPath) {
+          rfVideoPath = msg.videoPath;
+        }
         if (msg.errorSnippet) rfErrorSnippet = msg.errorSnippet;
       }
+    };
+
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let lineBuffer = '';
+      try {
+        while (true) {
+          if (controller.signal.aborted) { reader.cancel(); break; }
+          const { done, value } = await reader.read();
+          if (done) break;
+          lineBuffer += decoder.decode(value, { stream: true });
+          const lines = lineBuffer.split('\n');
+          lineBuffer = lines.pop() ?? '';
+          for (const line of lines) processLine(line);
+        }
+        if (lineBuffer) processLine(lineBuffer);
+      } finally {
+        reader.releaseLock();
+      }
+    } else {
+      // Fallback for environments where body is not a ReadableStream
+      const text = await response.text();
+      for (const raw of text.split('\n')) processLine(raw);
     }
 
     clearTimeout(fetchTimeout);
     const durationMs = Date.now() - start;
-    return { exitCode, reportData, durationMs, screenshotPath: rfScreenshotPath, videoPath: rfVideoPath, errorSnippet: rfErrorSnippet };
+    return { exitCode, reportData, durationMs, screenshotPath: rfScreenshotPath, videoPath: rfVideoPath, videoPaths: rfVideoPaths, errorSnippet: rfErrorSnippet };
   } catch (err: unknown) {
     clearTimeout(fetchTimeout);
     const durationMs = Date.now() - start;
@@ -529,7 +586,7 @@ export function startRunWorker(): void {
 
   const worker = new Worker('test-runs', processRunJob, {
     connection,
-    concurrency: 3,
+    concurrency: 6, // 2 runner replicas × 3 slots each — each slot gets a unique rfbrowser-node port
   });
 
   worker.on('completed', (job) => {

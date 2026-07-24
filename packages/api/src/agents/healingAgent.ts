@@ -1,5 +1,4 @@
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { createLLM } from '../lib/llm.js';
+import { callAgent, buildSkillsSystemBlock } from '../lib/skillsContext.js';
 
 export type HealType = 'SELECTOR' | 'FLOW' | 'API_SCHEMA' | 'MISSING_MODULE';
 
@@ -37,18 +36,17 @@ export async function runClassifier(input: ClassifierInput): Promise<ClassifierR
     };
   }
 
-  const llm = createLLM({ temperature: 0.1, agentName: 'healing-agent' });
-
   const userContent = `ERROR:\n${input.errorMessage}${
     input.stackTrace ? `\n\nSTACK TRACE (first 1000 chars):\n${input.stackTrace.slice(0, 1000)}` : ''
   }\n\nSCRIPT (first 2000 chars):\n${input.scriptContent.slice(0, 2000)}`;
 
-  const response = await llm.invoke([
-    new SystemMessage(CLASSIFIER_SYSTEM),
-    new HumanMessage(userContent),
-  ]);
-
-  const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+  const raw = await callAgent({
+    systemPrompt: CLASSIFIER_SYSTEM,
+    userContent,
+    agentName: 'healing-agent',
+    maxTokens: 512,
+    temperature: 0.1,
+  });
 
   try {
     const jsonText = raw.replace(/```json\s*/g, '').replace(/```/g, '').trim();
@@ -146,6 +144,8 @@ export interface PatcherInput {
   agentTraceContext?: string; // live browser trace summary (overrides domSnapshot when present)
   projectName: string;
   baseUrl?: string | null;
+  /** Project slug — used to load skill files for product context injection */
+  slug?: string;
 }
 
 export interface PatcherResult {
@@ -202,7 +202,7 @@ One-line summary (e.g., "Inlined LoginPage POM, removed ./pages/ import").
 <full patched script — complete, valid TypeScript>`;
 
 export async function runPatcher(input: PatcherInput): Promise<PatcherResult> {
-  const llm = createLLM({ temperature: 0.1, agentName: 'healing-agent' });
+  const skillsBlock = input.slug ? buildSkillsSystemBlock(input.slug) : null;
 
   const userContent = [
     `Project: ${input.projectName}`,
@@ -217,12 +217,17 @@ export async function runPatcher(input: PatcherInput): Promise<PatcherResult> {
     `\nORIGINAL SCRIPT:\n${input.originalScript}`,
   ].join('\n');
 
-  const response = await llm.invoke([
-    new SystemMessage(input.type === 'MISSING_MODULE' ? PATCHER_SYSTEM_MISSING_MODULE : PATCHER_SYSTEM),
-    new HumanMessage(userContent),
-  ]);
+  const systemPrompt = input.type === 'MISSING_MODULE' ? PATCHER_SYSTEM_MISSING_MODULE : PATCHER_SYSTEM;
 
-  const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+  const raw = await callAgent({
+    systemPrompt,
+    userContent,
+    agentName: 'healing-agent',
+    maxTokens: 16000,
+    thinking: true,
+    temperature: 0.1,
+    skillsBlock,
+  });
 
   const confMatch = raw.match(/===CONFIDENCE===\s*(\d+)/);
   const explMatch = raw.match(/===EXPLANATION===\s*([\s\S]*?)(?====DIFF_SUMMARY===)/);
@@ -250,6 +255,7 @@ export interface HealingAgentInput {
   project: {
     name: string;
     baseUrl?: string | null;
+    slug?: string;
   };
 }
 
@@ -272,6 +278,7 @@ export async function runHealingAgent(input: HealingAgentInput): Promise<Healing
     originalScript: input.runResult.scriptContent,
     projectName: input.project.name,
     baseUrl: input.project.baseUrl,
+    slug: input.project.slug,
   });
 
   return {

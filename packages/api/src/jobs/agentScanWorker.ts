@@ -124,7 +124,10 @@ export function startAgentScanWorker(): void {
       });
 
       // 2. Load login instructions + product context from ProjectContext
-      const projectContext = await prisma.projectContext.findUnique({ where: { projectId } });
+      const [projectContext, projectRow] = await Promise.all([
+        prisma.projectContext.findUnique({ where: { projectId } }),
+        prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } }),
+      ]);
       const loginInstructions: LoginInstructions = projectContext?.loginInstructions
         ? (JSON.parse(projectContext.loginInstructions) as LoginInstructions)
         : { steps: [], selectors: { username: '', password: '', submit: '' }, loginType: 'standard', postLoginUrl: '', notes: '' };
@@ -158,8 +161,10 @@ export function startAgentScanWorker(): void {
 
       // Try to create a video-recording context; fall back silently if ffmpeg is missing.
       // Uses an async IIFE so context + page are always typed as non-null below.
+      const projectRecord = await prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } });
+      const projectSlug = projectRecord?.slug ?? projectId;
       const { context, page } = await (async () => {
-        const vDir = path.join(ARTIFACTS_ROOT, projectId, 'agent-traces', agentTraceId);
+        const vDir = path.join(ARTIFACTS_ROOT, projectSlug, 'agent-traces', agentTraceId);
         try {
           fs.mkdirSync(vDir, { recursive: true });
           const ctx = await browser.newContext({
@@ -209,6 +214,7 @@ export function startAgentScanWorker(): void {
           productContext,
           projectId,
           projectName,
+          projectSlug: projectRow?.slug,
           onStep: async (step: RecordedAction) => {
             accumulatedActions.push(step);
             await prisma.agentTrace.update({
@@ -279,7 +285,7 @@ export function startAgentScanWorker(): void {
         //    extra UI scan step.
         const projectRecord = await prisma.project.findUnique({
           where: { id: projectId },
-          select: { baseUrl: true },
+          select: { slug: true, baseUrl: true },
         });
 
         const scriptResults = await Promise.allSettled(
@@ -300,6 +306,7 @@ export function startAgentScanWorker(): void {
                 },
                 project: {
                   id: projectId,
+                  slug: projectRecord?.slug ?? '',
                   name: projectName ?? '',
                   baseUrl: projectRecord?.baseUrl,
                 },

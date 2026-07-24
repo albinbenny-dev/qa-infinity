@@ -40,7 +40,12 @@ export default function EditTCModal({ tc, onSave, onClose }: EditTCModalProps) {
   const [status, setStatus] = useState<TestCase['status']>(tc.status);
   const [saving, setSaving] = useState(false);
   const [newStep, setNewStep] = useState('');
-const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc.prerequisiteTcId ?? null);
+  const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc.prerequisiteTcId ?? null);
+  const [runtimeVariables, setRuntimeVariables] = useState<Array<{ name: string; captureFrom: string; description?: string }>>(
+    tc.runtimeVariables ?? [],
+  );
+  const [newVarName, setNewVarName] = useState('');
+  const [newVarCapture, setNewVarCapture] = useState('');
   const [automatedTcs, setAutomatedTcs] = useState<Array<{ id: string; tcId: string; title: string }>>([]);
   const [prereqSearch, setPrereqSearch] = useState('');
   const [prereqOpen, setPrereqOpen] = useState(false);
@@ -137,6 +142,7 @@ const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc.prere
         priority,
         status,
         prerequisiteTcId: prerequisiteTcId ?? null,
+        runtimeVariables: runtimeVariables.length > 0 ? runtimeVariables : null,
       });
     } finally {
       setSaving(false);
@@ -537,6 +543,97 @@ const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(tc.prere
                 </div>
               );
             })()}
+          </div>
+
+          {/* Runtime Variables */}
+          <div>
+            <div style={{ ...LABEL, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              Runtime Variables
+              <span style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 400 }}>
+                — dynamic values captured during execution (use <code style={{ background: 'var(--surface2)', padding: '0 3px', borderRadius: '3px', fontFamily: 'var(--font-mono)' }}>{'{{'+'varName}}'}</code> in steps)
+              </span>
+            </div>
+
+            {/* Existing variables */}
+            {runtimeVariables.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '8px' }}>
+                {runtimeVariables.map((v, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '8px',
+                      padding: '7px 10px',
+                      background: 'var(--surface2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                    }}
+                  >
+                    <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)', flexShrink: 0, marginTop: '1px' }}>
+                      {`{{${v.name}}}`}
+                    </code>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: 'var(--text)', lineHeight: 1.4 }}>Capture from: {v.captureFrom}</div>
+                      {v.description && <div style={{ color: 'var(--text-dim)', marginTop: '2px' }}>{v.description}</div>}
+                    </div>
+                    <button
+                      onClick={() => setRuntimeVariables((prev) => prev.filter((_, idx) => idx !== i))}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: '13px', padding: '0 2px', flexShrink: 0 }}
+                      title="Remove variable"
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add new variable */}
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <input
+                style={{ ...INPUT, width: '120px', flexShrink: 0, fontFamily: 'var(--font-mono)', fontSize: '11px' }}
+                placeholder="varName"
+                value={newVarName}
+                onChange={(e) => setNewVarName(e.target.value.replace(/\s/g, ''))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newVarName.trim() && newVarCapture.trim()) {
+                    setRuntimeVariables((prev) => [...prev, { name: newVarName.trim(), captureFrom: newVarCapture.trim() }]);
+                    setNewVarName(''); setNewVarCapture('');
+                  }
+                }}
+              />
+              <input
+                style={{ ...INPUT, flex: 1, fontSize: '11px' }}
+                placeholder="where to capture from (e.g. order ID on confirmation screen)"
+                value={newVarCapture}
+                onChange={(e) => setNewVarCapture(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newVarName.trim() && newVarCapture.trim()) {
+                    setRuntimeVariables((prev) => [...prev, { name: newVarName.trim(), captureFrom: newVarCapture.trim() }]);
+                    setNewVarName(''); setNewVarCapture('');
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!newVarName.trim() || !newVarCapture.trim()) return;
+                  setRuntimeVariables((prev) => [...prev, { name: newVarName.trim(), captureFrom: newVarCapture.trim() }]);
+                  setNewVarName(''); setNewVarCapture('');
+                }}
+                style={{
+                  padding: '6px 12px',
+                  background: 'var(--cyan-dim)',
+                  color: 'var(--cyan)',
+                  border: '1px solid rgba(37,99,171,0.3)',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                  flexShrink: 0,
+                }}
+              >
+                + Add
+              </button>
+            </div>
           </div>
 
           {/* Type / Priority / Status row */}

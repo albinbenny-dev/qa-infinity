@@ -39,11 +39,11 @@ export const DeleteProjectSchema = z.object({
 
 export const CreateMemberSchema = z.object({
   email: z.string().email(),
-  role: z.enum(['ADMIN', 'QA_ENGINEER', 'VIEWER']).default('QA_ENGINEER'),
+  role: z.enum(['ADMIN', 'SUPER_USER', 'STANDARD_USER']).default('SUPER_USER'),
 });
 
 export const UpdateMemberSchema = z.object({
-  role: z.enum(['ADMIN', 'QA_ENGINEER', 'VIEWER']),
+  role: z.enum(['ADMIN', 'SUPER_USER', 'STANDARD_USER']),
 });
 
 // ── Environments ───────────────────────────────────────────────────────────

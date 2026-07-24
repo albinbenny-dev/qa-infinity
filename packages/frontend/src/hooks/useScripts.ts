@@ -114,7 +114,8 @@ export function useUploadScriptWithExtract(projectId: string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scripts', projectId] });
-      qc.invalidateQueries({ queryKey: ['testCases', projectId] });
+      qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }

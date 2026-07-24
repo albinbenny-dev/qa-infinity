@@ -8,16 +8,20 @@ interface RBACResult {
   isSuperAdmin: boolean;
   /** Project ADMIN — full control over members, deletion, all writes */
   isAdmin: boolean;
-  /** QA_ENGINEER — can read/write TCs, scripts, runs, heals, chat */
-  isQAEngineer: boolean;
-  /** VIEWER — read-only everywhere; no action buttons */
-  isViewer: boolean;
-  /** canWrite = ADMIN | QA_ENGINEER: may create/update/run/approve */
+  /** SUPER_USER — full feature access for allocated project */
+  isSuperUser: boolean;
+  /** STANDARD_USER — read/write access; no UI Scanner or Healing Agent */
+  isStandardUser: boolean;
+  /** canWrite = any project role: may create/update/run/approve */
   canWrite: boolean;
   /** canManageMembers = ADMIN only */
   canManageMembers: boolean;
   /** canDeleteProject = ADMIN only */
   canDeleteProject: boolean;
+  /** canAccessUIScanner = SUPER_ADMIN | ADMIN | SUPER_USER */
+  canAccessUIScanner: boolean;
+  /** canAccessHealing = SUPER_ADMIN | ADMIN | SUPER_USER */
+  canAccessHealing: boolean;
 }
 
 /**
@@ -27,25 +31,30 @@ interface RBACResult {
  * SUPER_ADMIN has full access regardless of project membership.
  *
  * Usage:
- *   const { canWrite, canDeleteProject, isViewer } = useRBAC();
- *   {canWrite && <button>Generate</button>}
- *   {!isViewer && <button>Run</button>}
+ *   const { canWrite, canAccessHealing, isStandardUser } = useRBAC();
+ *   {canAccessHealing && <button>Approve Heal</button>}
+ *   {canWrite && <button>Save</button>}
  */
 export function useRBAC(): RBACResult {
   const { currentUser, activeProject } = useProjectStore();
 
-  const isSuperAdmin = currentUser?.globalRole === 'SUPER_ADMIN';
+  const globalRole = currentUser?.globalRole;
+  const isSuperAdmin = globalRole === 'SUPER_ADMIN';
+  // ADMIN global role has full project access but no user management
+  const isGlobalAdmin = globalRole === 'ADMIN';
 
-  if (isSuperAdmin) {
+  if (isSuperAdmin || isGlobalAdmin) {
     return {
       role: null,
-      isSuperAdmin: true,
+      isSuperAdmin,
       isAdmin: true,
-      isQAEngineer: true,
-      isViewer: false,
+      isSuperUser: true,
+      isStandardUser: false,
       canWrite: true,
       canManageMembers: true,
       canDeleteProject: true,
+      canAccessUIScanner: true,
+      canAccessHealing: true,
     };
   }
 
@@ -55,10 +64,12 @@ export function useRBAC(): RBACResult {
     role,
     isSuperAdmin: false,
     isAdmin: role === 'ADMIN',
-    isQAEngineer: role === 'QA_ENGINEER',
-    isViewer: role === 'VIEWER',
-    canWrite: role === 'ADMIN' || role === 'QA_ENGINEER',
+    isSuperUser: role === 'SUPER_USER',
+    isStandardUser: role === 'STANDARD_USER',
+    canWrite: role === 'ADMIN' || role === 'SUPER_USER' || role === 'STANDARD_USER',
     canManageMembers: role === 'ADMIN',
     canDeleteProject: role === 'ADMIN',
+    canAccessUIScanner: role === 'ADMIN' || role === 'SUPER_USER',
+    canAccessHealing: role === 'ADMIN' || role === 'SUPER_USER',
   };
 }

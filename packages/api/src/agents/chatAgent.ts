@@ -9,6 +9,7 @@ import type { BaseMessage } from '@langchain/core/messages';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { createLLM } from '../lib/llm.js';
+import { loadActiveSkills, buildSkillsText } from '../lib/skillsContext.js';
 import { prisma } from '../lib/prisma.js';
 import { addRunJob } from '../lib/queue.js';
 
@@ -73,10 +74,14 @@ When the user asks to run tests, check what they want (suite, environment) befor
 When reporting failures, include the specific TC IDs and error summaries.
 Format numbers clearly. Use bullet points for lists.`;
 
-function buildSystemPrompt(memories: string[]): string {
-  if (memories.length === 0) return BASE_SYSTEM_PROMPT;
+function buildSystemPrompt(memories: string[], skillsText?: string): string {
+  let prompt = BASE_SYSTEM_PROMPT;
+  if (skillsText) {
+    prompt = `${skillsText}\n\n${prompt}`;
+  }
+  if (memories.length === 0) return prompt;
   const memoryBlock = memories.map(m => `- ${m}`).join('\n');
-  return `${BASE_SYSTEM_PROMPT}\n\nPersistent memory (facts to always keep in mind):\n${memoryBlock}`;
+  return `${prompt}\n\nPersistent memory (facts to always keep in mind):\n${memoryBlock}`;
 }
 
 // ── Tool implementations ───────────────────────────────────────────────────
@@ -481,7 +486,10 @@ export async function runChatAgent(
   memories: string[] = [],
   attachments: ChatAttachment[] = [],
   projectName?: string,
+  projectSlug?: string,
 ): Promise<ChatAgentResult> {
+  const skillsText = projectSlug ? buildSkillsText(loadActiveSkills(projectSlug)) : '';
+
   const tools = createChatTools(projectId);
   const llm = createLLM({ temperature: 0.3, agentName: 'chat-agent', projectId, projectName });
 
@@ -494,7 +502,7 @@ export async function runChatAgent(
   );
 
   const messages: BaseMessage[] = [
-    new SystemMessage(buildSystemPrompt(memories)),
+    new SystemMessage(buildSystemPrompt(memories, skillsText || undefined)),
     ...historyMessages,
     buildHumanMessage(userMessage, attachments),
   ];

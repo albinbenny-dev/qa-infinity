@@ -12,6 +12,7 @@ import scansRouter from './scans.js';
 import suitesRouter from './suites.js';
 import adminRouter from './admin.js';
 import resourcesRouter from './resources.js';
+import skillsRouter from './skills.js';
 import { verifyToken } from '../middleware/auth.js';
 
 const router = Router();
@@ -58,5 +59,8 @@ router.use('/admin', adminRouter);
 
 // ── Robot Framework resources ─────────────────────────────────────────────
 router.use('/projects/:projectId/resources', resourcesRouter);
+
+// ── Product Skills ────────────────────────────────────────────────────────
+router.use('/projects/:projectId/skills', skillsRouter);
 
 export default router;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import {
   useRejectHeal,
   useApproveAllConfident,
   useTriggerHeal,
+  useCancelHeal,
   useDismissHeal,
   useRetryHealWithContext,
 } from '../hooks/useHeals';
@@ -107,6 +108,7 @@ function ExpandedRunResults({
   onInitialized: (ids: string[]) => void;
 }) {
   const { data: run, isLoading } = useRun(projectId, runId);
+  const [expandedErrors, setExpandedErrors] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (run) {
@@ -134,28 +136,40 @@ function ExpandedRunResults({
     );
   }
 
+  function toggleError(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setExpandedErrors((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {failed.map((result) => {
         const checked = selectedIds.includes(result.id);
+        const errorExpanded = expandedErrors.has(result.id);
         return (
-          <label
+          <div
             key={result.id}
             style={{
               display: 'flex',
-              alignItems: 'center',
+              alignItems: 'flex-start',
               gap: 10,
               padding: '7px 14px',
               cursor: 'pointer',
               borderBottom: '1px solid rgba(255,255,255,0.04)',
               background: checked ? 'rgba(220,38,38,0.05)' : 'transparent',
             }}
+            onClick={() => onToggle(result.id)}
           >
             <input
               type="checkbox"
               checked={checked}
               onChange={() => onToggle(result.id)}
-              style={{ accentColor: 'var(--fail)', width: 13, height: 13, flexShrink: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{ accentColor: 'var(--fail)', width: 13, height: 13, flexShrink: 0, marginTop: 2 }}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
@@ -173,20 +187,54 @@ function ExpandedRunResults({
               {result.errorMessage && (
                 <div
                   style={{
-                    fontSize: 10,
-                    fontFamily: 'var(--font-mono)',
-                    color: 'var(--fail)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
                     marginTop: 1,
+                    minWidth: 0,
                   }}
                 >
-                  {result.errorMessage.slice(0, 80)}
+                  <div
+                    title={result.errorMessage}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: 10,
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--fail)',
+                      whiteSpace: errorExpanded ? 'pre-wrap' : 'nowrap',
+                      overflow: errorExpanded ? 'visible' : 'hidden',
+                      textOverflow: errorExpanded ? 'clip' : 'ellipsis',
+                      wordBreak: errorExpanded ? 'break-all' : 'normal',
+                      lineHeight: 1.4,
+                      maxHeight: errorExpanded ? 100 : 'none',
+                      overflowY: errorExpanded ? 'auto' : 'visible',
+                    }}
+                  >
+                    {result.errorMessage}
+                  </div>
+                  {result.errorMessage.length > 80 && (
+                    <button
+                      onClick={(e) => toggleError(result.id, e)}
+                      title={errorExpanded ? 'Collapse error' : 'Expand full error'}
+                      style={{
+                        flexShrink: 0,
+                        background: 'none',
+                        border: 'none',
+                        padding: '0 2px',
+                        fontSize: 9,
+                        color: 'var(--text-dim)',
+                        cursor: 'pointer',
+                        lineHeight: 1,
+                      }}
+                    >
+                      {errorExpanded ? '▲' : '▼'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
-          </label>
+          </div>
         );
       })}
     </div>
@@ -198,26 +246,39 @@ function ExpandedRunResults({
 function FailedRunsPanel({
   projectId,
   onHealsQueued,
+  healedRunIds,
+  onRunExpanded,
 }: {
   projectId: string;
   onHealsQueued?: (items: Array<{ runResultId: string; tcTitle: string }>) => void;
+  healedRunIds?: Set<string>;
+  onRunExpanded?: (runId: string | null) => void;
 }) {
   const { data, isLoading } = useRuns(projectId);
-  const { mutateAsync: trigger, isPending: triggering } = useTriggerHeal(
-    projectId,
-    undefined,
-    onHealsQueued,
-  );
+  const qc = useQueryClient();
+  const { mutateAsync: trigger, isPending: triggering } = useTriggerHeal(projectId);
 
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, string[]>>({});
+  const [showOlderRuns, setShowOlderRuns] = useState(false);
 
-  const failedRuns: RunListItem[] = (data?.runs ?? []).filter(
+  const RETENTION_DAYS = 7;
+  const allFailedRuns: RunListItem[] = (data?.runs ?? []).filter(
     (r: RunListItem) => r.status === 'FAILED',
   );
+  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const recentFailedRuns = allFailedRuns.filter(
+    (r) => !r.completedAt || new Date(r.completedAt).getTime() >= cutoff,
+  );
+  const olderCount = allFailedRuns.length - recentFailedRuns.length;
+  const failedRuns = showOlderRuns ? allFailedRuns : recentFailedRuns;
 
   function handleToggleRun(runId: string) {
-    setExpandedRunId((prev) => (prev === runId ? null : runId));
+    setExpandedRunId((prev) => {
+      const next = prev === runId ? null : runId;
+      onRunExpanded?.(next);
+      return next;
+    });
   }
 
   function handleToggleResult(runId: string, resultId: string) {
@@ -246,9 +307,11 @@ function FailedRunsPanel({
     try {
       const res = await trigger({ runId, runResultIds });
       if (res.count === 0) {
-        toast('Selected tests already have heal jobs running', { icon: 'ℹ️' });
+        toast('Heal jobs already running for selected tests', { icon: 'ℹ️' });
       } else {
-        toast.success(`Queued ${res.count} heal job${res.count !== 1 ? 's' : ''} — check Pending Approval below`);
+        // Immediately seed the progress bar — don't wait for socket or polling
+        if (res.queued?.length) onHealsQueued?.(res.queued);
+        toast.success(`Queued ${res.count} heal job${res.count !== 1 ? 's' : ''}`);
         setSelections((prev) => ({ ...prev, [runId]: [] }));
         setExpandedRunId(null);
       }
@@ -409,6 +472,27 @@ function FailedRunsPanel({
           </div>
         );
       })}
+      {olderCount > 0 && (
+        <button
+          onClick={() => setShowOlderRuns((v) => !v)}
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            color: 'var(--text-dim)',
+            fontSize: 11,
+            padding: '5px 12px',
+            cursor: 'pointer',
+            textAlign: 'center',
+            width: '100%',
+            marginTop: 2,
+          }}
+        >
+          {showOlderRuns
+            ? `▲ Hide older runs (showing all ${allFailedRuns.length})`
+            : `▼ ${olderCount} older run${olderCount !== 1 ? 's' : ''} hidden · Show all`}
+        </button>
+      )}
     </div>
   );
 }
@@ -523,10 +607,16 @@ const STATUS_COLOR: Record<string, string> = {
   PENDING: 'var(--amber)',
 };
 
-function RecentlyHealedTable({ heals }: { heals: HealProposal[] }) {
+function RecentlyHealedTable({
+  heals,
+  onDelete,
+}: {
+  heals: HealProposal[];
+  onDelete?: (healId: string) => void;
+}) {
   const recent = heals
     .filter((h) => h.status === 'APPROVED' || h.status === 'AUTO_APPLIED')
-    .slice(0, 10);
+    .slice(0, 15);
 
   if (recent.length === 0) {
     return (
@@ -541,9 +631,9 @@ function RecentlyHealedTable({ heals }: { heals: HealProposal[] }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr>
-            {['TC', 'Type', 'Confidence', 'Time', 'Status'].map((h) => (
+            {['TC', 'Type', 'Confidence', 'Time', 'Status', ''].map((h, i) => (
               <th
-                key={h}
+                key={i}
                 style={{
                   padding: '6px 10px',
                   textAlign: 'left',
@@ -643,6 +733,27 @@ function RecentlyHealedTable({ heals }: { heals: HealProposal[] }) {
                   {h.status.replace('_', '-')}
                 </span>
               </td>
+              <td style={{ padding: '4px 6px', textAlign: 'right' }}>
+                {onDelete && (
+                  <button
+                    onClick={() => onDelete(h.id)}
+                    title="Delete this heal record"
+                    style={{
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      background: 'transparent',
+                      border: '1px solid var(--border2)',
+                      color: 'var(--text-dim)',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-ui)',
+                      lineHeight: 1,
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -657,7 +768,7 @@ export default function Healing() {
   const { slug } = useParams<{ slug: string }>();
   const { data: project } = useProject(slug);
   const projectId = project?.id ?? '';
-  const { canWrite } = useRBAC();
+  const { canAccessHealing: canWrite } = useRBAC();
 
   const qc = useQueryClient();
   const [detailHeal, setDetailHeal] = useState<HealProposal | null>(null);
@@ -666,6 +777,7 @@ export default function Healing() {
 
   const { data: pendingHeals = [], isLoading: loadingPending } = useHeals(projectId, 'PENDING');
   const { data: exhaustedHeals = [] } = useHeals(projectId, 'EXHAUSTED');
+  const { data: inProgressHeals = [] } = useHeals(projectId, 'IN_PROGRESS');
   const { data: allHeals = [] } = useHeals(projectId);
   const { data: stats } = useHealStats(projectId);
 
@@ -674,6 +786,7 @@ export default function Healing() {
   const { mutateAsync: approveAll, isPending: approvingAll } = useApproveAllConfident(projectId);
   const { mutateAsync: dismissHeal } = useDismissHeal(projectId);
   const { mutateAsync: retryWithContext } = useRetryHealWithContext(projectId);
+  const { mutateAsync: cancelHeal } = useCancelHeal(projectId);
 
   const busy = approving || rejecting;
 
@@ -711,6 +824,23 @@ export default function Healing() {
       void qc.invalidateQueries({ queryKey: ['heal-stats', projectId] });
     },
   });
+
+  // Polling fallback: seed healProgress from IN_PROGRESS heals (catches socket misses)
+  useEffect(() => {
+    if (!inProgressHeals.length) return;
+    setHealProgress((prev) => {
+      const trackedIds = new Set(prev.map((e) => e.runResultId));
+      const toAdd = inProgressHeals
+        .filter((h) => !trackedIds.has(h.runResultId))
+        .map((h) => ({
+          runResultId: h.runResultId,
+          tcTitle: h.runResult?.testCase.title ?? 'Test',
+          phase: 'ANALYZING' as const,
+          startedAt: Date.now(),
+        }));
+      return toAdd.length ? [...prev, ...toAdd] : prev;
+    });
+  }, [inProgressHeals.map((h) => h.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-remove COMPLETE/AUTO_APPLIED entries after 4 s
   useEffect(() => {
@@ -768,6 +898,25 @@ export default function Healing() {
   async function handleDismissExhausted(healId: string) {
     try {
       await dismissHeal(healId);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  }
+
+  async function handleDeleteHeal(healId: string) {
+    try {
+      await dismissHeal(healId);
+      toast.success('Heal record deleted');
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  }
+
+  async function handleCancelHeal(runResultId: string) {
+    try {
+      await cancelHeal(runResultId);
+      setHealProgress((prev) => prev.filter((e) => e.runResultId !== runResultId));
+      toast('Heal job cancelled', { icon: '✕' });
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -850,101 +999,143 @@ export default function Healing() {
         {healProgress.length > 0 && (
           <div
             style={{
-              background: 'rgba(37,99,171,0.05)',
-              border: '1px solid rgba(37,99,171,0.25)',
-              borderRadius: 10,
-              overflow: 'hidden',
+              background: 'linear-gradient(135deg, rgba(37,99,171,0.15), rgba(37,99,171,0.08))',
+              border: '1px solid rgba(37,99,171,0.4)',
+              borderRadius: 12,
+              padding: '16px 20px',
             }}
           >
-            <div
-              style={{
-                padding: '8px 14px',
-                borderBottom: '1px solid rgba(37,99,171,0.2)',
-                fontSize: 10,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.07em',
-                color: 'var(--cyan)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <span
                 style={{
-                  width: 7, height: 7, borderRadius: '50%',
+                  width: 9, height: 9, borderRadius: '50%',
                   background: 'var(--cyan)',
                   display: 'inline-block',
-                  animation: 'healBlink 1.2s ease-in-out infinite',
                   flexShrink: 0,
+                  boxShadow: '0 0 0 3px rgba(37,99,171,0.25)',
+                  animation: 'healBlink 1.2s ease-in-out infinite',
                 }}
               />
-              Healing In Progress — {healProgress.length} test{healProgress.length !== 1 ? 's' : ''}
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '0.04em' }}>
+                Healing In Progress
+              </span>
+              <span style={{
+                marginLeft: 4,
+                background: 'rgba(37,99,171,0.2)',
+                color: 'var(--cyan)',
+                border: '1px solid rgba(37,99,171,0.35)',
+                borderRadius: 10,
+                padding: '1px 8px',
+                fontSize: 11,
+                fontWeight: 600,
+              }}>
+                {healProgress.length} {healProgress.length !== 1 ? 'tests' : 'test'}
+              </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+            {/* Entries */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {healProgress.map((entry) => {
-                const isDone = entry.phase === 'COMPLETE' || entry.phase === 'AUTO_APPLIED';
-                const phaseLabel: Record<string, string> = {
-                  ANALYZING: 'Classifying failure…',
-                  TRACING: 'Running browser trace…',
-                  PATCHING: 'Generating patch…',
+                const phaseOrder: Record<string, number> = { ANALYZING: 0, TRACING: 1, PATCHING: 2, COMPLETE: 3, AUTO_APPLIED: 3 };
+                const phaseLabels: Record<string, string> = {
+                  ANALYZING: 'Classifying failure',
+                  TRACING: 'Running browser trace',
+                  PATCHING: 'Generating patch',
                   COMPLETE: 'Proposal ready — review below',
                   AUTO_APPLIED: 'Auto-applied ✓',
                 };
+                const stepLabels = ['Analyze', 'Trace', 'Patch'];
+                const currentStep = phaseOrder[entry.phase] ?? 0;
+                const isDone = entry.phase === 'COMPLETE' || entry.phase === 'AUTO_APPLIED';
+                const progressPct = isDone ? 100 : Math.round((currentStep / 3) * 100);
+
                 return (
                   <div
                     key={entry.runResultId}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '9px 14px',
-                      borderBottom: '1px solid rgba(37,99,171,0.12)',
+                      background: 'rgba(0,0,0,0.2)',
+                      border: '1px solid rgba(37,99,171,0.2)',
+                      borderRadius: 8,
+                      padding: '12px 16px',
                     }}
                   >
-                    {isDone ? (
-                      <span style={{ fontSize: 13, flexShrink: 0, color: entry.phase === 'AUTO_APPLIED' ? 'var(--pass)' : 'var(--cyan)' }}>
-                        {entry.phase === 'AUTO_APPLIED' ? '✓' : '⟳'}
-                      </span>
-                    ) : (
-                      <span
-                        style={{
-                          width: 7, height: 7, borderRadius: '50%',
-                          background: 'var(--cyan)', flexShrink: 0,
-                          animation: 'healBlink 1.2s ease-in-out infinite',
-                        }}
-                      />
-                    )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: 12, fontWeight: 600, color: 'var(--text)',
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    {/* Title row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <span style={{
+                        fontSize: 13, fontWeight: 600, color: 'var(--text)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
                       }}>
                         {entry.tcTitle}
-                      </div>
-                      <div style={{ fontSize: 10, color: isDone ? (entry.phase === 'AUTO_APPLIED' ? 'var(--pass)' : 'var(--cyan)') : 'var(--text-dim)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
-                        {phaseLabel[entry.phase] ?? entry.phase}
-                      </div>
+                      </span>
+                      <span style={{
+                        fontSize: 11,
+                        fontFamily: 'var(--font-mono)',
+                        color: isDone
+                          ? (entry.phase === 'AUTO_APPLIED' ? 'var(--pass)' : 'var(--cyan)')
+                          : 'var(--cyan)',
+                        flexShrink: 0,
+                        fontWeight: 600,
+                      }}>
+                        {phaseLabels[entry.phase] ?? entry.phase}
+                      </span>
+                      {!isDone && (
+                        <button
+                          title="Cancel heal job"
+                          onClick={() => handleCancelHeal(entry.runResultId)}
+                          style={{
+                            flexShrink: 0,
+                            width: 22, height: 22,
+                            borderRadius: 4,
+                            background: 'rgba(220,38,38,0.12)',
+                            border: '1px solid rgba(220,38,38,0.3)',
+                            color: 'var(--fail)',
+                            fontSize: 11,
+                            cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            lineHeight: 1,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
-                    {/* Phase step indicators */}
-                    <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-                      {(['ANALYZING', 'TRACING', 'PATCHING'] as const).map((p) => {
-                        const phaseOrder = { ANALYZING: 0, TRACING: 1, PATCHING: 2, COMPLETE: 3, AUTO_APPLIED: 3 };
-                        const current = phaseOrder[entry.phase as keyof typeof phaseOrder] ?? 0;
-                        const step = phaseOrder[p];
-                        const done = current > step;
-                        const active = current === step;
-                        return (
-                          <div
-                            key={p}
-                            style={{
-                              width: 24, height: 3, borderRadius: 2,
-                              background: done ? 'var(--pass)' : active ? 'var(--cyan)' : 'var(--surface3)',
-                              transition: 'background 0.3s',
-                            }}
-                          />
-                        );
-                      })}
+
+                    {/* Progress bar */}
+                    <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 4, height: 7, overflow: 'hidden', marginBottom: 8 }}>
+                      <div style={{
+                        height: '100%',
+                        borderRadius: 4,
+                        width: `${Math.max(6, progressPct)}%`,
+                        background: isDone
+                          ? 'var(--pass)'
+                          : 'linear-gradient(90deg, #2563AB, var(--cyan))',
+                        transition: 'width 0.6s ease',
+                        boxShadow: isDone ? 'none' : '2px 0 8px rgba(37,99,171,0.6)',
+                      }} />
+                    </div>
+
+                    {/* Step labels */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      {stepLabels.map((label, i) => (
+                        <span key={label} style={{
+                          fontSize: 10,
+                          fontFamily: 'var(--font-mono)',
+                          fontWeight: currentStep === i ? 700 : 400,
+                          color: isDone
+                            ? 'var(--pass)'
+                            : currentStep > i
+                            ? 'var(--cyan)'
+                            : currentStep === i
+                            ? 'var(--text)'
+                            : 'var(--text-dim)',
+                        }}>
+                          {currentStep > i ? '✓ ' : currentStep === i && !isDone ? '▶ ' : ''}{label}
+                        </span>
+                      ))}
+                      <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
+                        {progressPct}%
+                      </span>
                     </div>
                   </div>
                 );
@@ -963,9 +1154,8 @@ export default function Healing() {
             alignItems: 'start',
           }}
         >
-          {/* LEFT — Failed Runs + Pending Approval */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Failed Runs panel */}
+          {/* LEFT — Failed Runs only */}
+          <div>
             <div
               style={{
                 background: 'var(--surface)',
@@ -985,6 +1175,9 @@ export default function Healing() {
               >
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
                   🔴 Failed Runs
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', background: 'var(--surface2)', padding: '1px 7px', borderRadius: 100, marginLeft: 6 }}>
+                  Last 7 days
                 </span>
                 <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
                   Expand a run → select TCs → Heal Selected
@@ -1007,7 +1200,10 @@ export default function Healing() {
                 />
               </div>
             </div>
+          </div>
 
+          {/* RIGHT — Pending Approval + AI Analysis + Recently Healed */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Pending Approval */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div
@@ -1197,45 +1393,8 @@ export default function Healing() {
                 </div>
               )}
             </div>
-          </div>
 
-          {/* RIGHT — Recently Healed + AI Summary */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Recently healed section */}
-            <div
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-                  Recently Healed
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--text-dim)',
-                    fontFamily: 'var(--font-mono)',
-                  }}
-                >
-                  {allHeals.filter((h) => h.status === 'APPROVED' || h.status === 'AUTO_APPLIED').length} total
-                </span>
-              </div>
-              <RecentlyHealedTable heals={allHeals} />
-            </div>
-
-            {/* AI Summary card */}
+            {/* AI Analysis */}
             {latestHeal?.summary && (
               <div
                 style={{
@@ -1322,6 +1481,40 @@ export default function Healing() {
                 )}
               </div>
             )}
+
+            {/* Recently Healed */}
+            <div
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 12,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderBottom: '1px solid var(--border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                  Recently Healed
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--text-dim)',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  {allHeals.filter((h) => h.status === 'APPROVED' || h.status === 'AUTO_APPLIED').length} total
+                </span>
+              </div>
+              <RecentlyHealedTable heals={allHeals} onDelete={handleDeleteHeal} />
+            </div>
           </div>
         </div>
       </div>

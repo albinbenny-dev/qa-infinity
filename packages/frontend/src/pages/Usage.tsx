@@ -81,7 +81,13 @@ const AGENT_COLOR: Record<string, string> = {
 
 // ── Credit Gauge ───────────────────────────────────────────────────────────
 
-function CreditGauge({ usage, limit, remaining }: { usage: number; limit: number | null; remaining: number | null }) {
+function CreditGauge({
+  usage, limit, remaining, provider, totalTokens, promptTokens, completionTokens, totalCalls,
+}: {
+  usage: number; limit: number | null; remaining: number | null; provider?: string;
+  totalTokens?: number; promptTokens?: number; completionTokens?: number; totalCalls?: number;
+}) {
+  const isAnthropic = provider === 'anthropic';
   const usedPct = limit ? Math.min(100, Math.round((usage / limit) * 100)) : 0;
   const critical = limit ? usage / limit >= 0.85 : false;
   const warning = limit ? usage / limit >= 0.65 : false;
@@ -89,12 +95,40 @@ function CreditGauge({ usage, limit, remaining }: { usage: number; limit: number
 
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
-      <div style={{ height: 3, background: 'var(--warm-accent)' }} />
+      <div style={{ height: 3, background: isAnthropic ? 'linear-gradient(90deg, var(--violet), var(--cyan))' : 'var(--warm-accent)' }} />
       <div style={{ padding: '20px 24px' }}>
         <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', marginBottom: 16 }}>
-          Credit Usage
+          {isAnthropic ? 'Estimated Spend' : 'Credit Usage'}
         </div>
-        {limit !== null ? (
+        {isAnthropic ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--violet)', lineHeight: 1, fontFamily: 'var(--font-mono)' }}>
+                  {fmt(usage)}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>estimated spend (all-time)</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{fmtK(totalTokens ?? 0)} tokens</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>{(totalCalls ?? 0).toLocaleString()} calls total</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div>
+                <span style={{ color: 'var(--text-dim)' }}>In: </span>
+                <span style={{ color: 'var(--cyan)', fontWeight: 700 }}>{fmtK(promptTokens ?? 0)}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-dim)' }}>Out: </span>
+                <span style={{ color: 'var(--pass)', fontWeight: 700 }}>{fmtK(completionTokens ?? 0)}</span>
+              </div>
+              <div style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: 10 }}>
+                est. from token pricing
+              </div>
+            </div>
+          </>
+        ) : limit !== null ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
               <div>
@@ -814,7 +848,7 @@ export default function Usage() {
 
         {orError && (
           <div style={{ padding: '16px 20px', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 12, color: 'var(--fail)', fontSize: 13 }}>
-            Failed to fetch OpenRouter usage. Check that <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>OPENROUTER_API_KEY</code> is set in the API container environment.
+            Failed to fetch LLM provider usage. If using OpenRouter, check that <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>OPENROUTER_API_KEY</code> is set. If using Anthropic, set <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>LLM_PROVIDER=anthropic</code>.
           </div>
         )}
 
@@ -824,14 +858,35 @@ export default function Usage() {
             <div style={{ flex: 1, padding: '40px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>
           ) : orData ? (
             <div style={{ flex: 1 }}>
-              <CreditGauge usage={orData.usage} limit={orData.limit} remaining={orData.remaining} />
+              <CreditGauge
+                usage={orData.usage}
+                limit={orData.limit}
+                remaining={orData.remaining}
+                provider={orData.provider}
+                totalTokens={orData.totalTokens}
+                promptTokens={orData.promptTokens}
+                completionTokens={orData.completionTokens}
+                totalCalls={orData.totalCalls}
+              />
             </div>
           ) : null}
           {orData && (
             <>
-              <InfoTile label="Active Model" value={orData.model} sub="OPENROUTER_MODEL" accent="linear-gradient(90deg, var(--violet), var(--cyan))" />
-              <InfoTile label="Provider" value={orData.provider.toUpperCase()} sub={orData.is_free_tier ? 'Free tier' : 'Prepaid credits'} accent="linear-gradient(90deg, var(--cyan), #2563AB)" />
-              <InfoTile label="Rate Limit" value={`${orData.rate_limit.requests} req`} sub={`per ${orData.rate_limit.interval}`} accent="linear-gradient(90deg, var(--amber), var(--skip))" />
+              <InfoTile
+                label="Active Model"
+                value={orData.model}
+                sub={orData.provider === 'anthropic' ? 'ANTHROPIC_MODEL' : 'OPENROUTER_MODEL'}
+                accent="linear-gradient(90deg, var(--violet), var(--cyan))"
+              />
+              <InfoTile
+                label="Provider"
+                value={orData.provider.toUpperCase()}
+                sub={orData.provider === 'anthropic' ? 'Direct API key' : (orData.is_free_tier ? 'Free tier' : 'Prepaid credits')}
+                accent="linear-gradient(90deg, var(--cyan), #2563AB)"
+              />
+              {orData.provider !== 'anthropic' && (
+                <InfoTile label="Rate Limit" value={`${orData.rate_limit.requests} req`} sub={`per ${orData.rate_limit.interval}`} accent="linear-gradient(90deg, var(--amber), var(--skip))" />
+              )}
               <InfoTile
                 label={`Agent Calls (${days}d)`}
                 value={(agentData?.total.calls ?? 0).toLocaleString()}

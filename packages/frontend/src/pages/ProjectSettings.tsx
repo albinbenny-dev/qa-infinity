@@ -20,10 +20,13 @@ import {
   useDeleteProject,
   useCreateEnvConfig,
   useDeleteEnvConfig,
+  useUserSearch,
+  type UserSearchResult,
 } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import { useRBAC } from '../hooks/useRBAC';
 import { PROJECT_GRADIENTS, getInitials } from '../lib/utils';
+import { PROJECT_ROLES, getRoleMeta } from '../lib/roles';
 import {
   useScans,
   useScan,
@@ -532,15 +535,17 @@ function MembersTab() {
   const updateRole       = useUpdateMemberRole(activeProject?.id ?? '');
 
   const [inviteEmail, setInviteEmail]   = useState('');
-  const [inviteRole, setInviteRole]     = useState<'ADMIN' | 'QA_ENGINEER' | 'VIEWER'>('QA_ENGINEER');
+  const [inviteRole, setInviteRole]     = useState<'ADMIN' | 'SUPER_USER' | 'STANDARD_USER'>('SUPER_USER');
   const [removingId, setRemovingId]     = useState<string | null>(null);
-  const [changingRole, setChangingRole] = useState<string | null>(null); // userId being role-changed
+  const [changingRole, setChangingRole] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const ROLE_COLORS: Record<string, string> = {
-    ADMIN: 'badge-cyan',
-    QA_ENGINEER: 'badge-pass',
-    VIEWER: 'badge-draft',
-  };
+  const { data: suggestions = [] } = useUserSearch(activeProject?.id ?? '', inviteEmail);
+
+  function selectSuggestion(u: UserSearchResult) {
+    setInviteEmail(u.email);
+    setShowSuggestions(false);
+  }
 
   async function handleAddMember() {
     const email = inviteEmail.trim();
@@ -548,7 +553,7 @@ function MembersTab() {
     try {
       await addMember.mutateAsync({ email, role: inviteRole });
       setInviteEmail('');
-      setInviteRole('QA_ENGINEER');
+      setInviteRole('SUPER_USER');
       toast.success(`${email} added to project as ${inviteRole.replace('_', ' ')}.`);
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { error?: string } } };
@@ -636,19 +641,19 @@ function MembersTab() {
                         onBlur={() => setChangingRole(null)}
                         style={{ fontSize: '11px', padding: '3px 8px', width: '140px', fontFamily: 'var(--font-ui)' }}
                       >
-                        <option value="ADMIN">ADMIN</option>
-                        <option value="QA_ENGINEER">QA_ENGINEER</option>
-                        <option value="VIEWER">VIEWER</option>
+                        {PROJECT_ROLES.map((r) => (
+                          <option key={r.key} value={r.key}>{r.icon} {r.label}</option>
+                        ))}
                       </select>
                     ) : (
                       <button
                         type="button"
-                        className={`badge ${ROLE_COLORS[m.role] ?? 'badge-draft'}`}
+                        className={`badge ${getRoleMeta(m.role)?.badge ?? 'badge-draft'}`}
                         title="Click to change role"
                         onClick={() => setChangingRole(m.userId)}
                         style={{ cursor: 'pointer', border: 'none', background: 'none' }}
                       >
-                        {m.role} ✎
+                        {getRoleMeta(m.role)?.icon} {getRoleMeta(m.role)?.label ?? m.role} ✎
                       </button>
                     )}
                   </td>
@@ -686,7 +691,7 @@ function MembersTab() {
       </div>
 
       {/* Add member form */}
-      <div className="card">
+      <div className="card" style={{ overflow: 'visible' }}>
         <div className="card-header">
           <div className="card-title">Add Member by Email</div>
         </div>
@@ -697,15 +702,60 @@ function MembersTab() {
           <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
             <div style={{ flex: 1 }}>
               <label style={LABEL_STYLE}>Email Address</label>
-              <input
-                className="input-field"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleAddMember(); }}
-                placeholder="colleague@company.com"
-                type="email"
-                style={{ fontFamily: 'var(--font-ui)' }}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  className="input-field"
+                  value={inviteEmail}
+                  onChange={(e) => { setInviteEmail(e.target.value); setShowSuggestions(true); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { setShowSuggestions(false); void handleAddMember(); }
+                    if (e.key === 'Escape') setShowSuggestions(false);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="colleague@company.com"
+                  type="email"
+                  autoComplete="off"
+                  style={{ fontFamily: 'var(--font-ui)', width: '100%' }}
+                />
+                {showSuggestions && suggestions.length > 0 && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                    background: 'var(--surface2)', border: '1px solid var(--border)',
+                    borderRadius: '6px', marginTop: '4px', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+                    overflow: 'hidden',
+                  }}>
+                    {suggestions.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onMouseDown={() => selectSuggestion(u)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '10px',
+                          width: '100%', padding: '8px 12px', background: 'none',
+                          border: 'none', borderBottom: '1px solid var(--border)',
+                          cursor: 'pointer', textAlign: 'left',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface3)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                      >
+                        <div style={{
+                          width: '26px', height: '26px', borderRadius: '50%', flexShrink: 0,
+                          background: 'linear-gradient(135deg, var(--violet), var(--cyan))',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '10px', fontWeight: 700, color: '#fff',
+                        }}>
+                          {getInitials(u.name)}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)' }}>{u.name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{u.email}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div style={{ width: '150px' }}>
               <label style={LABEL_STYLE}>Role</label>
@@ -715,9 +765,9 @@ function MembersTab() {
                 onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}
                 style={{ fontFamily: 'var(--font-ui)', fontSize: '13px' }}
               >
-                <option value="ADMIN">Admin</option>
-                <option value="QA_ENGINEER">QA Engineer</option>
-                <option value="VIEWER">Viewer</option>
+                {PROJECT_ROLES.map((r) => (
+                  <option key={r.key} value={r.key}>{r.icon} {r.label}</option>
+                ))}
               </select>
             </div>
             <button

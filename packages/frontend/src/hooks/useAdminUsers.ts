@@ -5,7 +5,7 @@ export interface AdminUser {
   id: string;
   email: string;
   name: string;
-  globalRole: 'SUPER_ADMIN' | 'USER';
+  globalRole: 'SUPER_ADMIN' | 'ADMIN' | 'SUPER_USER' | 'STANDARD_USER';
   createdAt: string;
   _count: { memberships: number };
 }

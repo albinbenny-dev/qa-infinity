@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import { z } from 'zod';
 import XLSXStyle from 'xlsx-js-style';
+import JSZip from 'jszip';
 import fs from 'fs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
@@ -512,13 +513,84 @@ router.get('/runs/:runId/results/:resultId/video', async (req: Request, res: Res
       },
     });
     if (!result?.videoPath) { res.status(404).json({ error: 'Video not found' }); return; }
-    if (!fs.existsSync(result.videoPath)) { res.status(404).json({ error: 'Video file missing on disk' }); return; }
+
     const runLabelVid = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
+
+    // Multiple sessions — bundle into a ZIP
+    if (result.videoPath.startsWith('[')) {
+      const paths = JSON.parse(result.videoPath) as string[];
+      const zip = new JSZip();
+      for (let i = 0; i < paths.length; i++) {
+        const p = paths[i];
+        if (fs.existsSync(p)) {
+          const ext = p.toLowerCase().endsWith('.mp4') ? 'mp4' : 'webm';
+          zip.file(`session-${i + 1}.${ext}`, fs.readFileSync(p));
+        }
+      }
+      const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="videos-${runLabelVid}_${result.testCase.tcId}.zip"`);
+      res.send(buf);
+      return;
+    }
+
+    // Single session
+    if (!fs.existsSync(result.videoPath)) { res.status(404).json({ error: 'Video file missing on disk' }); return; }
     const videoExt = result.videoPath.toLowerCase().endsWith('.mp4') ? 'mp4' : 'webm';
     const videoMime = videoExt === 'mp4' ? 'video/mp4' : 'video/webm';
     res.setHeader('Content-Type', videoMime);
     res.setHeader('Content-Disposition', `attachment; filename="video-${runLabelVid}_${result.testCase.tcId}.${videoExt}"`);
     fs.createReadStream(result.videoPath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ── GET /runs/:runId/results/:resultId/rf-report ───────────────────────────
+
+router.get('/runs/:runId/results/:resultId/rf-report', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await prisma.runResult.findFirst({
+      where: {
+        id: req.params['resultId'],
+        runId: req.params['runId'],
+        run: { projectId: req.project.id },
+      },
+      select: {
+        rfReportPath: true,
+        run: { select: { runSeq: true } },
+        testCase: { select: { tcId: true } },
+      },
+    });
+    if (!result?.rfReportPath) { res.status(404).json({ error: 'RF report not found' }); return; }
+    if (!fs.existsSync(result.rfReportPath)) { res.status(404).json({ error: 'RF report file missing on disk' }); return; }
+    const runLabel = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="rf-report-${runLabel}_${result.testCase.tcId}.html"`);
+    fs.createReadStream(result.rfReportPath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ── GET /runs/:runId/results/:resultId/rf-log ──────────────────────────────
+
+router.get('/runs/:runId/results/:resultId/rf-log', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await prisma.runResult.findFirst({
+      where: {
+        id: req.params['resultId'],
+        runId: req.params['runId'],
+        run: { projectId: req.project.id },
+      },
+      select: {
+        rfLogPath: true,
+        run: { select: { runSeq: true } },
+        testCase: { select: { tcId: true } },
+      },
+    });
+    if (!result?.rfLogPath) { res.status(404).json({ error: 'RF log not found' }); return; }
+    if (!fs.existsSync(result.rfLogPath)) { res.status(404).json({ error: 'RF log file missing on disk' }); return; }
+    const runLabel = `RUN-${String(result.run.runSeq).padStart(4, '0')}`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="rf-log-${runLabel}_${result.testCase.tcId}.html"`);
+    fs.createReadStream(result.rfLogPath).pipe(res);
   } catch (err) { next(err); }
 });
 

@@ -1,5 +1,3 @@
-import { writeFileSync } from 'fs';
-import { join } from 'path';
 import { chromium } from 'playwright-core';
 import type { Page } from 'playwright-core';
 import { prisma } from '../lib/prisma.js';
@@ -9,10 +7,10 @@ import { runBrowserAgent } from '../agents/browserAgent.js';
 import { captureSnapshot } from './domCapture.js';
 import { saveAgentLearnings } from './agentLearningService.js';
 import { addRunJob } from '../lib/queue.js';
+import { saveScript } from './scriptFileService.js';
 import { getRunsNamespace } from '../lib/socket.js';
 import type { LoginInstructions, RecordedAction } from '../types/scanner.js';
 
-const SCRIPTS_ROOT = process.env.SCRIPTS_PATH ?? '/scripts';
 const AUTO_APPLY_THRESHOLD = 95;
 const CHROMIUM_PATH =
   process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? '/usr/bin/chromium-browser';
@@ -53,6 +51,7 @@ async function runHealTrace(opts: {
   agentTraceId: string;
   projectId: string;
   projectName?: string;
+  projectSlug?: string;
   baseUrl: string;
   testGoal: string;
   loginInstructions: LoginInstructions;
@@ -107,6 +106,7 @@ async function runHealTrace(opts: {
       additionalContext,
       projectId: opts.projectId,
       projectName: opts.projectName,
+      projectSlug: opts.projectSlug,
       onStep: async (step: RecordedAction) => {
         await prisma.agentTrace
           .update({
@@ -307,6 +307,7 @@ export async function triggerHeal(runResultId: string): Promise<void> {
           agentTraceId: trace.id,
           projectId,
           projectName: project.name,
+          projectSlug,
           baseUrl: project.baseUrl,
           testGoal,
           loginInstructions,
@@ -361,6 +362,7 @@ export async function triggerHeal(runResultId: string): Promise<void> {
       agentTraceContext,
       projectName: project.name,
       baseUrl: project.baseUrl,
+      slug: projectSlug,
     });
 
     // Combine confidence: classifier 30% + patcher 70%
@@ -392,7 +394,7 @@ export async function triggerHeal(runResultId: string): Promise<void> {
     }
 
     if (autoApply) {
-      writeScriptToDisk(projectId, script.filename, patchResult.patchedScript);
+      saveScript(projectSlug, script.filename, patchResult.patchedScript);
       // Promote to golden — auto-applied at ≥95% confidence is a trusted fix
       await prisma.script.update({
         where: { id: script.id },
@@ -410,6 +412,7 @@ export async function triggerHeal(runResultId: string): Promise<void> {
         explanation: patchResult.explanation,
         runResultId,
       });
+      void applyHealFeedback(heal.id).catch((e: Error) => console.error('[heal-feedback] Error:', e.message));
     }
   } catch (err) {
     // Mark the heal as EXHAUSTED so the UI surfaces the failure and the user can re-trigger
@@ -424,11 +427,141 @@ export async function triggerHeal(runResultId: string): Promise<void> {
   }
 }
 
+// ── Heal feedback loop ────────────────────────────────────────────────────────
+// After a heal is AUTO_APPLIED or APPROVED, write back to skills so future
+// TC/script generation avoids the same broken patterns.
+
+function extractSelectorStrings(code: string): string[] {
+  const seen = new Set<string>();
+  const results: string[] = [];
+  const patterns = [
+    /getByTestId\(['"`]([^'"`]+)['"`]\)/g,
+    /getByLabel\(['"`]([^'"`]+)['"`]\)/g,
+    /getByPlaceholder\(['"`]([^'"`]+)['"`]\)/g,
+    /getByText\(['"`]([^'"`]+)['"`]\)/g,
+    /\.locator\(['"`]([^'"`]+)['"`]\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const m of code.matchAll(pattern)) {
+      if (!seen.has(m[1])) { seen.add(m[1]); results.push(m[1]); }
+    }
+  }
+  for (const m of code.matchAll(/getByRole\(['"`]\w+['"`](?:,\s*\{[^}]*\})?\)/g)) {
+    if (!seen.has(m[0])) { seen.add(m[0]); results.push(m[0]); }
+  }
+  return results;
+}
+
+function buildSelectorChanges(original: string, patched: string): Map<string, string> {
+  const origSet = new Set(extractSelectorStrings(original));
+  const patchedSet = new Set(extractSelectorStrings(patched));
+  const removed = [...origSet].filter(s => !patchedSet.has(s));
+  const added = [...patchedSet].filter(s => !origSet.has(s));
+  const changes = new Map<string, string>();
+  if (removed.length > 0 && removed.length === added.length) {
+    for (let i = 0; i < removed.length; i++) changes.set(removed[i], added[i]);
+  }
+  return changes;
+}
+
+export async function applyHealFeedback(healId: string): Promise<void> {
+  try {
+    const heal = await prisma.heal.findUnique({
+      where: { id: healId },
+      include: {
+        runResult: {
+          include: {
+            testCase: { select: { useCaseTag: true, tags: true } },
+          },
+        },
+      },
+    });
+    if (!heal) return;
+
+    const projectId = heal.projectId;
+    const testCase = heal.runResult.testCase;
+
+    let featureGroup: string | null = testCase?.useCaseTag ?? null;
+    if (!featureGroup) {
+      try {
+        const tags = JSON.parse(testCase?.tags ?? '[]') as string[];
+        featureGroup = tags.find(t => t.trim()) ?? null;
+      } catch { /* no tags */ }
+    }
+
+    // Update locators in UI_FLOW skills that contain changed selectors
+    const selectorChanges = buildSelectorChanges(heal.originalCode, heal.patchedCode);
+    if (selectorChanges.size > 0) {
+      const uiFlowSkills = await prisma.projectSkill.findMany({
+        where: { projectId, skillType: 'UI_FLOW', isActive: true },
+      });
+      for (const skill of uiFlowSkills) {
+        try {
+          const content = JSON.parse(skill.content) as Record<string, unknown>;
+          let changed = false;
+          if (Array.isArray(content.locators)) {
+            for (const loc of content.locators as Array<{ selector: string; [k: string]: unknown }>) {
+              if (selectorChanges.has(loc.selector)) {
+                loc.selector = selectorChanges.get(loc.selector)!;
+                changed = true;
+              }
+            }
+          }
+          if (changed) {
+            await prisma.projectSkill.update({ where: { id: skill.id }, data: { content: JSON.stringify(content) } });
+            console.log(`[heal-feedback] Updated selectors in skill "${skill.name}"`);
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    // Upsert a HISTORICAL skill with the heal diagnosis
+    const scope = featureGroup ?? 'general';
+    const historicalName = `Heal History — ${scope}`;
+    const entry: Record<string, unknown> = {
+      date: new Date().toISOString().slice(0, 10),
+      healType: heal.type,
+      confidence: heal.confidence,
+      summary: heal.summary ?? 'Heal applied',
+    };
+    if (selectorChanges.size > 0) entry.selectorChanges = Object.fromEntries(selectorChanges);
+
+    const existing = await prisma.projectSkill.findFirst({
+      where: { projectId, skillType: 'HISTORICAL', name: historicalName },
+    });
+    if (existing) {
+      let entries: unknown[] = [];
+      try { entries = JSON.parse(existing.content) as unknown[]; } catch { /* reset */ }
+      entries.push(entry);
+      await prisma.projectSkill.update({ where: { id: existing.id }, data: { content: JSON.stringify(entries) } });
+    } else {
+      await prisma.projectSkill.create({
+        data: {
+          projectId,
+          skillType: 'HISTORICAL',
+          name: historicalName,
+          scope,
+          featureGroup,
+          content: JSON.stringify([entry]),
+          captureMethod: 'AUTO_ACCUMULATED',
+          confidence: 0.9,
+          isActive: true,
+        },
+      });
+    }
+
+    console.log(`[heal-feedback] Feedback applied for feature "${scope}" (heal ${healId}, ${selectorChanges.size} selector changes)`);
+  } catch (err) {
+    console.error(`[heal-feedback] Failed for heal ${healId}:`, (err as Error).message);
+  }
+}
+
 // ── applyHeal ────────────────────────────────────────────────────────────────
 // Write patched code to disk + update script DB + mark heal as APPROVED
 
 export async function applyHeal(healId: string): Promise<{
   projectId: string;
+  projectSlug: string;
   testCaseId: string;
   scriptFilename: string;
   environment: string;
@@ -441,7 +574,12 @@ export async function applyHeal(healId: string): Promise<{
         include: {
           script: true,
           testCase: { select: { id: true } },
-          run: { select: { environment: true } },
+          run: {
+            select: {
+              environment: true,
+              project: { select: { slug: true } },
+            },
+          },
         },
       },
     },
@@ -451,9 +589,10 @@ export async function applyHeal(healId: string): Promise<{
   if (!heal.runResult.script) throw new Error('No script linked to this heal');
 
   const { projectId } = heal;
+  const projectSlug = heal.runResult.run.project.slug;
   const script = heal.runResult.script;
 
-  writeScriptToDisk(projectId, script.filename, heal.patchedCode);
+  saveScript(projectSlug, script.filename, heal.patchedCode);
 
   const testCaseId = heal.runResult.testCase.id;
 
@@ -481,6 +620,7 @@ export async function applyHeal(healId: string): Promise<{
       : []),
   ]);
   console.log(`[heal-service] Heal ${healId} approved — script ${script.id} promoted to golden`);
+  void applyHealFeedback(healId).catch((e: Error) => console.error('[heal-feedback] Error:', e.message));
 
   const envConfig = await prisma.envConfig.findFirst({
     where: { projectId, name: heal.runResult.run.environment },
@@ -489,6 +629,7 @@ export async function applyHeal(healId: string): Promise<{
 
   return {
     projectId,
+    projectSlug,
     testCaseId: heal.runResult.testCase.id,
     scriptFilename: script.filename,
     environment: heal.runResult.run.environment,
@@ -502,17 +643,6 @@ export async function rejectHeal(healId: string): Promise<void> {
   const heal = await prisma.heal.findUnique({ where: { id: healId }, select: { id: true } });
   if (!heal) throw new Error('Heal not found');
   await prisma.heal.update({ where: { id: healId }, data: { status: 'REJECTED' } });
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function writeScriptToDisk(projectId: string, filename: string, content: string): void {
-  try {
-    const scriptPath = join(SCRIPTS_ROOT, projectId, filename);
-    writeFileSync(scriptPath, content, 'utf8');
-  } catch (err) {
-    console.error('[heal-service] Failed to write patched script to disk:', (err as Error).message);
-  }
 }
 
 // ── retryHealWithContext ──────────────────────────────────────────────────────
@@ -550,6 +680,7 @@ export async function retryHealWithContext(healId: string, userContext: string):
     agentTraceContext: `User-provided context about this failure:\n${userContext}`,
     projectName: project.name,
     baseUrl: project.baseUrl ?? undefined,
+    slug: project.slug,
   });
 
   const finalConfidence = Math.min(100, Math.round(patchResult.confidence));
@@ -566,7 +697,7 @@ export async function retryHealWithContext(healId: string, userContext: string):
   });
 
   if (autoApply) {
-    writeScriptToDisk(heal.projectId, script.filename, patchResult.patchedScript);
+    saveScript(project.slug, script.filename, patchResult.patchedScript);
     await prisma.script.update({
       where: { id: script.id },
       data: { content: patchResult.patchedScript, isGolden: true },
@@ -586,11 +717,13 @@ export async function retryHealWithContext(healId: string, userContext: string):
 
 export async function requeueHealedTest(opts: {
   projectId: string;
+  projectSlug: string;
   testCaseId: string;
   scriptFilename: string;
   environment: string;
   envBaseUrl: string;
 }): Promise<string> {
+  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
   const tc = await prisma.testCase.findUnique({
     where: { id: opts.testCaseId },
     select: { title: true },
@@ -610,7 +743,7 @@ export async function requeueHealedTest(opts: {
     runId: run.id,
     projectId: opts.projectId,
     testCaseIds: [opts.testCaseId],
-    scriptPaths: [`/scripts/${opts.projectId}/${opts.scriptFilename}`],
+    scriptPaths: [`${SCRIPTS_ROOT}/${opts.projectSlug}/scripts/${opts.scriptFilename}`],
     environment: opts.environment,
     envBaseUrl: opts.envBaseUrl,
     parallelWorkers: 1,

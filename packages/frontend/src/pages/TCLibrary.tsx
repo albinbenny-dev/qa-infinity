@@ -36,9 +36,6 @@ interface LibState {
   selectedIds: Set<string>;
   groupOpen: Record<string, boolean>;
   search: string;
-  typeFilter: '' | 'UI' | 'API' | 'SIT';
-  statusFilter: '' | 'DRAFT' | 'APPROVED' | 'DEPRECATED';
-  dragMode: boolean;
 }
 
 type LibAction =
@@ -48,9 +45,6 @@ type LibAction =
   | { type: 'TOGGLE_GROUP_OPEN'; name: string }
   | { type: 'SET_ALL_OPEN'; values: Record<string, boolean> }
   | { type: 'SET_SEARCH'; value: string }
-  | { type: 'SET_TYPE'; value: LibState['typeFilter'] }
-  | { type: 'SET_STATUS'; value: LibState['statusFilter'] }
-  | { type: 'TOGGLE_DRAG' }
   | { type: 'DESELECT_MOVED'; ids: string[] };
 
 function libReducer(state: LibState, action: LibAction): LibState {
@@ -83,12 +77,6 @@ function libReducer(state: LibState, action: LibAction): LibState {
       return { ...state, groupOpen: action.values };
     case 'SET_SEARCH':
       return { ...state, search: action.value };
-    case 'SET_TYPE':
-      return { ...state, typeFilter: action.value };
-    case 'SET_STATUS':
-      return { ...state, statusFilter: action.value };
-    case 'TOGGLE_DRAG':
-      return { ...state, dragMode: !state.dragMode };
     default:
       return state;
   }
@@ -98,9 +86,6 @@ const initialState: LibState = {
   selectedIds: new Set(),
   groupOpen: {},
   search: '',
-  typeFilter: '',
-  statusFilter: '',
-  dragMode: false,
 };
 
 // ── Stat tile ───────────────────────────────────────────────────────────────
@@ -135,11 +120,10 @@ export default function TCLibrary() {
   const projectId = project?.id;
 
   const [state, dispatch] = useReducer(libReducer, initialState);
-  const { search, typeFilter, statusFilter, selectedIds } = state;
+  const { search, selectedIds } = state;
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: tcData, isLoading } = useTestCases(projectId, {
-    type: typeFilter || undefined,
     search: search || undefined,
     limit: 500,
   });
@@ -184,13 +168,7 @@ export default function TCLibrary() {
     return set;
   }, [scripts]);
 
-  // ── Filtered TCs ──────────────────────────────────────────────────────────
-  const filteredTCs = useMemo(() => {
-    return allTCs.filter((tc) => {
-      if (statusFilter && tc.status !== statusFilter) return false;
-      return true;
-    });
-  }, [allTCs, statusFilter]);
+  const filteredTCs = allTCs;
 
   // ── Group TCs by useCaseTag ───────────────────────────────────────────────
   const groups = useMemo(() => {
@@ -495,63 +473,6 @@ export default function TCLibrary() {
                 style={{ width: '200px', padding: '6px 10px' }}
               />
 
-              {/* Type filter pills */}
-              <div style={{ display: 'flex', gap: '4px' }}>
-                {(['', 'UI', 'API', 'SIT'] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => dispatch({ type: 'SET_TYPE', value: t })}
-                    style={{
-                      padding: '4px 9px',
-                      borderRadius: '5px',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      border: `1px solid ${typeFilter === t ? 'rgba(37,99,171,0.3)' : 'var(--border)'}`,
-                      background: typeFilter === t ? 'var(--cyan-dim)' : 'var(--surface2)',
-                      color: typeFilter === t ? 'var(--cyan)' : 'var(--text-dim)',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {t === '' ? 'All' : t}
-                  </button>
-                ))}
-              </div>
-
-              {/* Status filter */}
-              <select
-                value={statusFilter}
-                onChange={(e) => dispatch({ type: 'SET_STATUS', value: e.target.value as LibState['statusFilter'] })}
-                className="input-field"
-                style={{ width: '135px', padding: '5px 8px' }}
-              >
-                <option value="">All Statuses</option>
-                <option value="APPROVED">Approved</option>
-                <option value="DRAFT">Draft</option>
-                <option value="DEPRECATED">Deprecated</option>
-              </select>
-
-              {/* Drag mode toggle */}
-              <div
-                onClick={() => dispatch({ type: 'TOGGLE_DRAG' })}
-                style={{
-                  display: 'flex',
-                  gap: '4px',
-                  alignItems: 'center',
-                  padding: '4px 10px',
-                  background: state.dragMode ? 'rgba(244,123,32,0.12)' : 'rgba(244,123,32,0.06)',
-                  border: `1px solid ${state.dragMode ? 'rgba(244,123,32,0.4)' : 'rgba(244,123,32,0.2)'}`,
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  userSelect: 'none',
-                }}
-              >
-                <span style={{ fontSize: '11px', color: 'var(--violet)', fontWeight: 600 }}>✥ Drag mode</span>
-                <div className={`toggle-switch${state.dragMode ? ' on' : ''}`} style={{ width: '30px', height: '17px', marginLeft: '4px' }}>
-                  <div className="toggle-knob" style={{ width: '11px', height: '11px', top: '2px', left: state.dragMode ? '16px' : '2px' }} />
-                </div>
-              </div>
-
               {/* Right: group info + expand/collapse */}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
@@ -590,7 +511,7 @@ export default function TCLibrary() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {groups.map((g, idx) => {
-              if (g.tcs.length === 0 && !search && !typeFilter && !statusFilter) return null;
+              if (g.tcs.length === 0 && !search) return null;
               const isOpen = state.groupOpen[g.name] ?? idx < 3;
               return (
                 <UseCaseGroup
