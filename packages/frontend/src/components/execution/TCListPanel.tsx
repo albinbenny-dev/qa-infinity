@@ -372,13 +372,13 @@ function UseCaseGroupRow({
           gap: 8,
           padding: '8px 14px',
           cursor: 'pointer',
-          background: `linear-gradient(90deg, ${group.color.replace('var(', '').replace(')', '')} 0 0)`,
-          backgroundImage: `linear-gradient(90deg, rgba(37,99,171,0.06) 0%, transparent 100%)`,
+          background: 'var(--surface2)',
+          backgroundImage: `linear-gradient(90deg, rgba(37,99,171,0.08) 0%, transparent 100%)`,
           borderBottom: '1px solid var(--border)',
           userSelect: 'none',
           position: 'sticky',
           top: 0,
-          zIndex: 1,
+          zIndex: 2,
         }}
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore inline style with CSS variable
