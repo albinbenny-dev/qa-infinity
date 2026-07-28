@@ -134,7 +134,7 @@ async function startVncStack() {
       try { fs.unlinkSync(xvfbLock); } catch {}
     }
     console.log('[qa-runner] Starting Xvfb on display ' + VNC_DISPLAY);
-    spawnLogged('Xvfb', [VNC_DISPLAY, '-screen', '0', '1280x800x24', '-ac']);
+    spawnLogged('Xvfb', [VNC_DISPLAY, '-screen', '0', '1366x768x24', '-ac']);
     await new Promise((resolve) => waitForXvfb(VNC_DISPLAY, resolve));
   }
 
@@ -459,7 +459,7 @@ const HOST_BROWSER_CONFIG_CONTENT = `module.exports = {
   projects: [
     { name: 'chromium', use: {
         browserName: 'chromium',
-        viewport: null,
+        viewport: { width: 1366, height: 720 },
         launchOptions: {
           args: [
             '--disable-blink-features=AutomationControlled',
