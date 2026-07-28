@@ -1043,11 +1043,36 @@ router.post(
           const existing = await prisma.script.findFirst({ where: { projectId, filename } });
           let testCasesCreated = 0;
 
+          // Helper: auto-create a TC for this script if createTCs is enabled
+          const autoCreateTc = async (): Promise<{ id: string } | null> => {
+            if (!createTCs) return null;
+            const title = filename.replace(/\.(robot|spec\.ts|spec\.js)$/, '');
+            const maxTc = await prisma.testCase.findFirst({
+              where: { projectId },
+              orderBy: { tcId: 'desc' },
+              select: { tcId: true },
+            });
+            const prefix = slug.toUpperCase().slice(0, 6);
+            const nextNum = maxTc ? (parseInt(maxTc.tcId.replace(/\D/g, '') || '0', 10) + 1) : 1;
+            const newTcId = `TC-${prefix}-${String(nextNum).padStart(3, '0')}`;
+            return prisma.testCase.create({
+              data: { projectId, tcId: newTcId, title, useCaseTag, steps: '', expectedResult: '' },
+            });
+          };
+
           if (existing) {
             await prisma.script.update({
               where: { id: existing.id },
               data: { content: f.content, useCaseFolder: useCaseTag, updatedAt: new Date() },
             });
+            // If script has no TC link yet and createTCs is on, create one now
+            if (!existing.testCaseId && createTCs) {
+              const tc = await autoCreateTc();
+              if (tc) {
+                await prisma.script.update({ where: { id: existing.id }, data: { testCaseId: tc.id } });
+                testCasesCreated = 1;
+              }
+            }
           } else {
             // Try to link to existing TC by TC-XXX prefix
             const tcMatch = filename.match(/^(TC-[A-Z]+-\d+)/i) ?? filename.match(/^(TC\d+)/i);
@@ -1059,22 +1084,9 @@ router.post(
               });
               testCaseId = tc?.id ?? null;
             }
-            // Auto-create TC if no match and createTCs is enabled
-            if (!testCaseId && createTCs) {
-              const title = filename.replace(/\.(robot|spec\.ts|spec\.js)$/, '').replace(/_/g, ' ');
-              const maxTc = await prisma.testCase.findFirst({
-                where: { projectId },
-                orderBy: { tcId: 'desc' },
-                select: { tcId: true },
-              });
-              const prefix = slug.toUpperCase().slice(0, 6);
-              const nextNum = maxTc ? (parseInt(maxTc.tcId.replace(/\D/g, '') || '0', 10) + 1) : 1;
-              const newTcId = `TC-${prefix}-${String(nextNum).padStart(3, '0')}`;
-              const tc = await prisma.testCase.create({
-                data: { projectId, tcId: newTcId, title, useCaseTag, steps: '', expectedResult: '' },
-              });
-              testCaseId = tc.id;
-              testCasesCreated = 1;
+            if (!testCaseId) {
+              const tc = await autoCreateTc();
+              if (tc) { testCaseId = tc.id; testCasesCreated = 1; }
             }
             const scriptType = filename.endsWith('.robot') ? 'ROBOT' : 'PLAYWRIGHT';
             await prisma.script.create({
