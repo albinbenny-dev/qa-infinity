@@ -19,6 +19,9 @@ RUN /opt/rfbrowser/bin/python -m Browser.entry init || true
 # Make `robot` available on PATH from the venv
 ENV PATH="/opt/rfbrowser/bin:${PATH}"
 
+# Point the pnpm-installed @playwright/test at the browsers the base image already has
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 WORKDIR /app
 
 # Copy workspace files for dependency resolution

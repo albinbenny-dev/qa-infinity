@@ -1033,7 +1033,7 @@ const server = http.createServer(async (req, res) => {
       detached: true,
       env: Object.assign({}, process.env, {
         DISPLAY: VNC_DISPLAY,
-        PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '0',
+        PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/ms-playwright',
       }),
     });
 
