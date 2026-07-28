@@ -1,8 +1,8 @@
 # ==============================================================================
-# QA Infinity — Local Development Startup Script
+# QA Infinity - Local Development Startup Script
 #
 # First time:  .\start.ps1          (sets up .env, builds images, starts stack)
-# After that:  .\start.ps1          (starts existing stack — fast)
+# After that:  .\start.ps1          (starts existing stack - fast)
 #              .\start.ps1 -Build   (force-rebuild images after code changes)
 #              .\start.ps1 -Stop    (stop all containers)
 #              .\start.ps1 -Logs    (tail live logs)
@@ -23,7 +23,7 @@ function Write-Err  { param($msg) Write-Host "    [ERR] $msg" -ForegroundColor R
 
 Write-Host ""
 Write-Host "  QA Infinity" -ForegroundColor DarkCyan
-Write-Host "  ─────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  ---------------------------------------------" -ForegroundColor DarkGray
 Write-Host ""
 
 Push-Location $PSScriptRoot
@@ -43,7 +43,7 @@ if ($Logs) {
 }
 
 # ==============================================================================
-# STEP 1 — Check Docker
+# STEP 1 - Check Docker
 # ==============================================================================
 Write-Step "Checking Docker"
 try {
@@ -56,25 +56,25 @@ try {
 }
 
 # ==============================================================================
-# STEP 2 — First-time .env setup
+# STEP 2 - First-time .env setup
 # ==============================================================================
 Write-Step "Checking environment configuration"
 
 if (-not (Test-Path "$PSScriptRoot\.env")) {
-    Write-Warn ".env not found — creating from .env.example"
+    Write-Warn ".env not found - creating from .env.example"
     Copy-Item "$PSScriptRoot\.env.example" "$PSScriptRoot\.env"
 
     Write-Host ""
-    Write-Host "  ┌─────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "  │  ACTION REQUIRED: fill in your .env file            │" -ForegroundColor Yellow
-    Write-Host "  │                                                       │" -ForegroundColor Yellow
-    Write-Host "  │  Required fields (marked ★ in the file):            │" -ForegroundColor Yellow
-    Write-Host "  │    POSTGRES_PASSWORD  — pick any strong password     │" -ForegroundColor Yellow
-    Write-Host "  │    JWT_SECRET         — paste 2-3 random UUIDs       │" -ForegroundColor Yellow
-    Write-Host "  │    ANTHROPIC_API_KEY  — or set LLM_PROVIDER and key  │" -ForegroundColor Yellow
-    Write-Host "  │                                                       │" -ForegroundColor Yellow
-    Write-Host "  │  Opening .env in Notepad — save and close to continue│" -ForegroundColor Yellow
-    Write-Host "  └─────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+    Write-Host "  +-----------------------------------------------------+" -ForegroundColor Yellow
+    Write-Host "  |  ACTION REQUIRED: fill in your .env file            |" -ForegroundColor Yellow
+    Write-Host "  |                                                     |" -ForegroundColor Yellow
+    Write-Host "  |  Required fields (marked * in the file):           |" -ForegroundColor Yellow
+    Write-Host "  |    POSTGRES_PASSWORD  - pick any strong password    |" -ForegroundColor Yellow
+    Write-Host "  |    JWT_SECRET         - paste 2-3 random UUIDs      |" -ForegroundColor Yellow
+    Write-Host "  |    ANTHROPIC_API_KEY  - or set LLM_PROVIDER and key |" -ForegroundColor Yellow
+    Write-Host "  |                                                     |" -ForegroundColor Yellow
+    Write-Host "  |  Opening .env in Notepad - save and close to cont.  |" -ForegroundColor Yellow
+    Write-Host "  +-----------------------------------------------------+" -ForegroundColor Yellow
     Write-Host ""
 
     Start-Process notepad "$PSScriptRoot\.env" -Wait
@@ -111,13 +111,13 @@ if ($missing.Count -gt 0) {
 Write-Ok ".env is configured (provider: $provider)"
 
 # ==============================================================================
-# STEP 3 — Build or pull images
+# STEP 3 - Build or pull images
 # ==============================================================================
 $isFirstRun = -not (docker images -q qa-infinity-qa-api:latest 2>$null)
 
 if ($Build -or $isFirstRun) {
     if ($isFirstRun) {
-        Write-Step "First run — building Docker images (this takes ~3 minutes)"
+        Write-Step "First run - building Docker images (this takes ~3 minutes)"
     } else {
         Write-Step "Building Docker images (--no-cache)"
     }
@@ -134,7 +134,7 @@ if ($Build -or $isFirstRun) {
 }
 
 # ==============================================================================
-# STEP 4 — Start the stack
+# STEP 4 - Start the stack
 # ==============================================================================
 Write-Step "Starting QA Infinity stack"
 docker compose up -d
@@ -144,7 +144,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ==============================================================================
-# STEP 5 — Wait for API health
+# STEP 5 - Wait for API health
 # ==============================================================================
 Write-Step "Waiting for API to be ready"
 
@@ -159,20 +159,20 @@ for ($i = 1; $i -le 24; $i++) {
 }
 
 # ==============================================================================
-# STEP 6 — Summary
+# STEP 6 - Summary
 # ==============================================================================
 Write-Host ""
 if ($healthy) {
-    Write-Host "  ┌─────────────────────────────────────────────────────┐" -ForegroundColor Green
-    Write-Host "  │  QA Infinity is ready!                              │" -ForegroundColor Green
-    Write-Host "  │                                                       │" -ForegroundColor Green
-    Write-Host "  │  UI       →  http://localhost:3100                  │" -ForegroundColor Green
-    Write-Host "  │  API      →  http://localhost:4100                  │" -ForegroundColor Green
-    Write-Host "  │  noVNC    →  http://localhost:6180  (test runner)   │" -ForegroundColor Green
-    Write-Host "  │                                                       │" -ForegroundColor Green
-    Write-Host "  │  First time? Register at /register                  │" -ForegroundColor Green
-    Write-Host "  │  (first account auto-gets Super Admin role)         │" -ForegroundColor Green
-    Write-Host "  └─────────────────────────────────────────────────────┘" -ForegroundColor Green
+    Write-Host "  +-----------------------------------------------------+" -ForegroundColor Green
+    Write-Host "  |  QA Infinity is ready!                              |" -ForegroundColor Green
+    Write-Host "  |                                                     |" -ForegroundColor Green
+    Write-Host "  |  UI       ->  http://localhost:3100                 |" -ForegroundColor Green
+    Write-Host "  |  API      ->  http://localhost:4100                 |" -ForegroundColor Green
+    Write-Host "  |  noVNC    ->  http://localhost:6180  (test runner)  |" -ForegroundColor Green
+    Write-Host "  |                                                     |" -ForegroundColor Green
+    Write-Host "  |  First time? Register at /register                 |" -ForegroundColor Green
+    Write-Host "  |  (first account auto-gets Super Admin role)        |" -ForegroundColor Green
+    Write-Host "  +-----------------------------------------------------+" -ForegroundColor Green
 } else {
     Write-Warn "API did not become healthy within 2 minutes."
     Write-Host "    Check logs with:  .\start.ps1 -Logs" -ForegroundColor Yellow
