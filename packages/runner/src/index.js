@@ -1034,6 +1034,9 @@ const server = http.createServer(async (req, res) => {
       env: Object.assign({}, process.env, {
         DISPLAY: VNC_DISPLAY,
         PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/ms-playwright',
+        // Required for headed Chromium on Xvfb inside Docker — without these flags
+        // Chromium attempts GPU acceleration via EGL which fails and renders black.
+        PLAYWRIGHT_CHROMIUM_FLAGS: '--disable-gpu --disable-dev-shm-usage --no-sandbox --disable-setuid-sandbox',
       }),
     });
 
