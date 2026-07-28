@@ -68,15 +68,31 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const { email, name, password } = parsed.data;
+
+    // Domain restriction — same ALLOWED_DOMAINS env var as Google SSO
+    const allowedDomains = (process.env.ALLOWED_DOMAINS ?? '')
+      .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    if (allowedDomains.length > 0) {
+      const emailDomain = email.split('@')[1]?.toLowerCase();
+      if (!emailDomain || !allowedDomains.includes(emailDomain)) {
+        res.status(403).json({ error: `Registration is restricted to: ${allowedDomains.join(', ')}` });
+        return;
+      }
+    }
+
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
       res.status(409).json({ error: 'Email is already registered' });
       return;
     }
 
+    // First user to register automatically becomes SUPER_ADMIN
+    const userCount = await prisma.user.count();
+    const globalRole = userCount === 0 ? 'SUPER_ADMIN' : 'STANDARD_USER';
+
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { email, name, passwordHash, globalRole: 'STANDARD_USER' },
+      data: { email, name, passwordHash, globalRole },
     });
 
     const token = generateToken({

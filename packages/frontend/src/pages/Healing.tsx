@@ -1155,7 +1155,7 @@ export default function Healing() {
           }}
         >
           {/* LEFT — Failed Runs only */}
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div
               style={{
                 background: 'var(--surface)',
@@ -1203,7 +1203,7 @@ export default function Healing() {
           </div>
 
           {/* RIGHT — Pending Approval + AI Analysis + Recently Healed */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
             {/* Pending Approval */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div

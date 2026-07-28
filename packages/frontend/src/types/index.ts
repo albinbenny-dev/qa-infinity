@@ -132,11 +132,20 @@ export interface Schedule {
   updatedAt: string;
 }
 
+export interface SuiteStage {
+  id: string;
+  useCaseTag: string;
+  tcIds: string[];
+  mode: 'parallel' | 'sequential';
+  order: number;
+}
+
 export interface Suite {
   id: string;
   projectId: string;
   name: string;
-  testCaseIds: string; // JSON string — parse with JSON.parse
+  stages: string;     // JSON string of SuiteStage[] — parse with JSON.parse
+  testCaseIds: string; // JSON string — parse with JSON.parse (kept for backward compat)
   createdAt: string;
   updatedAt: string;
 }
@@ -285,6 +294,7 @@ export interface TopSuiteEntry {
   runCount: number;
   lastRunStatuses: string[];
   successRate: number;
+  testCaseIds: string[];
 }
 
 export interface DashboardData {
@@ -361,6 +371,8 @@ export type NavItem = {
   icon: string;
   badge?: string | number;
   badgeVariant?: 'red' | 'green' | 'blue';
+  aiLabel?: boolean;
+  onClick?: () => void;
 };
 
 export type NavSection = {
@@ -393,6 +405,18 @@ export interface ChatAttachment {
   name: string;
   mimeType: string;
   data: string; // base64
+}
+
+export interface ChatContext {
+  page?: string;
+  tcId?: string;
+  tcTitle?: string;
+}
+
+export interface ChatToolActivity {
+  name: string;
+  label: string;
+  status: 'running' | 'done';
 }
 
 // ── UI Scanner types ───────────────────────────────────────────────────────

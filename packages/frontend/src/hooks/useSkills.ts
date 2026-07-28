@@ -33,6 +33,19 @@ export interface FeatureGroupInfo {
   skillTypes: string[];
 }
 
+export interface ParsedApiEndpoint {
+  name: string;
+  method: string;
+  endpoint: string;
+  purpose: string;
+  requestSchema: unknown;
+  responses: unknown;
+  authRequired: boolean;
+  notes: string;
+}
+
+export type ApiSpecFormat = 'openapi' | 'postman' | 'curl';
+
 export function useSkills(projectId: string | undefined, skillType?: SkillType) {
   return useQuery({
     queryKey: ['skills', projectId, skillType],
@@ -182,6 +195,40 @@ export function useConvertSkillFromText(projectId: string) {
         { timeout: 60_000 },
       );
       return res.data.skill;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills', projectId] });
+    },
+  });
+}
+
+export function useParseApiSpec(projectId: string) {
+  return useMutation({
+    mutationFn: async (text: string) => {
+      const res = await api.post<{ format: ApiSpecFormat; endpoints: ParsedApiEndpoint[] }>(
+        `/projects/${projectId}/skills/parse-api-spec`,
+        { text },
+        { timeout: 30_000 },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useImportApiContracts(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      scope?: string;
+      featureGroup?: string | null;
+      endpoints: ParsedApiEndpoint[];
+    }) => {
+      const res = await api.post<{ skills: ProjectSkill[]; count: number }>(
+        `/projects/${projectId}/skills/import-api-contracts`,
+        payload,
+        { timeout: 30_000 },
+      );
+      return res.data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['skills', projectId] });

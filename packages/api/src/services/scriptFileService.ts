@@ -4,43 +4,65 @@ import JSZip from 'jszip';
 
 const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
 
-// Folder used for scripts that have no use-case tag assigned
-const UNCATEGORIZED = '_uncategorized';
+const SKIP_DIRS = new Set(['__pycache__', '.git', 'node_modules', 'venv', '.venv', 'log', 'logs', 'rerun_results', 'skills']);
+const SKIP_EXTS = new Set(['.html', '.xml', '.pyc', '.pyo', '.log']);
+const SKIP_NAMES = new Set(['output.xml', 'log.html', 'report.html', 'rerun.xml']);
+export const BINARY_EXTS = new Set(['.xlsx', '.xls', '.pdf', '.pyc', '.png', '.jpg', '.jpeg', '.gif', '.zip', '.tar', '.gz']);
 
-function sanitizeFolderName(name: string | null | undefined): string {
-  if (!name?.trim()) return UNCATEGORIZED;
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || UNCATEGORIZED;
+// ── Project root ──────────────────────────────────────────────────────────────
+// Layout: {SCRIPTS_ROOT}/{slug}/TestCases/{UseCase}/TC01_name.robot
+//                               Resource/{subdir}/keyword.robot
+//                               resources/{datafile.xlsx}     (legacy binary resources)
+//                               scripts/{filename}            (legacy flat scripts)
+
+export function projectRoot(slug: string): string {
+  return path.join(SCRIPTS_ROOT, slug);
 }
 
+// Kept as alias for call-sites that still use projectDir
 function projectDir(slug: string): string {
-  return path.join(SCRIPTS_ROOT, slug, 'scripts');
-}
-
-function pagesDir(slug: string): string {
-  return path.join(SCRIPTS_ROOT, slug, 'scripts', 'pages');
+  return projectRoot(slug);
 }
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-// ── Script file helpers ───────────────────────────────────────────────────
+// ── Script save / read / delete ───────────────────────────────────────────────
 
 export function saveScript(slug: string, filename: string, content: string, useCase?: string | null): void {
-  const dir = useCase ? path.join(projectDir(slug), sanitizeFolderName(useCase)) : projectDir(slug);
+  const root = projectRoot(slug);
+  // If filename already encodes the full relative path (contains /), write directly
+  if (filename.includes('/') || filename.includes('\\')) {
+    const abs = path.join(root, filename);
+    ensureDir(path.dirname(abs));
+    fs.writeFileSync(abs, content, 'utf-8');
+    return;
+  }
+  // Bare filename → TestCases/{useCase}/
+  const folder = useCase?.trim() || 'Uncategorised';
+  const dir = path.join(root, 'TestCases', folder);
   ensureDir(dir);
   fs.writeFileSync(path.join(dir, filename), content, 'utf-8');
 }
 
 export function savePOM(slug: string, filename: string, content: string): void {
-  ensureDir(pagesDir(slug));
-  fs.writeFileSync(path.join(pagesDir(slug), filename), content, 'utf-8');
+  const dir = path.join(projectRoot(slug), 'pages');
+  ensureDir(dir);
+  fs.writeFileSync(path.join(dir, filename), content, 'utf-8');
 }
 
 export function readScript(slug: string, filename: string, useCase?: string | null): string {
-  if (useCase) {
-    const ucPath = path.join(projectDir(slug), sanitizeFolderName(useCase), filename);
-    if (fs.existsSync(ucPath)) return fs.readFileSync(ucPath, 'utf-8');
+  const root = projectRoot(slug);
+  // Full relative path
+  if (filename.includes('/') || filename.includes('\\')) {
+    const abs = path.join(root, filename);
+    if (fs.existsSync(abs)) return fs.readFileSync(abs, 'utf-8');
+  }
+  // Try TestCases/{useCase}/{filename}
+  if (useCase?.trim()) {
+    const p1 = path.join(root, 'TestCases', useCase.trim(), filename);
+    if (fs.existsSync(p1)) return fs.readFileSync(p1, 'utf-8');
   }
   const found = findScriptPath(slug, filename);
   if (found) return fs.readFileSync(found, 'utf-8');
@@ -48,123 +70,270 @@ export function readScript(slug: string, filename: string, useCase?: string | nu
 }
 
 export function deleteScript(slug: string, filename: string, useCase?: string | null): void {
-  if (useCase) {
-    const ucPath = path.join(projectDir(slug), sanitizeFolderName(useCase), filename);
-    if (fs.existsSync(ucPath)) { fs.unlinkSync(ucPath); return; }
+  const root = projectRoot(slug);
+  if (filename.includes('/') || filename.includes('\\')) {
+    const abs = path.join(root, filename);
+    if (fs.existsSync(abs)) { fs.unlinkSync(abs); return; }
+  }
+  if (useCase?.trim()) {
+    const p1 = path.join(root, 'TestCases', useCase.trim(), filename);
+    if (fs.existsSync(p1)) { fs.unlinkSync(p1); return; }
   }
   const found = findScriptPath(slug, filename);
   if (found) fs.unlinkSync(found);
 }
+
+// ── Path resolution ───────────────────────────────────────────────────────────
+
+export function findScriptPath(slug: string, filename: string): string | null {
+  const root = projectRoot(slug);
+  if (!fs.existsSync(root)) return null;
+  // Full relative path with separator
+  if (filename.includes('/') || filename.includes('\\')) {
+    const norm = filename.replace(/\\/g, '/');
+    const abs = path.join(root, norm);
+    if (fs.existsSync(abs)) return abs;
+  }
+  // Search recursively under TestCases/, then legacy scripts/
+  const fromTC = searchIn(path.join(root, 'TestCases'), filename);
+  if (fromTC) return fromTC;
+  const fromScripts = searchIn(path.join(root, 'scripts'), filename);
+  if (fromScripts) return fromScripts;
+  // Last resort: any direct child
+  const flat = path.join(root, filename);
+  if (fs.existsSync(flat)) return flat;
+  return null;
+}
+
+function searchIn(dir: string, filename: string): string | null {
+  if (!fs.existsSync(dir)) return null;
+  // Flat check
+  const direct = path.join(dir, filename);
+  if (fs.existsSync(direct)) return direct;
+  // One level of subdirs
+  for (const entry of fs.readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const abs = path.join(dir, entry);
+    if (fs.statSync(abs).isDirectory()) {
+      const candidate = path.join(abs, filename);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+// ── File listing ──────────────────────────────────────────────────────────────
 
 export interface ScriptFileMeta {
   filename: string;
   size: number;
   modifiedAt: string;
   useCaseFolder?: string;
+  relPath?: string;
 }
 
 export function listScriptFiles(slug: string): ScriptFileMeta[] {
-  const base = projectDir(slug);
-  if (!fs.existsSync(base)) return [];
+  const root = projectRoot(slug);
   const results: ScriptFileMeta[] = [];
-  function scan(dir: string, useCaseFolder?: string): void {
+  function walk(dir: string): void {
+    if (!fs.existsSync(dir)) return;
     for (const f of fs.readdirSync(dir)) {
+      if (SKIP_DIRS.has(f)) continue;
       const abs = path.join(dir, f);
       const stat = fs.statSync(abs);
-      if (stat.isDirectory()) {
-        if (f !== 'pages') scan(abs, f);
-      } else if (f.endsWith('.spec.ts') || f.endsWith('.spec.js') || f.endsWith('.robot')) {
-        results.push({ filename: f, size: stat.size, modifiedAt: stat.mtime.toISOString(), useCaseFolder });
+      if (stat.isDirectory()) walk(abs);
+      else if (f.endsWith('.spec.ts') || f.endsWith('.spec.js') || f.endsWith('.robot')) {
+        const rel = path.relative(root, abs).replace(/\\/g, '/');
+        results.push({ filename: f, size: stat.size, modifiedAt: stat.mtime.toISOString(), relPath: rel });
       }
     }
   }
-  scan(base);
+  walk(root);
   return results;
-}
-
-export function listPOMFiles(slug: string): string[] {
-  const dir = pagesDir(slug);
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => fs.statSync(path.join(dir, f)).isFile() && f.endsWith('.ts'));
-}
-
-// Search flat base dir + all immediate use-case subfolders for a script file.
-// Returns the absolute path if found, null otherwise.
-export function findScriptPath(slug: string, filename: string): string | null {
-  const base = projectDir(slug);
-  if (!fs.existsSync(base)) return null;
-  // Check flat path first (legacy / uncategorized scripts placed directly in base)
-  const flat = path.join(base, filename);
-  if (fs.existsSync(flat)) return flat;
-  // Check immediate subdirectories (use-case folders)
-  for (const entry of fs.readdirSync(base)) {
-    if (entry === 'pages') continue;
-    const abs = path.join(base, entry);
-    if (!fs.statSync(abs).isDirectory()) continue;
-    const candidate = path.join(abs, filename);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
 }
 
 export function getScriptFileMeta(slug: string, filename: string): ScriptFileMeta | null {
   const found = findScriptPath(slug, filename);
   if (!found) return null;
   const stat = fs.statSync(found);
-  const rel = path.relative(projectDir(slug), path.dirname(found));
-  return { filename, size: stat.size, modifiedAt: stat.mtime.toISOString(), useCaseFolder: rel || undefined };
+  const rel = path.relative(projectRoot(slug), found).replace(/\\/g, '/');
+  return { filename, size: stat.size, modifiedAt: stat.mtime.toISOString(), relPath: rel };
 }
+
+export function listPOMFiles(slug: string): string[] {
+  const dir = path.join(projectRoot(slug), 'pages');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile() && f.endsWith('.ts'));
+}
+
+// ── File tree ─────────────────────────────────────────────────────────────────
+
+export interface FileTreeNode {
+  name: string;
+  path: string;
+  type: 'file' | 'dir';
+  ext?: string;
+  children?: FileTreeNode[];
+}
+
+export function buildFileTree(slug: string): FileTreeNode[] {
+  const root = projectRoot(slug);
+  if (!fs.existsSync(root)) return [];
+  return walkForTree(root, root);
+}
+
+function walkForTree(root: string, dir: string): FileTreeNode[] {
+  const dirs: FileTreeNode[] = [];
+  const files: FileTreeNode[] = [];
+  for (const entry of fs.readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const abs = path.join(dir, entry);
+    const rel = path.relative(root, abs).replace(/\\/g, '/');
+    const ext = path.extname(entry).toLowerCase();
+    if (SKIP_NAMES.has(entry) || SKIP_EXTS.has(ext)) continue;
+    const stat = fs.statSync(abs);
+    if (stat.isDirectory()) {
+      dirs.push({ name: entry, path: rel, type: 'dir', children: walkForTree(root, abs) });
+    } else {
+      files.push({ name: entry, path: rel, type: 'file', ext });
+    }
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name));
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  return [...dirs, ...files];
+}
+
+// ── Zip import ────────────────────────────────────────────────────────────────
+
+export interface ZipImportFile {
+  relPath: string;     // e.g. "TestCases/Geo Hierarchy/TC01_Create_Region.robot"
+  content: string;
+  isTestScript: boolean; // true if under TestCases/ and ends in .robot / .spec.ts
+}
+
+export async function importFromZip(slug: string, zipBuffer: Buffer): Promise<{ files: ZipImportFile[]; warnings: string[] }> {
+  const root = projectRoot(slug);
+  const zip = await JSZip.loadAsync(zipBuffer);
+  const warnings: string[] = [];
+  const results: ZipImportFile[] = [];
+
+  const allPaths = Object.keys(zip.files).filter(p => !zip.files[p].dir);
+
+  // Detect and strip single top-level wrapper folder
+  let stripPrefix = '';
+  const topFolders = new Set(allPaths.map(p => p.split('/')[0]));
+  if (topFolders.size === 1) {
+    const top = [...topFolders][0];
+    if (allPaths.every(p => p.startsWith(top + '/'))) {
+      stripPrefix = top + '/';
+    }
+  }
+
+  for (const [zipPath, file] of Object.entries(zip.files)) {
+    if (file.dir) continue;
+    let relPath = zipPath;
+    if (stripPrefix && relPath.startsWith(stripPrefix)) relPath = relPath.slice(stripPrefix.length);
+    if (!relPath) continue;
+
+    const parts = relPath.split('/');
+    const filename = parts[parts.length - 1];
+    if (!filename) continue;
+
+    // Skip noise
+    if (SKIP_NAMES.has(filename)) continue;
+    const ext = path.extname(filename).toLowerCase();
+    if (SKIP_EXTS.has(ext)) continue;
+    if (parts.some(p => SKIP_DIRS.has(p))) continue;
+
+    // Normalize: tests/ → TestCases/
+    if (/^tests\//i.test(relPath)) {
+      relPath = 'TestCases/' + relPath.replace(/^tests\//i, '');
+    }
+
+    const content = await file.async('string');
+    const absPath = path.join(root, relPath);
+    ensureDir(path.dirname(absPath));
+    fs.writeFileSync(absPath, content, 'utf-8');
+
+    const isTestScript = /\.(robot|spec\.ts|spec\.js)$/.test(filename) && /^TestCases\//i.test(relPath);
+    results.push({ relPath, content, isTestScript });
+  }
+
+  return { files: results, warnings };
+}
+
+// ── Zip export ────────────────────────────────────────────────────────────────
 
 export async function exportZip(slug: string, filenames?: string[]): Promise<Buffer> {
+  const root = projectRoot(slug);
   const zip = new JSZip();
-  const base = projectDir(slug);
-  const pages = pagesDir(slug);
-  const res = resourcesDir(slug);
 
-  // Recursively add script files, preserving use-case subfolders in the zip
-  if (fs.existsSync(base)) {
-    function addScripts(dir: string, prefix: string): void {
-      for (const f of fs.readdirSync(dir)) {
-        const abs = path.join(dir, f);
-        const stat = fs.statSync(abs);
-        if (stat.isDirectory() && f !== 'pages') {
-          addScripts(abs, `${prefix}${f}/`);
-        } else if (stat.isFile()) {
-          if (!(f.endsWith('.spec.ts') || f.endsWith('.spec.js') || f.endsWith('.robot'))) continue;
-          if (filenames && !filenames.includes(f)) continue;
-          zip.file(`${prefix}${f}`, fs.readFileSync(abs));
-        }
-      }
-    }
-    addScripts(base, '');
-  }
-
-  // Always include the full pages/ folder
-  if (fs.existsSync(pages)) {
-    for (const f of fs.readdirSync(pages)) {
-      const abs = path.join(pages, f);
-      if (fs.statSync(abs).isFile()) {
-        zip.file(`pages/${f}`, fs.readFileSync(abs));
+  function addDir(dir: string): void {
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      if (SKIP_DIRS.has(f)) continue;
+      const abs = path.join(dir, f);
+      const ext = path.extname(f).toLowerCase();
+      if (SKIP_NAMES.has(f) || SKIP_EXTS.has(ext)) continue;
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) {
+        addDir(abs);
+      } else {
+        const rel = path.relative(root, abs).replace(/\\/g, '/');
+        if (filenames && !filenames.some(fn => rel.endsWith('/' + fn) || rel === fn)) continue;
+        zip.file(rel, fs.readFileSync(abs));
       }
     }
   }
 
-  // Always include resources/ folder (Robot Framework resource files)
-  if (fs.existsSync(res)) {
-    for (const f of fs.readdirSync(res)) {
-      const abs = path.join(res, f);
-      if (fs.statSync(abs).isFile()) {
-        zip.file(`resources/${f}`, fs.readFileSync(abs));
-      }
-    }
-  }
-
-  return zip.generateAsync({ type: 'nodebuffer' });
+  addDir(root);
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
-// ── Resource file helpers ─────────────────────────────────────────────────
+export async function exportFolderZip(slug: string, relPath?: string): Promise<{ buffer: Buffer; name: string }> {
+  const root = projectRoot(slug);
+  const baseDir = relPath ? path.join(root, relPath) : root;
+  const zip = new JSZip();
+
+  function addDir(dir: string): void {
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      if (SKIP_DIRS.has(f)) continue;
+      const abs = path.join(dir, f);
+      const ext = path.extname(f).toLowerCase();
+      if (SKIP_NAMES.has(f) || SKIP_EXTS.has(ext)) continue;
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) addDir(abs);
+      else zip.file(path.relative(baseDir, abs).replace(/\\/g, '/'), fs.readFileSync(abs));
+    }
+  }
+
+  addDir(baseDir);
+  const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  const name = relPath ? path.basename(relPath) : slug;
+  return { buffer, name };
+}
+
+// ── Project file access (for download routes) ─────────────────────────────────
+
+export function getProjectFileContent(slug: string, relPath: string): { buffer: Buffer; name: string } {
+  const root = projectRoot(slug);
+  const abs = path.resolve(root, relPath);
+  if (!abs.startsWith(root + path.sep) && abs !== root) throw new Error('Invalid path');
+  return { buffer: fs.readFileSync(abs), name: path.basename(abs) };
+}
+
+export function deleteProjectFile(slug: string, relPath: string): void {
+  const root = projectRoot(slug);
+  const abs = path.resolve(root, relPath);
+  if (!abs.startsWith(root + path.sep)) throw new Error('Invalid path');
+  if (!fs.existsSync(abs)) return;
+  const stat = fs.statSync(abs);
+  if (stat.isDirectory()) fs.rmSync(abs, { recursive: true, force: true });
+  else fs.unlinkSync(abs);
+}
+
+// ── Resource files (legacy binary/reference data) ─────────────────────────────
 
 export function resourcesDir(projectId: string): string {
   return path.join(SCRIPTS_ROOT, projectId, 'resources');
@@ -181,13 +350,9 @@ export function deleteResourceFile(projectId: string, filename: string): void {
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 }
 
-export const BINARY_EXTS = new Set(['.xlsx', '.xls', '.pdf', '.pyc', '.png', '.jpg', '.jpeg', '.gif', '.zip', '.tar', '.gz']);
-const SKIP_DIRS = new Set(['__pycache__', '.git', 'node_modules', 'venv', '.venv']);
-
 export function listResourceFiles(identifier: string): { filename: string; size: number; isBinary: boolean }[] {
   const dir = resourcesDir(identifier);
   if (!fs.existsSync(dir)) return [];
-
   function scan(current: string, prefix: string): { filename: string; size: number; isBinary: boolean }[] {
     return fs.readdirSync(current).flatMap((entry) => {
       const full = path.join(current, entry);
@@ -201,7 +366,6 @@ export function listResourceFiles(identifier: string): { filename: string; size:
       return [{ filename: rel, size: stat.size, isBinary }];
     });
   }
-
   return scan(dir, '');
 }
 
@@ -211,114 +375,51 @@ export function readResourceFile(projectId: string, filename: string): string {
   return fs.readFileSync(filePath, 'utf-8');
 }
 
-// ── Disk import helper ─────────────────────────────────────────────────────
-// Scans the project's scripts directory tree and returns metadata for every
-// script found, so the caller can sync them into the database.
-
-export interface DiskScriptMeta {
-  filename: string;
-  useCaseFolder: string;
-  content: string;
-  size: number;
-  modifiedAt: string;
-}
-
-export function importFromDisk(slug: string): DiskScriptMeta[] {
-  const base = projectDir(slug);
-  if (!fs.existsSync(base)) return [];
-  const results: DiskScriptMeta[] = [];
-  function scan(dir: string, folder: string): void {
-    for (const f of fs.readdirSync(dir)) {
-      const abs = path.join(dir, f);
-      const stat = fs.statSync(abs);
-      if (stat.isDirectory() && f !== 'pages') {
-        scan(abs, f);
-      } else if (stat.isFile() && (f.endsWith('.spec.ts') || f.endsWith('.spec.js') || f.endsWith('.robot'))) {
-        results.push({
-          filename: f,
-          useCaseFolder: folder,
-          content: fs.readFileSync(abs, 'utf-8'),
-          size: stat.size,
-          modifiedAt: stat.mtime.toISOString(),
-        });
-      }
-    }
-  }
-  scan(base, UNCATEGORIZED);
-  return results;
-}
+// ── RF path rewriting ─────────────────────────────────────────────────────────
 
 export interface RFKeywordLocation {
   name: string;
-  line: number; // 1-based
+  line: number;
 }
 
-/**
- * Rewrites relative Variables / Resource / Library paths in a .robot file to absolute
- * container paths (/scripts/{slug}/resources/...) when the referenced file exists in
- * the project's resources directory. Only operates within the *** Settings *** section.
- */
 export function rewriteRobotResourcePaths(
   content: string,
   slug: string,
 ): { content: string; rewrites: string[] } {
   const resDir = resourcesDir(slug);
-  const projectRoot = path.join(SCRIPTS_ROOT, slug);
+  const projectRootPath = path.join(SCRIPTS_ROOT, slug);
   const rewrites: string[] = [];
-
-  // Matches RF settings directives: indent + keyword + separator (2+ spaces or tab) + first token + rest
   const DIRECTIVE_RE = /^(\s*)(Variables|Resource|Library|Resource\s+File)(\s{2,}|\t+)(\S+)(.*)/i;
-
   let inSettings = false;
 
   const result = content.split('\n').map((line) => {
     const trimmed = line.trim();
-
-    // Track which section we're in
     if (/^\*{3}/.test(trimmed)) {
       inSettings = /\*{3}\s*Settings\s*\*{3}/i.test(trimmed);
       return line;
     }
     if (!inSettings || trimmed === '' || trimmed.startsWith('#')) return line;
-
     const m = line.match(DIRECTIVE_RE);
     if (!m) return line;
-
     const [, indent, directive, sep, pathToken, rest] = m;
-
-    // Already an absolute /scripts/ path — leave it alone
     if (pathToken.startsWith('/scripts/')) return line;
-
-    // Library without a file extension and no path separator is a Python module name — skip
     const hasPathSep = pathToken.includes('/') || pathToken.includes('\\');
     const hasFileExt = /\.(py|robot|resource|txt)$/i.test(pathToken);
     if (!hasFileExt && !hasPathSep) return line;
-
-    // Normalise separators, strip leading ../ and ./
     let rel = pathToken.replace(/\\/g, '/');
     while (rel.startsWith('../')) rel = rel.slice(3);
     while (rel.startsWith('./')) rel = rel.slice(2);
-
-    // Strip a leading resources/ folder name (case-insensitive) since we know where it lives
     const relUnderRes = rel.replace(/^[Rr]esources?\//, '');
-
-    // Try candidates in order of specificity
     const candidates: [string, string][] = [
-      [path.join(resDir, relUnderRes), relUnderRes],          // under resources/, sans prefix
-      [path.join(projectRoot, rel), rel],                     // from project root as-is
-      [path.join(resDir, path.basename(pathToken)), path.basename(pathToken)], // bare filename
+      [path.join(resDir, relUnderRes), relUnderRes],
+      [path.join(projectRootPath, rel), rel],
+      [path.join(resDir, path.basename(pathToken)), path.basename(pathToken)],
     ];
-
     let found: string | null = null;
     for (const [absCandidate, relCandidate] of candidates) {
-      if (fs.existsSync(absCandidate)) {
-        found = relCandidate;
-        break;
-      }
+      if (fs.existsSync(absCandidate)) { found = relCandidate; break; }
     }
-
     if (!found) return line;
-
     const absPath = `/scripts/${slug}/resources/${found}`;
     rewrites.push(`${pathToken} → ${absPath}`);
     return `${indent}${directive}${sep}${absPath}${rest}`;
@@ -327,7 +428,24 @@ export function rewriteRobotResourcePaths(
   return { content: result.join('\n'), rewrites };
 }
 
-// ── Skill file helpers ─────────────────────────────────────────────────────
+/** Extracts Robot Framework keyword names with their 1-based line numbers from file content. */
+export function extractRobotKeywordsWithLines(content: string): RFKeywordLocation[] {
+  const results: RFKeywordLocation[] = [];
+  let inKeywords = false;
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('*** Keywords ***')) { inKeywords = true; continue; }
+    if (trimmed.startsWith('***')) { inKeywords = false; continue; }
+    if (inKeywords && line.length > 0 && line[0] !== ' ' && line[0] !== '\t' && trimmed.length > 0 && !trimmed.startsWith('#')) {
+      results.push({ name: trimmed, line: i + 1 });
+    }
+  }
+  return results;
+}
+
+// ── Skill file helpers ────────────────────────────────────────────────────────
 
 function skillsDir(slug: string): string {
   return path.join(SCRIPTS_ROOT, slug, 'skills');
@@ -343,8 +461,8 @@ export interface SkillFileData {
   name: string;
   scope: string | null;
   featureGroup?: string | null;
-  tier?: string | null;         // "GLOBAL" | "FEATURE" | "HISTORICAL"
-  humanContext?: string | null; // plain-text QA correction or annotation
+  tier?: string | null;
+  humanContext?: string | null;
   content: string;
   confidence: number;
   captureMethod: string;
@@ -354,7 +472,6 @@ export interface SkillFileData {
 
 export function saveSkillFile(slug: string, skillId: string, data: SkillFileData): void {
   ensureDir(skillsDir(slug));
-  // Remove any stale file for this skillId (name may have changed)
   deleteSkillFile(slug, skillId);
   const filename = `${skillId}-${sanitizeSkillName(data.name)}.json`;
   fs.writeFileSync(path.join(skillsDir(slug), filename), JSON.stringify(data, null, 2), 'utf-8');
@@ -381,18 +498,28 @@ export function readSkillFile(slug: string, filename: string): SkillFileData {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as SkillFileData;
 }
 
-/** Extracts Robot Framework keyword names with their 1-based line numbers from file content. */
-export function extractRobotKeywordsWithLines(content: string): RFKeywordLocation[] {
-  const results: RFKeywordLocation[] = [];
-  let inKeywords = false;
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (trimmed.startsWith('*** Keywords ***')) { inKeywords = true; continue; }
-    if (trimmed.startsWith('***')) { inKeywords = false; continue; }
-    if (inKeywords && line.length > 0 && line[0] !== ' ' && line[0] !== '\t' && trimmed.length > 0 && !trimmed.startsWith('#')) {
-      results.push({ name: trimmed, line: i + 1 });
+// ── Legacy disk import (kept for backward compat) ─────────────────────────────
+
+export interface DiskScriptMeta {
+  filename: string;
+  useCaseFolder: string;
+  content: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export function importFromDisk(slug: string): DiskScriptMeta[] {
+  const tcDir = path.join(projectRoot(slug), 'TestCases');
+  if (!fs.existsSync(tcDir)) return [];
+  const results: DiskScriptMeta[] = [];
+  for (const folder of fs.readdirSync(tcDir)) {
+    const folderAbs = path.join(tcDir, folder);
+    if (!fs.statSync(folderAbs).isDirectory()) continue;
+    for (const f of fs.readdirSync(folderAbs)) {
+      if (!f.endsWith('.robot') && !f.endsWith('.spec.ts')) continue;
+      const abs = path.join(folderAbs, f);
+      const stat = fs.statSync(abs);
+      results.push({ filename: f, useCaseFolder: folder, content: fs.readFileSync(abs, 'utf-8'), size: stat.size, modifiedAt: stat.mtime.toISOString() });
     }
   }
   return results;

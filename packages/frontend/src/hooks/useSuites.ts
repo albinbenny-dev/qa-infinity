@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { Suite } from '../types';
+import type { Suite, SuiteStage } from '../types';
 
 // ── Hooks ──────────────────────────────────────────────────────────────────
 
@@ -18,7 +18,7 @@ export function useSuites(projectId: string | undefined) {
 export function useCreateSuite(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { name: string; testCaseIds: string[] }) => {
+    mutationFn: async (data: { name: string; stages: SuiteStage[] }) => {
       const res = await api.post<{ suite: Suite }>(`/projects/${projectId}/suites`, data);
       return res.data.suite;
     },
@@ -29,7 +29,7 @@ export function useCreateSuite(projectId: string) {
 export function useUpdateSuite(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { id: string; name?: string; testCaseIds?: string[] }) => {
+    mutationFn: async (data: { id: string; name?: string; stages?: SuiteStage[] }) => {
       const { id, ...body } = data;
       const res = await api.put<{ suite: Suite }>(`/projects/${projectId}/suites/${id}`, body);
       return res.data.suite;

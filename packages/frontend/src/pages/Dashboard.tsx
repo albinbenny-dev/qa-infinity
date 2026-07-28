@@ -10,6 +10,8 @@ import {
 } from 'recharts';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useDashboard } from '../hooks/useReports';
+import { useCreateRun } from '../hooks/useRuns';
+import { useProjectStore } from '../stores/projectStore';
 import type { AgentStatus, TopSuiteEntry } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -423,9 +425,11 @@ const STATUS_DOT: Record<string, string> = {
 function TopSuitesCard({
   suites,
   onNavigate,
+  onRunSuite,
 }: {
   suites: TopSuiteEntry[];
   onNavigate: () => void;
+  onRunSuite: (suite: TopSuiteEntry) => void;
 }) {
   if (suites.length === 0) return null;
 
@@ -583,6 +587,28 @@ function TopSuitesCard({
               >
                 {suite.successRate}%
               </span>
+
+              {/* Quick-run button */}
+              {suite.testCaseIds.length > 0 && (
+                <button
+                  title={`Run suite (${suite.testCaseIds.length} TCs)`}
+                  onClick={(e) => { e.stopPropagation(); onRunSuite(suite); }}
+                  style={{
+                    flexShrink: 0,
+                    padding: '3px 10px',
+                    background: 'var(--emerald-dim)',
+                    border: '1px solid rgba(42,157,143,0.3)',
+                    borderRadius: 5,
+                    color: 'var(--emerald)',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  ▶ Run
+                </button>
+              )}
             </div>
           );
         })}
@@ -599,6 +625,18 @@ export default function Dashboard() {
   const projectId = slug!;
 
   const { data, isLoading } = useDashboard(projectId);
+  const createRun = useCreateRun(projectId);
+  const { activeProject } = useProjectStore();
+  const envConfigs = activeProject?.envConfigs ?? [];
+  const defaultEnv = envConfigs.find((e) => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
+
+  function handleRunSuite(suite: TopSuiteEntry) {
+    if (suite.testCaseIds.length === 0) return;
+    createRun.mutate(
+      { testCaseIds: suite.testCaseIds, environment: defaultEnv, name: suite.name },
+      { onSuccess: () => navigate(`/projects/${slug}/execution`) },
+    );
+  }
 
   const stats = data?.stats;
   const trend = (data?.trend ?? []).map((p) => ({
@@ -788,6 +826,7 @@ export default function Dashboard() {
             <TopSuitesCard
               suites={topSuites}
               onNavigate={() => navigate(`/projects/${slug}/reports`)}
+              onRunSuite={handleRunSuite}
             />
 
             {/* ── Flaky tests (if any) ──────────────────────────────────── */}

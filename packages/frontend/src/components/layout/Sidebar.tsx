@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProjectStore } from '../../stores/projectStore';
+import { useChatSidebarStore } from '../../stores/chatSidebarStore';
 import { clearAuth } from '../../lib/auth';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
 import { useHealStats } from '../../hooks/useHeals';
@@ -18,6 +19,7 @@ export default function Sidebar({ slug }: SidebarProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { activeProject, projects, currentUser, setCurrentUser } = useProjectStore();
+  const { mode: chatMode, toggle: toggleChat } = useChatSidebarStore();
   const [logoutHover, setLogoutHover] = useState(false);
 
   function handleLogout() {
@@ -45,18 +47,18 @@ export default function Sidebar({ slug }: SidebarProps) {
         {
           label: 'Agents',
           items: [
-            { label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', badge: 'AI', badgeVariant: 'blue' },
-            { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨' },
+            { label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', aiLabel: true },
+            { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨', aiLabel: true },
             { label: 'Execution', path: `/projects/${slug}/execution`, icon: '▶' },
             { label: 'Scheduler', path: `/projects/${slug}/scheduler`, icon: '⏰', badge: activeScheduleCount || undefined, badgeVariant: 'blue' },
-            ...(canAccessHealing ? [{ label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' as const }] : []),
+            ...(canAccessHealing ? [{ label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' as const, aiLabel: true }] : []),
           ],
         },
         {
           label: 'Analytics',
           items: [
             { label: 'Reports', path: `/projects/${slug}/reports`, icon: '📊' },
-            { label: 'Chat Agent', path: `/projects/${slug}/chat`, icon: '💬' },
+            { label: 'Chat Agent', path: `/projects/${slug}/chat`, icon: '💬', aiLabel: true, onClick: () => toggleChat() },
           ],
         },
         {
@@ -69,7 +71,12 @@ export default function Sidebar({ slug }: SidebarProps) {
       ]
     : [];
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) => {
+    if (location.pathname === path) return true;
+    // Mark "Test Cycles" parent active when on any sub-route
+    if (path.endsWith('/test-cycles') && location.pathname.startsWith(path + '/')) return true;
+    return false;
+  };
 
   const gradientIndex = activeProject
     ? activeProject.id.charCodeAt(0) % PROJECT_GRADIENTS.length
@@ -207,23 +214,41 @@ export default function Sidebar({ slug }: SidebarProps) {
         {navSections.map((section) => (
           <div key={section.label}>
             <div className="nav-section-label">{section.label}</div>
-            {section.items.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`nav-item${isActive(item.path) ? ' active' : ''}`}
-              >
-                <span className="nav-icon">{item.icon}</span>
-                <span style={{ flex: 1 }}>{item.label}</span>
-                {item.badge !== undefined && (
-                  <span
-                    className={`nav-badge${item.badgeVariant === 'green' ? ' green' : item.badgeVariant === 'blue' ? ' blue' : ''}`}
+            {section.items.map((item) => {
+              if (item.onClick) {
+                const chatOpen = chatMode === 'expanded';
+                return (
+                  <button
+                    key={item.path}
+                    onClick={item.onClick}
+                    className={`nav-item${chatOpen ? ' active' : ''}`}
+                    style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
                   >
-                    {item.badge}
-                  </span>
-                )}
-              </Link>
-            ))}
+                    <span className="nav-icon">{item.icon}</span>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {item.aiLabel && <span className="nav-ai-tag">AI</span>}
+                  </button>
+                );
+              }
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`nav-item${isActive(item.path) ? ' active' : ''}`}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  <span style={{ flex: 1 }}>{item.label}</span>
+                  {item.aiLabel && <span className="nav-ai-tag">AI</span>}
+                  {item.badge !== undefined && (
+                    <span
+                      className={`nav-badge${item.badgeVariant === 'green' ? ' green' : item.badgeVariant === 'blue' ? ' blue' : ''}`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
           </div>
         ))}
 

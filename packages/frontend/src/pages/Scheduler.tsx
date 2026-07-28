@@ -16,7 +16,7 @@ import {
 import { useSuites, useCreateSuite, useUpdateSuite, useDeleteSuite } from '../hooks/useSuites';
 import { useScripts } from '../hooks/useScripts';
 import { useProjectStore } from '../stores/projectStore';
-import type { Schedule, Suite, TestCase, EnvConfig } from '../types';
+import type { Schedule, Suite, SuiteStage, TestCase, EnvConfig } from '../types';
 import { api } from '../lib/api';
 import type { RunListItem } from '../hooks/useRuns';
 
@@ -743,48 +743,365 @@ function SuiteSelector({ suites, testCases, selectedIds, onChange }: {
   );
 }
 
-// ── Suite form (create / edit) ─────────────────────────────────────────────
+// ── Suite form (QAASR-style staged builder) ────────────────────────────────
 
-function SuiteForm({ mode, initial, testCases, scriptedTcIds, onSave, onCancel: _onCancel, isSaving }: {
+const UC_ORDER = [
+  'Primary Sales', 'Stock Management', 'Dealer Onboarding & KYC',
+  'Sales API', 'Secondary Sales', 'Distributor API',
+];
+
+function SuiteForm({ mode, initial, testCases, onSave, onCancel: _onCancel, isSaving }: {
   mode: 'create' | 'edit';
-  initial?: { name: string; testCaseIds: string[] };
+  initial?: { name: string; stages: SuiteStage[] };
   testCases: TestCase[];
-  scriptedTcIds: Set<string>;
-  onSave: (data: { name: string; testCaseIds: string[] }) => void;
+  scriptedTcIds?: Set<string>; // kept for call-site compat, unused
+  onSave: (data: { name: string; stages: SuiteStage[] }) => void;
   onCancel: () => void;
   isSaving: boolean;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
-  const existingIds = useMemo(() => new Set(testCases.map(tc => tc.id)), [testCases]);
-  const [selectedIds, setSelectedIds] = useState<string[]>(
-    (initial?.testCaseIds ?? []).filter(id => existingIds.has(id)),
+  const [stages, setStages] = useState<SuiteStage[]>(() =>
+    (initial?.stages ?? []).map((s, i) => ({ ...s, id: s.id || `s-${i}`, order: i })),
   );
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '7px 10px', boxSizing: 'border-box',
-    background: 'var(--bg)', border: '1px solid var(--border)',
-    borderRadius: 6, color: 'var(--text)', fontSize: 12, outline: 'none', fontFamily: 'var(--font-ui)',
-  };
-  const labelStyle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
-    color: 'var(--text-dim)', marginBottom: 5, display: 'block',
-  };
+  // Group test cases by use case tag
+  const ucGroups = useMemo(() => {
+    const map = new Map<string, TestCase[]>();
+    for (const tc of testCases) {
+      const k = tc.useCaseTag ?? 'Ungrouped';
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(tc);
+    }
+    // Canonical order first, then anything else
+    const ordered: Array<{ name: string; tcs: TestCase[] }> = [];
+    for (const n of UC_ORDER) {
+      if (map.has(n)) ordered.push({ name: n, tcs: map.get(n)! });
+    }
+    for (const [n, tcs] of map.entries()) {
+      if (!UC_ORDER.includes(n)) ordered.push({ name: n, tcs });
+    }
+    return ordered;
+  }, [testCases]);
+
+  const [expandedUc, setExpandedUc] = useState<Set<string>>(new Set());
+
+  function isUcAdded(ucName: string) {
+    return stages.some(s => s.useCaseTag === ucName);
+  }
+
+  function stageFor(ucName: string) {
+    return stages.find(s => s.useCaseTag === ucName);
+  }
+
+  function toggleExpandUc(ucName: string) {
+    setExpandedUc(prev => {
+      const next = new Set(prev);
+      if (next.has(ucName)) next.delete(ucName);
+      else next.add(ucName);
+      return next;
+    });
+  }
+
+  function toggleUseCase(ucName: string) {
+    const total = ucGroups.find(g => g.name === ucName)?.tcs.length ?? 0;
+    const existing = stageFor(ucName);
+    const allSelected = !!existing && existing.tcIds.length === total;
+
+    if (allSelected) {
+      setStages(prev => prev.filter(s => s.useCaseTag !== ucName).map((s, i) => ({ ...s, order: i })));
+      return;
+    }
+    const tcIds = ucGroups.find(g => g.name === ucName)?.tcs.map(tc => tc.id) ?? [];
+    setStages(prev => {
+      if (existing) return prev.map(s => (s.id === existing.id ? { ...s, tcIds } : s));
+      const newStage: SuiteStage = {
+        id: `s-${Date.now()}`,
+        useCaseTag: ucName,
+        tcIds,
+        mode: 'sequential',
+        order: prev.length,
+      };
+      return [...prev, newStage];
+    });
+  }
+
+  function toggleTcInUseCase(ucName: string, tcId: string) {
+    setStages(prev => {
+      const existing = prev.find(s => s.useCaseTag === ucName);
+      if (existing) {
+        const has = existing.tcIds.includes(tcId);
+        const nextTcIds = has ? existing.tcIds.filter(id => id !== tcId) : [...existing.tcIds, tcId];
+        if (nextTcIds.length === 0) {
+          return prev.filter(s => s.id !== existing.id).map((s, i) => ({ ...s, order: i }));
+        }
+        return prev.map(s => (s.id === existing.id ? { ...s, tcIds: nextTcIds } : s));
+      }
+      const newStage: SuiteStage = {
+        id: `s-${Date.now()}`,
+        useCaseTag: ucName,
+        tcIds: [tcId],
+        mode: 'sequential',
+        order: prev.length,
+      };
+      return [...prev, newStage];
+    });
+  }
+
+  function moveStage(idx: number, dir: 'up' | 'down') {
+    setStages(prev => {
+      const arr = [...prev];
+      if (dir === 'up' && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+      else if (dir === 'down' && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+      return arr.map((s, i) => ({ ...s, order: i }));
+    });
+  }
+
+  function removeStage(id: string) {
+    setStages(prev => prev.filter(s => s.id !== id).map((s, i) => ({ ...s, order: i })));
+  }
+
+  function toggleMode(id: string) {
+    setStages(prev =>
+      prev.map(s => s.id === id ? { ...s, mode: s.mode === 'parallel' ? 'sequential' : 'parallel' } : s),
+    );
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { toast.error('Suite name is required'); return; }
-    if (selectedIds.length === 0) { toast.error('Select at least one test case'); return; }
-    onSave({ name: name.trim(), testCaseIds: selectedIds });
+    if (stages.length === 0) { toast.error('Add at least one execution stage'); return; }
+    onSave({ name: name.trim(), stages });
   }
 
+  const labelStyle: React.CSSProperties = {
+    fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+    color: 'var(--text-dim)', marginBottom: 6, display: 'block',
+  };
+
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Suite Name */}
       <div>
         <label style={labelStyle}>Suite Name</label>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Smoke Suite" style={inputStyle} />
+        <input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="e.g. Smoke Suite"
+          style={{
+            width: '100%', padding: '7px 10px', boxSizing: 'border-box',
+            background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 6, color: 'var(--text)', fontSize: 12, outline: 'none',
+          }}
+        />
       </div>
 
-      <TcLibrarySelector testCases={testCases} selected={selectedIds} onChange={setSelectedIds} maxHeight={420} scriptedTcIds={scriptedTcIds} />
+      {/* Available Use Cases */}
+      <div>
+        <label style={labelStyle}>Available Use Cases</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {ucGroups.map(({ name: ucName, tcs }, idx) => {
+            const stage = stageFor(ucName);
+            const selectedCount = stage?.tcIds.length ?? 0;
+            const allSelected = selectedCount === tcs.length && selectedCount > 0;
+            const added = isUcAdded(ucName);
+            const expanded = expandedUc.has(ucName);
+            const color = UC_COLORS[ucName] ?? `var(${UC_FALLBACKS[idx % UC_FALLBACKS.length]})`;
+            return (
+              <div
+                key={ucName}
+                style={{
+                  border: added ? '1px solid rgba(42,157,143,0.4)' : '1px solid var(--border)',
+                  borderRadius: 7,
+                  overflow: 'hidden',
+                  background: added ? 'rgba(42,157,143,0.06)' : 'var(--bg)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleExpandUc(ucName)}
+                    title={expanded ? 'Collapse' : 'Expand to pick individual test cases'}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+                      color: 'var(--text-dim)', fontSize: 9,
+                      transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.14s',
+                      flexShrink: 0,
+                    }}
+                  >▶</button>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleUseCase(ucName)}
+                    title={allSelected ? 'Remove all test cases' : 'Select all test cases'}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0,
+                      padding: '3px 3px', borderRadius: 5, cursor: 'pointer',
+                      background: 'none', border: 'none',
+                      color: added ? 'var(--pass)' : 'var(--text-mid)',
+                    }}
+                  >
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ucName}</span>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 100, flexShrink: 0,
+                      background: added ? 'rgba(42,157,143,0.2)' : 'rgba(100,116,139,0.12)',
+                      color: added ? 'var(--pass)' : 'var(--text-dim)',
+                    }}>{selectedCount}/{tcs.length}</span>
+                    {allSelected && <span style={{ fontSize: 10, color: 'var(--pass)' }}>✓</span>}
+                  </button>
+                </div>
+
+                {expanded && (
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                    padding: '4px 8px 8px 26px', maxHeight: 220, overflowY: 'auto',
+                    borderTop: '1px solid var(--border)',
+                  }}>
+                    {tcs.map(tc => {
+                      const checked = stage?.tcIds.includes(tc.id) ?? false;
+                      return (
+                        <label
+                          key={tc.id}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 7, padding: '3px 5px',
+                            borderRadius: 5, cursor: 'pointer',
+                            background: checked ? 'rgba(42,157,143,0.08)' : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleTcInUseCase(ucName, tc.id)}
+                            style={{ cursor: 'pointer', flexShrink: 0 }}
+                          />
+                          <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', flexShrink: 0 }}>{tc.tcId}</span>
+                          <span style={{ fontSize: 11, color: 'var(--text-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tc.title}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {ucGroups.length === 0 && (
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>No test cases yet.</span>
+          )}
+        </div>
+      </div>
+
+      {/* Execution Stages */}
+      <div>
+        <label style={labelStyle}>
+          Execution Stages
+          {stages.length > 0 && (
+            <span style={{
+              marginLeft: 6, fontSize: 9, fontWeight: 700, padding: '1px 7px', borderRadius: 100,
+              background: 'rgba(37,99,171,0.12)', color: 'var(--cyan)', textTransform: 'none',
+            }}>{stages.length}</span>
+          )}
+        </label>
+
+        {stages.length === 0 ? (
+          <div style={{
+            padding: '20px 16px', textAlign: 'center', fontSize: 11, color: 'var(--text-dim)',
+            background: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 8,
+          }}>
+            Click a use case above to add it as an execution stage.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {stages.map((stage, idx) => {
+              const color = UC_COLORS[stage.useCaseTag] ?? `var(${UC_FALLBACKS[idx % UC_FALLBACKS.length]})`;
+              const isParallel = stage.mode === 'parallel';
+              return (
+                <div key={stage.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 10px',
+                  background: 'var(--bg)', border: '1px solid var(--border)',
+                  borderRadius: 8, borderLeft: `3px solid ${color}`,
+                }}>
+                  {/* Order number */}
+                  <span style={{
+                    minWidth: 18, height: 18, borderRadius: '50%',
+                    background: 'rgba(37,99,171,0.14)', color: 'var(--cyan)',
+                    fontSize: 9, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}>{idx + 1}</span>
+
+                  {/* Use case name */}
+                  <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {stage.useCaseTag}
+                  </span>
+
+                  {/* TC count badge */}
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100, flexShrink: 0,
+                    background: 'rgba(34,211,238,0.1)', color: 'var(--cyan)',
+                  }}>{stage.tcIds.length} TCs</span>
+
+                  {/* Parallel / Sequential toggle */}
+                  <button
+                    type="button"
+                    onClick={() => toggleMode(stage.id)}
+                    title={isParallel ? 'Switch to Sequential' : 'Switch to Parallel'}
+                    style={{
+                      padding: '3px 9px', borderRadius: 5, cursor: 'pointer', flexShrink: 0,
+                      fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em',
+                      background: isParallel ? 'rgba(139,92,246,0.12)' : 'rgba(37,99,171,0.12)',
+                      border: isParallel ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(37,99,171,0.3)',
+                      color: isParallel ? '#8b5cf6' : 'var(--cyan)',
+                      transition: 'all 0.14s',
+                    }}
+                  >
+                    {isParallel ? '⇉ Parallel' : '→ Sequential'}
+                  </button>
+
+                  {/* Up / Down arrows */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onClick={() => moveStage(idx, 'up')}
+                      style={{
+                        width: 16, height: 14, borderRadius: 3, border: '1px solid var(--border)',
+                        background: 'var(--surface)', color: idx === 0 ? 'var(--text-dim)' : 'var(--text-mid)',
+                        cursor: idx === 0 ? 'not-allowed' : 'pointer', fontSize: 8, lineHeight: 1,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        opacity: idx === 0 ? 0.35 : 1,
+                      }}
+                    >▲</button>
+                    <button
+                      type="button"
+                      disabled={idx === stages.length - 1}
+                      onClick={() => moveStage(idx, 'down')}
+                      style={{
+                        width: 16, height: 14, borderRadius: 3, border: '1px solid var(--border)',
+                        background: 'var(--surface)', color: idx === stages.length - 1 ? 'var(--text-dim)' : 'var(--text-mid)',
+                        cursor: idx === stages.length - 1 ? 'not-allowed' : 'pointer', fontSize: 8, lineHeight: 1,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        opacity: idx === stages.length - 1 ? 0.35 : 1,
+                      }}
+                    >▼</button>
+                  </div>
+
+                  {/* Delete */}
+                  <button
+                    type="button"
+                    onClick={() => removeStage(stage.id)}
+                    style={{
+                      width: 20, height: 20, borderRadius: 4, border: '1px solid rgba(220,38,38,0.2)',
+                      background: 'transparent', color: 'var(--fail)',
+                      cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0, lineHeight: 1,
+                    }}
+                  >✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <button type="submit" disabled={isSaving} style={{
         width: '100%', padding: '8px 0', borderRadius: 7,
@@ -792,7 +1109,7 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds, onSave, onCancel: 
         color: '#fff', cursor: isSaving ? 'not-allowed' : 'pointer',
         fontSize: 13, fontWeight: 700, opacity: isSaving ? 0.7 : 1,
       }}>
-        {isSaving ? 'Saving…' : mode === 'create' ? '💾 Save Suite' : '💾 Update Suite'}
+        {isSaving ? 'Saving…' : mode === 'create' ? '💾 Create Suite' : '💾 Update Suite'}
       </button>
     </form>
   );
@@ -1206,7 +1523,9 @@ export default function Scheduler() {
 
   const editSuiteInitial = useMemo(() => {
     if (!editingSuite) return undefined;
-    return { name: editingSuite.name, testCaseIds: parseTcIds(editingSuite.testCaseIds) };
+    let stages: SuiteStage[] = [];
+    try { stages = JSON.parse(editingSuite.stages ?? '[]') as SuiteStage[]; } catch { /* noop */ }
+    return { name: editingSuite.name, stages };
   }, [editingSuite]);
 
   function closeForm() { setMode('idle'); setEditingId(null); setEditingSuiteId(null); }
@@ -1226,13 +1545,13 @@ export default function Scheduler() {
     } catch (e) { toast.error((e as Error).message ?? 'Failed to save'); }
   }
 
-  async function handleSaveSuite(data: { name: string; testCaseIds: string[] }) {
+  async function handleSaveSuite(data: { name: string; stages: SuiteStage[] }) {
     try {
       if (mode === 'suite-create') {
         await createSuite(data);
         toast.success('Suite created');
       } else if (editingSuiteId) {
-        await updateSuite({ id: editingSuiteId, ...data });
+        await updateSuite({ id: editingSuiteId, name: data.name, stages: data.stages });
         toast.success('Suite updated');
       }
       closeForm();
@@ -1249,11 +1568,9 @@ export default function Scheduler() {
   }
 
   async function handleSuiteRunNow(suite: Suite) {
-    const tcIds = parseTcIds(suite.testCaseIds);
-    if (tcIds.length === 0) { toast.error('This suite has no test cases'); return; }
     setSuiteRunNowId(suite.id);
     try {
-      await createRun({ testCaseIds: tcIds, environment: defaultEnv, name: `${suite.name} — Quick Run` });
+      await api.post(`/projects/${projectId}/suites/${suite.id}/run`, {});
       toast.success('Run queued — check Execution for live logs');
     } catch (e) { toast.error((e as Error).message ?? 'Failed to trigger'); }
     finally { setSuiteRunNowId(null); }

@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { runChatAgent } from '../agents/chatAgent.js';
-import type { ChatAttachment } from '../agents/chatAgent.js';
+import type { ChatAttachment, ChatStreamEvent, ChatContext } from '../agents/chatAgent.js';
 
 const router = Router({ mergeParams: true });
 router.use(verifyToken as RequestHandler);
@@ -18,10 +18,17 @@ const AttachmentSchema = z.object({
   data: z.string(), // base64
 });
 
+const ContextSchema = z.object({
+  page: z.string().optional(),
+  tcId: z.string().optional(),
+  tcTitle: z.string().optional(),
+}).optional();
+
 const SendMessageSchema = z.object({
   message: z.string().min(1).max(4000),
   conversationId: z.string().optional(),
   attachments: z.array(AttachmentSchema).max(5).optional(),
+  currentContext: ContextSchema,
 });
 
 const AddMemorySchema = z.object({
@@ -43,7 +50,7 @@ router.post('/message', wrap(async (req, res) => {
     return;
   }
 
-  const { message, conversationId, attachments } = parsed.data;
+  const { message, conversationId, attachments, currentContext } = parsed.data;
   const projectId = req.project.id;
   const convId = conversationId ?? `conv-${Date.now()}`;
 
@@ -86,6 +93,8 @@ router.post('/message', wrap(async (req, res) => {
       (attachments ?? []) as ChatAttachment[],
       req.project.name,
       req.project.slug,
+      undefined,
+      currentContext as ChatContext | undefined,
     );
   } catch (err) {
     console.error('[ChatAgent] Error:', err);
@@ -105,6 +114,105 @@ router.post('/message', wrap(async (req, res) => {
   });
 
   res.json({ conversationId: convId, userMessage: userMsg, assistantMessage: assistantMsg });
+}));
+
+// ── POST /chat/stream — SSE streaming with tool progress events ────────────
+
+router.post('/stream', wrap(async (req, res) => {
+  const parsed = SendMessageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+    return;
+  }
+
+  const { message, conversationId, attachments, currentContext } = parsed.data;
+  const projectId = req.project.id;
+  const convId = conversationId ?? `conv-${Date.now()}`;
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  function emit(event: object) {
+    if (!closed) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+
+  // Persist user message
+  const attachmentMeta = attachments?.map(a => ({ name: a.name, mimeType: a.mimeType })) ?? [];
+  const userMsg = await prisma.chatMessage.create({
+    data: {
+      projectId,
+      conversationId: convId,
+      role: 'user',
+      content: message,
+      attachments: attachmentMeta.length > 0 ? JSON.stringify(attachmentMeta) : null,
+    },
+  });
+
+  // Fetch history + memories
+  const [historyRows, memoryRows] = await Promise.all([
+    prisma.chatMessage.findMany({
+      where: { projectId, conversationId: convId, id: { not: userMsg.id } },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+      select: { role: true, content: true },
+    }),
+    prisma.chatMemory.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'asc' },
+      select: { content: true },
+    }),
+  ]);
+  const memories = memoryRows.map(m => m.content);
+
+  // Run agent with event streaming
+  let agentResult: { reply: string; actionType?: string; actionPayload?: Record<string, unknown> };
+  try {
+    agentResult = await runChatAgent(
+      projectId,
+      message,
+      historyRows as Array<{ role: 'user' | 'assistant'; content: string }>,
+      memories,
+      (attachments ?? []) as ChatAttachment[],
+      req.project.name,
+      req.project.slug,
+      (event: ChatStreamEvent) => emit(event),
+      currentContext as ChatContext | undefined,
+    );
+  } catch (err) {
+    console.error('[ChatAgent/stream] Error:', err);
+    agentResult = { reply: 'I encountered an error processing your request. Please try again.' };
+  }
+
+  // Persist assistant reply
+  const assistantMsg = await prisma.chatMessage.create({
+    data: {
+      projectId,
+      conversationId: convId,
+      role: 'assistant',
+      content: agentResult.reply,
+      actionType: agentResult.actionType ?? null,
+      actionPayload: agentResult.actionPayload ? JSON.stringify(agentResult.actionPayload) : null,
+    },
+  });
+
+  emit({
+    type: 'done',
+    conversationId: convId,
+    userMessageId: userMsg.id,
+    assistantMessageId: assistantMsg.id,
+    reply: agentResult.reply,
+    actionType: agentResult.actionType ?? null,
+    actionPayload: agentResult.actionPayload ?? null,
+  });
+
+  res.end();
 }));
 
 // ── GET /chat/history ──────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { saveSkillFile, deleteSkillFile, type SkillFileData } from '../services/scriptFileService.js';
 import { runWriterAgent } from '../agents/writerAgent.js';
 import { getLibraryContext } from '../services/reqLibraryLoader.js';
+import { detectAndParseApiSpec } from '../services/apiSpecParser.js';
 import { z } from 'zod';
 
 const router = Router({ mergeParams: true });
@@ -201,6 +202,98 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       saveSkillFile(req.project.slug, skill.id, toSkillFileData(skill));
     }
     res.status(201).json({ skill });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /parse-api-spec — detect + parse curl / OpenAPI / Postman input ──
+
+const ParseApiSpecSchema = z.object({
+  text: z.string().min(1).max(2_000_000),
+});
+
+router.post('/parse-api-spec', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = ParseApiSpecSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+    const result = detectAndParseApiSpec(parsed.data.text);
+    if (result.format === 'unknown' || result.endpoints.length === 0) {
+      res.status(400).json({
+        error: 'Could not recognize this as a curl command, OpenAPI/Swagger spec, or Postman collection.',
+      });
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /import-api-contracts — bulk-create API_CONTRACT skills ──────────
+
+const ImportApiContractsSchema = z.object({
+  scope: z.string().optional(),
+  featureGroup: z.string().max(120).optional().nullable(),
+  endpoints: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        method: z.string().min(1),
+        endpoint: z.string().min(1),
+        purpose: z.string().optional().default(''),
+        requestSchema: z.unknown().optional(),
+        responses: z.unknown().optional(),
+        authRequired: z.boolean().optional().default(false),
+        notes: z.string().optional().default(''),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+
+router.post('/import-api-contracts', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = ImportApiContractsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+    const { scope, featureGroup, endpoints } = parsed.data;
+
+    const created = [];
+    for (const ep of endpoints) {
+      const content = JSON.stringify({
+        endpoint: ep.endpoint,
+        method: ep.method.toUpperCase(),
+        purpose: ep.purpose,
+        requestSchema: ep.requestSchema ?? {},
+        responses: ep.responses ?? { '200': {} },
+        authRequired: ep.authRequired,
+        notes: ep.notes,
+      });
+      const skill = await prisma.projectSkill.create({
+        data: {
+          projectId: req.project.id,
+          skillType: 'API_CONTRACT',
+          name: ep.name,
+          scope: scope ?? null,
+          featureGroup: featureGroup ?? null,
+          content,
+          captureMethod: 'USER_UPLOADED',
+          confidence: 0.9,
+        },
+      });
+      if (skill.isActive) {
+        saveSkillFile(req.project.slug, skill.id, toSkillFileData(skill));
+      }
+      created.push(skill);
+    }
+
+    res.status(201).json({ skills: created, count: created.length });
   } catch (err) {
     next(err);
   }

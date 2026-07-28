@@ -13,11 +13,14 @@ export default function Register() {
   const { setCurrentUser } = useProjectStore();
   const { data: authConfig } = useAuthConfig();
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [emailUser, setEmailUser] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+
+  const emailDomain = authConfig?.allowedDomains?.[0] ?? '';
+  const fullEmail = emailDomain ? `${emailUser}@${emailDomain}` : emailUser;
 
   // ── Google SSO handler ─────────────────────────────────────────────────────
   async function handleGoogleCredential(credential: string) {
@@ -40,7 +43,7 @@ export default function Register() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name || !email || !password) {
+    if (!name || !emailUser || !password) {
       toast.error('Please fill in all required fields.');
       return;
     }
@@ -54,7 +57,7 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      const res = await api.post<AuthResponse>('/auth/register', { name, email, password });
+      const res = await api.post<AuthResponse>('/auth/register', { name, email: fullEmail, password });
       setAuth(res.data.token, res.data.user);
       setCurrentUser(res.data.user);
       toast.success(`Welcome, ${res.data.user.name}! Your account is ready.`);
@@ -292,17 +295,38 @@ export default function Register() {
 
             <div>
               <label htmlFor="email" style={labelStyle}>Email</label>
-              <input
-                id="email"
-                type="email"
-                className="input-field"
-                placeholder="you@company.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                required
-                style={{ fontFamily: 'var(--font-ui)', fontSize: '14px' }}
-              />
+              {emailDomain ? (
+                <div style={{ display: 'flex', border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', background: 'var(--surface)', transition: 'border-color 0.15s' }}
+                  onFocusCapture={(e) => (e.currentTarget.style.borderColor = 'var(--cyan)')}
+                  onBlurCapture={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                >
+                  <input
+                    id="email"
+                    type="text"
+                    placeholder="yourname"
+                    value={emailUser}
+                    onChange={(e) => setEmailUser(e.target.value.replace(/@.*/, ''))}
+                    autoComplete="username"
+                    required
+                    style={{ flex: 1, border: 'none', padding: '10px 12px', background: 'transparent', fontFamily: 'var(--font-ui)', fontSize: '14px', color: 'var(--text)', outline: 'none', minWidth: 0 }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', padding: '0 12px', background: 'var(--surface2)', borderLeft: '1px solid var(--border)', color: 'var(--text-mid)', fontSize: '13px', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                    @{emailDomain}
+                  </div>
+                </div>
+              ) : (
+                <input
+                  id="email"
+                  type="email"
+                  className="input-field"
+                  placeholder="you@company.com"
+                  value={emailUser}
+                  onChange={(e) => setEmailUser(e.target.value)}
+                  autoComplete="email"
+                  required
+                  style={{ fontFamily: 'var(--font-ui)', fontSize: '14px' }}
+                />
+              )}
             </div>
 
             <div>

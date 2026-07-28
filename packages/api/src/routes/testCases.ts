@@ -16,6 +16,9 @@ import {
   readUploadedFile,
   readReferenceTCs,
   mimeFromPath,
+  parseOpenApiSpec,
+  parsePostmanCollection,
+  parseCurlCommands,
   type UISnapshot,
 } from '../services/inputAdapters.js';
 import { addAgentScanJob } from '../lib/queue.js';
@@ -61,6 +64,11 @@ const GenerateInputSchema = z.object({
       type: z.string().min(1),
       content: z.string().min(1),
       label: z.string().min(1),
+      meta: z.object({
+        menuContext: z.string().optional(),
+        envName: z.string().optional(),
+        uploadedScreenshot: z.string().optional(),
+      }).optional(),
     }),
   ).default([]),
   testTypes: z.array(z.enum(['UI', 'API', 'SIT'])).min(1).default(['UI']),
@@ -182,10 +190,38 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
               content = await fetchUrlContent(inp.content);
               break;
             case 'ui_url': {
+              // Uploaded screenshot shortcut — skip live capture entirely
+              if (inp.meta?.uploadedScreenshot) {
+                const snapLabel = inp.meta.menuContext ?? inp.label ?? inp.content;
+                uiSnapshots.push({
+                  url: inp.content,
+                  pageTitle: snapLabel,
+                  screenshotBase64: inp.meta.uploadedScreenshot,
+                  interactiveElements: '',
+                  mediaType: 'image/jpeg',
+                  label: snapLabel,
+                });
+                content = `[Uploaded screenshot: "${snapLabel}"]`;
+                break;
+              }
+
+              // Resolve env credentials — prefer per-input envName over project default
+              let envForScan = defaultEnv?.username ? { username: defaultEnv.username, password: defaultEnv.password ?? '' } : null;
+              if (inp.meta?.envName) {
+                const namedEnv = await prisma.envConfig.findFirst({
+                  where: { projectId: req.project.id, name: inp.meta.envName },
+                  select: { username: true, password: true },
+                }).catch(() => null);
+                if (namedEnv?.username) {
+                  envForScan = { username: namedEnv.username, password: namedEnv.password ?? '' };
+                }
+              }
+
               const autoSnaps = await autoScanPage(
                 inp.content,
                 req.project.slug,
-                defaultEnv?.username ? { username: defaultEnv.username, password: defaultEnv.password ?? '' } : null,
+                envForScan,
+                inp.meta?.menuContext,
               );
               if (autoSnaps.length > 0) {
                 for (const s of autoSnaps) {
@@ -222,6 +258,15 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
               break;
             case 'reference_tc':
               content = await readReferenceTCs(req.project.id, [inp.content]);
+              break;
+            case 'openapi':
+              content = parseOpenApiSpec(await readUploadedFile(inp.content, mimeFromPath(inp.content)).catch(() => inp.content));
+              break;
+            case 'postman':
+              content = parsePostmanCollection(await readUploadedFile(inp.content, mimeFromPath(inp.content)).catch(() => inp.content));
+              break;
+            case 'curl':
+              content = parseCurlCommands(inp.content);
               break;
             case 'prompt':
               // raw text — use as-is
@@ -857,6 +902,32 @@ router.post('/parse-seed', seedUpload.single('file'), async (req: Request, res: 
   }
 });
 
+// ── GET /search — lightweight autocomplete (id, tcId, title, useCaseTag) ──
+
+router.get('/search', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { q = '' } = req.query as Record<string, string>;
+    const term = q.trim();
+    const testCases = await prisma.testCase.findMany({
+      where: {
+        projectId: req.project.id,
+        ...(term && {
+          OR: [
+            { tcId: { contains: term } },
+            { title: { contains: term } },
+          ],
+        }),
+      },
+      select: { id: true, tcId: true, title: true, useCaseTag: true },
+      orderBy: [{ useCaseTag: 'asc' }, { tcId: 'asc' }],
+      take: 20,
+    });
+    res.json({ testCases });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET / ─────────────────────────────────────────────────────────────────
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
@@ -864,7 +935,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const { type, status, useCaseTag, search, page = '1', limit = '50' } = req.query as Record<string, string>;
 
     const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
+    const limitNum = Math.min(2000, Math.max(1, parseInt(limit, 10)));
     const skip = (pageNum - 1) * limitNum;
 
     const where = {
@@ -1291,6 +1362,49 @@ router.get('/agent-trace/:traceId/video', async (req: Request, res: Response, ne
     res.setHeader('Content-Type', 'video/webm');
     res.setHeader('Content-Disposition', `attachment; filename="agent-trace-${label}.webm"`);
     fs.createReadStream(trace.videoPath).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PATCH /reorder — persist drag-to-reorder sortOrder within a use-case group ──
+
+router.patch('/reorder', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = z.object({
+      useCaseTag: z.string().nullable(),
+      orderedIds: z.array(z.string()).min(1),
+    }).safeParse(req.body);
+
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      return;
+    }
+
+    const { useCaseTag, orderedIds } = parsed.data;
+
+    // Verify all TCs belong to this project + use case
+    const tcs = await prisma.testCase.findMany({
+      where: {
+        id: { in: orderedIds },
+        projectId: req.project.id,
+        ...(useCaseTag ? { useCaseTag } : { useCaseTag: null }),
+      },
+      select: { id: true },
+    });
+
+    if (tcs.length !== orderedIds.length) {
+      res.status(400).json({ error: 'Some test case IDs are invalid or do not belong to the specified use case' });
+      return;
+    }
+
+    await prisma.$transaction(
+      orderedIds.map((id, index) =>
+        prisma.testCase.update({ where: { id }, data: { sortOrder: index } }),
+      ),
+    );
+
+    res.json({ updated: orderedIds.length });
   } catch (err) {
     next(err);
   }

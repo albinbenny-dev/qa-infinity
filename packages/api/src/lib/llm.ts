@@ -95,7 +95,7 @@ export function createLLM(options?: {
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
     const model = process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
 
-    return new ChatAnthropic({
+    const llm = new ChatAnthropic({
       apiKey,
       model,
       temperature,
@@ -114,6 +114,12 @@ export function createLLM(options?: {
         },
       }),
     });
+    // LangChain 0.2.x defaults topP and topK to -1 (sentinel for "not set") and
+    // always serialises them into the request body. Newer Claude models reject top_p: -1
+    // with a 400. Setting them to undefined causes JSON.stringify to omit the keys entirely.
+    (llm as unknown as Record<string, unknown>).topP = undefined;
+    (llm as unknown as Record<string, unknown>).topK = undefined;
+    return llm;
   }
 
   // Default: OpenRouter (OpenAI-compatible endpoint)

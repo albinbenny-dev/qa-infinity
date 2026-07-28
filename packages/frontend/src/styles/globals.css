@@ -123,7 +123,7 @@
 @layer base {
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; height: 100%; overflow: hidden; }
 
   body {
     font-family: var(--font-ui);
@@ -133,8 +133,11 @@
     -moz-osx-font-smoothing: grayscale;
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
+    height: 100%;
+    overflow: hidden;
   }
+
+  #root { height: 100%; }
 
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -285,6 +288,17 @@
     color: var(--cyan);
     border-color: rgba(79,70,229,0.2);
   }
+  .nav-ai-tag {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    background: var(--cyan-dim);
+    color: var(--cyan);
+    padding: 1px 5px;
+    border-radius: 100px;
+    border: 1px solid rgba(79,70,229,0.2);
+    flex-shrink: 0;
+  }
 
   /* ── Badges ── */
   .badge {
@@ -353,6 +367,9 @@
 
   /* ── Topbar ── */
   .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
     height: 52px;
     border-bottom: 1px solid var(--border);
     display: flex;

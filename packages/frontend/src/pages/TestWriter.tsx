@@ -14,7 +14,7 @@ import {
 import { useProjectContext, useUpdateContext } from '../hooks/useScans';
 import { useAgentConfig, useOpenRouterUsage } from '../hooks/useUsage';
 import { useSkills } from '../hooks/useSkills';
-import InputQueue, { type InputQueueState, type SeedTC } from '../components/writer/InputQueue';
+import InputQueue, { type InputQueueState, type SeedTC, type ApiInput } from '../components/writer/InputQueue';
 import GeneratedTCList from '../components/writer/GeneratedTCList';
 import { getToken } from '../lib/auth';
 import type { TestCase, AgentTraceStep, ProjectSkill } from '../types';
@@ -102,6 +102,8 @@ const initialInputState: InputQueueState = {
   additionalContext: '',
   testTypes: { UI: true, API: true, SIT: false },
   uiScreenUrls: [],
+  apiInputs: [] as ApiInput[],
+  apiSeedTCs: [] as SeedTC[],
 };
 
 // ── SkillsSidePanel ────────────────────────────────────────────────────────
@@ -116,18 +118,153 @@ const SKILL_COLORS: Record<string, string> = {
   UX_DESIGN: '#a78bfa', HISTORICAL: 'var(--text-dim)',
 };
 
+const UNGROUPED_LABEL = 'Ungrouped';
+
+function groupSkillsByFeature(activeSkills: ProjectSkill[]): Array<[string, ProjectSkill[]]> {
+  const groups = new Map<string, ProjectSkill[]>();
+  for (const skill of activeSkills) {
+    const key = skill.featureGroup?.trim() || UNGROUPED_LABEL;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(skill);
+  }
+  // Stable order: first-seen feature groups, "Ungrouped" always last
+  const entries = [...groups.entries()];
+  entries.sort((a, b) => {
+    if (a[0] === UNGROUPED_LABEL) return 1;
+    if (b[0] === UNGROUPED_LABEL) return -1;
+    return 0;
+  });
+  return entries;
+}
+
+function SkillRow({
+  skill,
+  selected,
+  onToggle,
+  indent,
+}: {
+  skill: ProjectSkill;
+  selected: boolean;
+  onToggle: () => void;
+  indent?: boolean;
+}) {
+  const icon = SKILL_ICONS[skill.skillType] ?? '📦';
+  const color = SKILL_COLORS[skill.skillType] ?? 'var(--text-dim)';
+  return (
+    <div
+      onClick={onToggle}
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '7px 9px', paddingLeft: indent ? 24 : 9, borderRadius: 'var(--radius)', cursor: 'pointer', background: selected ? 'rgba(37,99,171,0.04)' : 'transparent', border: `1px solid ${selected ? 'rgba(37,99,171,0.2)' : 'transparent'}`, transition: 'all 0.12s' }}
+    >
+      <div style={{ width: 14, height: 14, borderRadius: 3, flexShrink: 0, marginTop: 1, background: selected ? 'var(--cyan)' : 'transparent', border: `1.5px solid ${selected ? 'var(--cyan)' : 'var(--border2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 9 }}>
+        {selected ? '✓' : ''}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
+          <span style={{ fontSize: 10 }}>{icon}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.name}</span>
+        </div>
+        <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color }}>
+          {skill.skillType.replace(/_/g, ' ')}
+          {skill.captureMethod === 'AGENT_RECORDED' && <span style={{ marginLeft: 4 }}>🤖</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FeatureGroupRow({
+  name,
+  groupSkills,
+  selectedSkillIds,
+  expanded,
+  onToggleExpand,
+  onToggleSkill,
+  onToggleGroup,
+}: {
+  name: string;
+  groupSkills: ProjectSkill[];
+  selectedSkillIds: Set<string>;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onToggleSkill: (id: string) => void;
+  onToggleGroup: (ids: string[], select: boolean) => void;
+}) {
+  const selectedCount = groupSkills.filter((s) => selectedSkillIds.has(s.id)).length;
+  const allSelected = selectedCount === groupSkills.length;
+  const noneSelected = selectedCount === 0;
+  const checkboxRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (checkboxRef.current) checkboxRef.current.indeterminate = !allSelected && !noneSelected;
+  }, [allSelected, noneSelected]);
+
+  return (
+    <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 9px', cursor: 'pointer', background: 'var(--surface2)' }}
+        onClick={onToggleExpand}
+      >
+        <input
+          ref={checkboxRef}
+          type="checkbox"
+          checked={allSelected}
+          onClick={(e) => e.stopPropagation()}
+          onChange={() => onToggleGroup(groupSkills.map((s) => s.id), !allSelected)}
+          style={{ width: 13, height: 13, cursor: 'pointer', accentColor: 'var(--cyan)', flexShrink: 0 }}
+        />
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {name}
+        </span>
+        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', flexShrink: 0 }}>
+          {selectedCount}/{groupSkills.length}
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-dim)', transition: 'transform 0.15s', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block', flexShrink: 0 }}>
+          ▶
+        </span>
+      </div>
+      {expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '3px 0' }}>
+          {groupSkills.map((skill) => (
+            <SkillRow
+              key={skill.id}
+              skill={skill}
+              selected={selectedSkillIds.has(skill.id)}
+              onToggle={() => onToggleSkill(skill.id)}
+              indent
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SkillsSidePanel({
   skills,
   selectedSkillIds,
   onToggleSkill,
+  onToggleGroup,
   projectSlug,
 }: {
   skills: ProjectSkill[];
   selectedSkillIds: Set<string>;
   onToggleSkill: (id: string) => void;
+  onToggleGroup: (ids: string[], select: boolean) => void;
   projectSlug: string;
 }) {
   const activeSkills = skills.filter((s) => s.isActive);
+  const groups = groupSkillsByFeature(activeSkills);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  function toggleExpand(name: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
       <div style={{ height: '3px', background: 'linear-gradient(90deg, var(--violet), var(--cyan))', flexShrink: 0 }} />
@@ -155,32 +292,18 @@ function SkillsSidePanel({
           <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', padding: '2px 4px 6px', lineHeight: 1.5 }}>
             Selected skills ground the LLM with real app knowledge.
           </div>
-          {activeSkills.map((skill) => {
-            const selected = selectedSkillIds.has(skill.id);
-            const icon = SKILL_ICONS[skill.skillType] ?? '📦';
-            const color = SKILL_COLORS[skill.skillType] ?? 'var(--text-dim)';
-            return (
-              <div
-                key={skill.id}
-                onClick={() => onToggleSkill(skill.id)}
-                style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '7px 9px', borderRadius: 'var(--radius)', cursor: 'pointer', background: selected ? 'rgba(37,99,171,0.04)' : 'transparent', border: `1px solid ${selected ? 'rgba(37,99,171,0.2)' : 'transparent'}`, transition: 'all 0.12s' }}
-              >
-                <div style={{ width: 14, height: 14, borderRadius: 3, flexShrink: 0, marginTop: 1, background: selected ? 'var(--cyan)' : 'transparent', border: `1.5px solid ${selected ? 'var(--cyan)' : 'var(--border2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 9 }}>
-                  {selected ? '✓' : ''}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
-                    <span style={{ fontSize: 10 }}>{icon}</span>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.name}</span>
-                  </div>
-                  <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color }}>
-                    {skill.skillType.replace(/_/g, ' ')}
-                    {skill.captureMethod === 'AGENT_RECORDED' && <span style={{ marginLeft: 4 }}>🤖</span>}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {groups.map(([name, groupSkills]) => (
+            <FeatureGroupRow
+              key={name}
+              name={name}
+              groupSkills={groupSkills}
+              selectedSkillIds={selectedSkillIds}
+              expanded={expandedGroups.has(name)}
+              onToggleExpand={() => toggleExpand(name)}
+              onToggleSkill={onToggleSkill}
+              onToggleGroup={onToggleGroup}
+            />
+          ))}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4 }}>
             <a href={`/projects/${projectSlug}/skills`} style={{ display: 'block', textAlign: 'center', fontSize: 10, color: 'var(--cyan)', textDecoration: 'none', fontWeight: 600 }}>
               + Manage Skills
@@ -369,14 +492,15 @@ export default function TestWriter() {
   const hasScanDraft = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
 
   const inputCount = useMemo(() => {
-    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, seedTCs } = state.inputState;
-    return jiraStories.length + refTCs.length + uploadedDocs.length + uiScreenUrls.length + seedTCs.length;
+    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, seedTCs, apiInputs, apiSeedTCs } = state.inputState;
+    return jiraStories.length + refTCs.length + uploadedDocs.length + uiScreenUrls.length + seedTCs.length
+      + (apiInputs?.length ?? 0) + (apiSeedTCs?.length ?? 0);
   }, [state.inputState]);
 
   const handleGenerate = useCallback(async () => {
     if (!project) return;
 
-    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes, seedTCs } = state.inputState;
+    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes, seedTCs, apiInputs, apiSeedTCs } = state.inputState;
 
     const activeTypes = (Object.entries(testTypes) as ['UI' | 'API' | 'SIT', boolean][])
       .filter(([, v]) => v)
@@ -417,13 +541,20 @@ export default function TestWriter() {
     }
 
     // Normal generate flow
-    const inputs: { type: string; content: string; label: string }[] = [];
+    const inputs: Array<{ type: string; content: string; label: string; meta?: { menuContext?: string; envName?: string; uploadedScreenshot?: string } }> = [];
 
     for (const story of jiraStories) {
       inputs.push({ type: 'jira', content: story.url, label: story.url });
     }
     for (const ref of refTCs) {
-      inputs.push({ type: 'reference_tc', content: ref.id, label: ref.label });
+      if (ref.isGroup && ref.tcIds?.length) {
+        // Expand feature group into individual TC refs
+        for (const tcId of ref.tcIds) {
+          inputs.push({ type: 'reference_tc', content: tcId, label: `${ref.label} > ${tcId}` });
+        }
+      } else {
+        inputs.push({ type: 'reference_tc', content: ref.id, label: ref.label });
+      }
     }
     for (const doc of uploadedDocs) {
       inputs.push({ type: 'upload', content: doc.filePath, label: doc.filename });
@@ -435,16 +566,38 @@ export default function TestWriter() {
         label: screen.menuContext
           ? `UI: ${screen.menuContext} (${screen.url})`
           : `UI: ${screen.url}`,
+        meta: {
+          menuContext: screen.menuContext ?? undefined,
+          envName: screen.envName ?? undefined,
+          uploadedScreenshot: screen.imageBase64 ?? undefined,
+        },
       });
     }
 
-    if (!inputs.length && !seedTCs.length) {
+    // API tab inputs
+    for (const apiInp of (apiInputs ?? [])) {
+      if (apiInp.subType === 'curl' && apiInp.curlText) {
+        inputs.push({ type: 'curl', content: apiInp.curlText, label: apiInp.label });
+      } else if (apiInp.filePath) {
+        const type = apiInp.subType === 'openapi' ? 'openapi'
+          : apiInp.subType === 'postman' ? 'postman'
+          : 'upload';
+        inputs.push({ type, content: apiInp.filePath, label: apiInp.label });
+      }
+    }
+
+    const allSeeds = [
+      ...(seedTCs ?? []),
+      ...(apiSeedTCs ?? []).map(tc => ({ ...tc, type: 'API' as const })),
+    ];
+
+    if (!inputs.length && !allSeeds.length) {
       alert('Add at least one input source or seed test case before generating.');
       return;
     }
 
-    const seedTestCasesPayload = seedTCs.length > 0
-      ? seedTCs.map(({ title, steps, expectedResult, useCaseTag, description, priority, type, preConditions, testData, notes }) => ({
+    const seedTestCasesPayload = allSeeds.length > 0
+      ? allSeeds.map(({ title, steps, expectedResult, useCaseTag, description, priority, type, preConditions, testData, notes }) => ({
           title, steps, expectedResult, useCaseTag, description, priority, type, preConditions, testData, notes,
         }))
       : undefined;
@@ -862,6 +1015,16 @@ export default function TestWriter() {
               const next = new Set(prev);
               if (next.has(id)) next.delete(id);
               else next.add(id);
+              return next;
+            })
+          }
+          onToggleGroup={(ids, select) =>
+            setSelectedSkillIds((prev) => {
+              const next = new Set(prev);
+              for (const id of ids) {
+                if (select) next.add(id);
+                else next.delete(id);
+              }
               return next;
             })
           }

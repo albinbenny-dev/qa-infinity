@@ -15,6 +15,7 @@ import {
   useUpdateTestCase,
   useBulkDelete,
   useBulkAddTag,
+  useReorderTestCases,
 } from '../hooks/useTestCases';
 import { useExecutionStore } from '../stores/executionStore';
 import { useScripts } from '../hooks/useScripts';
@@ -136,6 +137,7 @@ export default function TCLibrary() {
   const updateTcMutation = useUpdateTestCase(projectId ?? '');
   const bulkDeleteMutation = useBulkDelete(projectId ?? '');
   const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
+  const reorderTcMutation = useReorderTestCases(projectId ?? '');
   const createRun = useCreateRun(projectId ?? '');
   const { activeProject } = useProjectStore();
   const { canWrite } = useRBAC();
@@ -530,6 +532,9 @@ export default function TCLibrary() {
                   onDeleteTc={handleDeleteTc}
                   onDeleteGroup={handleDeleteGroup}
                   onEditTc={setEditingTc}
+                  onReorder={(orderedIds) =>
+                    reorderTcMutation.mutate({ useCaseTag: g.name === 'Uncategorised' ? null : g.name, orderedIds })
+                  }
                 />
               );
             })}

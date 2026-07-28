@@ -19,6 +19,11 @@ import {
   rewriteRobotResourcePaths,
   saveSkillFile,
   importFromDisk,
+  buildFileTree,
+  importFromZip,
+  exportFolderZip,
+  getProjectFileContent,
+  deleteProjectFile,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
@@ -68,6 +73,15 @@ const robotUpload = multer({
   fileFilter: (_req, file, cb) => {
     if (file.originalname.endsWith('.robot')) cb(null, true);
     else cb(new Error('Only .robot files are allowed'));
+  },
+});
+
+const zipUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.originalname.endsWith('.zip')) cb(null, true);
+    else cb(new Error('Only .zip files are allowed'));
   },
 });
 
@@ -846,7 +860,7 @@ router.post(
       });
 
       // Save script file and link to the created TC
-      saveScript(slug, filename, rawContent);
+      saveScript(slug, filename, rawContent, testCase.useCaseTag ?? null);
 
       const script = await prisma.script.create({
         data: {
@@ -897,69 +911,163 @@ router.get('/export/zip', async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /import-from-disk — sync scripts placed on disk into the DB ─────────
-// QA engineers can drop .robot / .spec.ts files into the bind-mounted scripts
-// folder in PyCharm or VSCode and hit this route to register them in the DB.
-// Files in use-case subfolders are linked to the matching TC via filename prefix.
+// ── GET /file-tree — recursive project file tree ──────────────────────────────
 
-router.post('/import-from-disk', async (req: Request, res: Response) => {
+router.get('/file-tree', async (req: Request, res: Response) => {
   try {
-    const projectId = req.project.id;
-    const slug = req.project.slug;
-    const diskScripts = importFromDisk(slug);
-
-    let imported = 0;
-    let updated = 0;
-    const errors: string[] = [];
-
-    for (const ds of diskScripts) {
-      try {
-        const existing = await prisma.script.findFirst({
-          where: { projectId, filename: ds.filename },
-        });
-
-        if (existing) {
-          await prisma.script.update({
-            where: { id: existing.id },
-            data: { content: ds.content, useCaseFolder: ds.useCaseFolder, updatedAt: new Date() },
-          });
-          updated++;
-        } else {
-          // Try to link to a TC by matching the TC-XXX-NNN prefix in the filename
-          const tcIdMatch = ds.filename.match(/^(TC-[A-Z]+-\d+)/i) ?? ds.filename.match(/^(TC-\d+)/i);
-          let testCaseId: string | null = null;
-          if (tcIdMatch) {
-            const tc = await prisma.testCase.findFirst({
-              where: { projectId, tcId: { equals: tcIdMatch[1], mode: 'insensitive' } },
-              select: { id: true },
-            });
-            testCaseId = tc?.id ?? null;
-          }
-          const scriptType = ds.filename.endsWith('.robot') ? 'ROBOT' : 'PLAYWRIGHT';
-          await prisma.script.create({
-            data: {
-              projectId,
-              testCaseId,
-              filename: ds.filename,
-              content: ds.content,
-              scriptType,
-              useCaseFolder: ds.useCaseFolder,
-              isCustomUpload: testCaseId === null,
-            },
-          });
-          imported++;
-        }
-      } catch (err: any) {
-        errors.push(`${ds.filename}: ${err.message}`);
-      }
-    }
-
-    res.json({ imported, updated, total: diskScripts.length, errors });
+    const tree = buildFileTree(req.project.slug);
+    res.json(tree);
   } catch (err) {
-    console.error('[scripts] POST /import-from-disk', err);
-    res.status(500).json({ error: 'Import from disk failed' });
+    console.error('[scripts] GET /file-tree', err);
+    res.status(500).json({ error: 'Could not build file tree' });
   }
 });
+
+// ── GET /project-file/download — download a single file by relative path ──────
+
+router.get('/project-file/download', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    const { buffer, name } = getProjectFileContent(req.project.slug, relPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.send(buffer);
+  } catch (err: any) {
+    console.error('[scripts] GET /project-file/download', err);
+    res.status(404).json({ error: err.message ?? 'File not found' });
+  }
+});
+
+// ── GET /project-file/download-zip — download a folder or whole project as zip ─
+
+router.get('/project-file/download-zip', async (req: Request, res: Response) => {
+  try {
+    const relPath = (req.query.path as string | undefined) || undefined;
+    const { buffer, name } = await exportFolderZip(req.project.slug, relPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${name}.zip"`);
+    res.setHeader('Content-Type', 'application/zip');
+    res.send(buffer);
+  } catch (err: any) {
+    console.error('[scripts] GET /project-file/download-zip', err);
+    res.status(500).json({ error: 'Zip export failed' });
+  }
+});
+
+// ── DELETE /project-file — delete a file or folder by relative path ────────────
+
+router.delete('/project-file', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    deleteProjectFile(req.project.slug, relPath);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[scripts] DELETE /project-file', err);
+    res.status(500).json({ error: err.message ?? 'Delete failed' });
+  }
+});
+
+// ── POST /import-folder — import a zip archive maintaining folder structure ────
+// Accepts a .zip file with QAASR-compatible structure:
+//   TestCases/{UseCase}/TC01_name.robot → DB Script record + TestCase link
+//   Resource/**                         → disk only (RF keywords/variables)
+//   resources/**                        → disk only (binary data)
+
+router.post(
+  '/import-folder',
+  (req: Request, res: Response, next: NextFunction) => {
+    zipUpload.single('folder')(req, res, (err) => {
+      if (err instanceof multer.MulterError) { res.status(400).json({ error: `Upload error: ${err.message}` }); return; }
+      if (err instanceof Error) { res.status(400).json({ error: err.message }); return; }
+      next();
+    });
+  },
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) { res.status(400).json({ error: 'No zip file uploaded (field name: folder)' }); return; }
+      const { id: projectId, slug } = req.project;
+
+      const { files, warnings } = await importFromZip(slug, req.file.buffer);
+
+      // Only test scripts under TestCases/ get DB records
+      const testScripts = files.filter(f => f.isTestScript);
+      const imported: { filename: string; relPath: string; testCasesCreated: number }[] = [];
+
+      for (const f of testScripts) {
+        // relPath like "TestCases/Geo Hierarchy/TC01_Create_Region.robot"
+        const parts = f.relPath.split('/');
+        const useCaseTag = parts.length >= 3 ? parts[1] : 'Uncategorised';
+        const filename = parts[parts.length - 1];
+
+        try {
+          const existing = await prisma.script.findFirst({ where: { projectId, filename } });
+          let testCasesCreated = 0;
+
+          if (existing) {
+            await prisma.script.update({
+              where: { id: existing.id },
+              data: { content: f.content, useCaseFolder: useCaseTag, updatedAt: new Date() },
+            });
+          } else {
+            // Try to link to existing TC by TC-XXX prefix
+            const tcMatch = filename.match(/^(TC-[A-Z]+-\d+)/i) ?? filename.match(/^(TC\d+)/i);
+            let testCaseId: string | null = null;
+            if (tcMatch) {
+              const tc = await prisma.testCase.findFirst({
+                where: { projectId, tcId: { equals: tcMatch[1], mode: 'insensitive' } },
+                select: { id: true },
+              });
+              testCaseId = tc?.id ?? null;
+            }
+            // Auto-create TC if no match
+            if (!testCaseId) {
+              const title = filename.replace(/\.(robot|spec\.ts|spec\.js)$/, '').replace(/_/g, ' ');
+              const maxTc = await prisma.testCase.findFirst({
+                where: { projectId },
+                orderBy: { tcId: 'desc' },
+                select: { tcId: true },
+              });
+              const prefix = slug.toUpperCase().slice(0, 6);
+              const nextNum = maxTc ? (parseInt(maxTc.tcId.replace(/\D/g, '') || '0', 10) + 1) : 1;
+              const newTcId = `TC-${prefix}-${String(nextNum).padStart(3, '0')}`;
+              const tc = await prisma.testCase.create({
+                data: { projectId, tcId: newTcId, title, useCaseTag, steps: '', expectedResult: '' },
+              });
+              testCaseId = tc.id;
+              testCasesCreated = 1;
+            }
+            const scriptType = filename.endsWith('.robot') ? 'ROBOT' : 'PLAYWRIGHT';
+            await prisma.script.create({
+              data: {
+                projectId,
+                testCaseId,
+                filename,
+                content: f.content,
+                scriptType,
+                useCaseFolder: useCaseTag,
+                isCustomUpload: false,
+              },
+            });
+          }
+          imported.push({ filename, relPath: f.relPath, testCasesCreated });
+        } catch (err: any) {
+          warnings.push(`${f.relPath}: ${err.message}`);
+        }
+      }
+
+      res.json({
+        imported,
+        resourceFiles: files.filter(f => !f.isTestScript).length,
+        total: files.length,
+        warnings,
+      });
+    } catch (err) {
+      console.error('[scripts] POST /import-folder', err);
+      res.status(500).json({ error: 'Import failed' });
+    }
+  },
+);
 
 // ── POST /import-robot — upload & optionally convert a .robot file ───────────
 // Detects if the file uses SeleniumLibrary → converts to RF Browser via LLM

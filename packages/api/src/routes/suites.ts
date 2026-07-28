@@ -1,67 +1,53 @@
 import { Router, RequestHandler } from 'express';
 import { z } from 'zod';
-import fs from 'fs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
 import { addRunJob } from '../lib/queue.js';
+import { findScriptPath, saveScript } from '../services/scriptFileService.js';
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface SuiteStage {
+  id: string;
+  useCaseTag: string;
+  tcIds: string[];
+  mode: 'parallel' | 'sequential';
+  order: number;
+}
 
 // ── Zod schemas ────────────────────────────────────────────────────────────
 
-const CreateSuiteSchema = z.object({
-  name: z.string().min(1).max(100),
-  testCaseIds: z.array(z.string()).min(1),
+const StageSchema = z.object({
+  id: z.string(),
+  useCaseTag: z.string(),
+  tcIds: z.array(z.string()),
+  mode: z.enum(['parallel', 'sequential']),
+  order: z.number(),
 });
 
-const UpdateSuiteSchema = CreateSuiteSchema.partial();
+const CreateSuiteSchema = z.object({
+  name: z.string().min(1).max(100),
+  stages: z.array(StageSchema).min(1),
+  // backward compat: optional flat list, derived from stages if not provided
+  testCaseIds: z.array(z.string()).optional(),
+});
+
+const UpdateSuiteSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  stages: z.array(StageSchema).optional(),
+  testCaseIds: z.array(z.string()).optional(),
+});
 
 const RunSuiteSchema = z.object({
-  environment:     z.string().min(1),
+  environment:     z.string().optional(),
   parallelWorkers: z.number().int().min(1).max(8).default(2),
   headless:        z.boolean().default(true),
   browser:         z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
-  /** Optional override for the run name shown in the UI */
   name:            z.string().max(200).optional(),
 });
 
-// ── Shared helpers (mirrors the private helpers in runs.ts) ────────────────
-
-async function resolveScriptPaths(
-  projectId: string,
-  testCaseIds: string[],
-): Promise<{ testCaseId: string; scriptPath: string }[]> {
-  const [project, scripts] = await Promise.all([
-    prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } }),
-    prisma.script.findMany({
-      where: { projectId, testCaseId: { in: testCaseIds } },
-      select: {
-        testCaseId: true,
-        filename: true,
-        testCase: { select: { sourceRef: true } },
-      },
-    }),
-  ]);
-  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
-  return scripts
-    .filter((s): s is typeof s & { testCaseId: string } => s.testCaseId !== null)
-    .map((s) => {
-      const cuidPath = `${SCRIPTS_ROOT}/${projectId}/${s.filename}`;
-      if (fs.existsSync(cuidPath)) {
-        return { testCaseId: s.testCaseId, scriptPath: cuidPath };
-      }
-      const sourceRef = s.testCase?.sourceRef;
-      if (sourceRef) {
-        const slugPath = `${SCRIPTS_ROOT}/${project?.slug}/${sourceRef}`;
-        if (fs.existsSync(slugPath)) {
-          return { testCaseId: s.testCaseId, scriptPath: slugPath };
-        }
-        if (sourceRef.includes('/')) {
-          return { testCaseId: s.testCaseId, scriptPath: slugPath };
-        }
-      }
-      return { testCaseId: s.testCaseId, scriptPath: cuidPath };
-    });
-}
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 async function nextRunSeq(): Promise<number> {
   const agg = await prisma.run.aggregate({ _max: { runSeq: true } });
@@ -76,14 +62,33 @@ async function getEnvConfig(
     where: { projectId, name: envName },
     select: { baseUrl: true, username: true, password: true },
   });
-  return {
-    baseUrl:  env?.baseUrl  ?? '',
-    username: env?.username ?? '',
-    password: env?.password ?? '',
-  };
+  return { baseUrl: env?.baseUrl ?? '', username: env?.username ?? '', password: env?.password ?? '' };
 }
 
-// ── Router setup ───────────────────────────────────────────────────────────
+async function resolveScriptPath(
+  slug: string,
+  projectId: string,
+  tcId: string,
+): Promise<string | null> {
+  const script = await prisma.script.findFirst({
+    where: { projectId, testCaseId: tcId },
+    select: { filename: true, content: true, useCaseFolder: true, testCase: { select: { useCaseTag: true } } },
+  });
+  if (!script) return null;
+
+  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
+  const found = findScriptPath(slug, script.filename);
+  if (found) return found;
+
+  if (script.content) {
+    const useCase = script.useCaseFolder ?? (script.testCase as { useCaseTag?: string } | null)?.useCaseTag ?? null;
+    saveScript(slug, script.filename, script.content, useCase);
+    return findScriptPath(slug, script.filename) ?? `${SCRIPTS_ROOT}/${slug}/scripts/${script.filename}`;
+  }
+  return null;
+}
+
+// ── Router ─────────────────────────────────────────────────────────────────
 
 const router = Router({ mergeParams: true });
 router.use(verifyToken as RequestHandler);
@@ -105,15 +110,18 @@ router.get('/', (async (req, res) => {
 router.post('/', (async (req, res) => {
   const projectId = req.project.id;
   const parsed = CreateSuiteSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-  const { name, testCaseIds } = parsed.data;
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { name, stages } = parsed.data;
+  // Derive flat testCaseIds from stages (for backward compat / CI endpoint)
+  const allTcIds = Array.from(new Set(stages.flatMap(s => s.tcIds)));
+
   const suite = await prisma.suite.create({
     data: {
       projectId,
       name,
-      testCaseIds: JSON.stringify(testCaseIds),
+      stages: JSON.stringify(stages),
+      testCaseIds: JSON.stringify(allTcIds),
     },
   });
   res.status(201).json({ suite });
@@ -125,123 +133,112 @@ router.put('/:suiteId', (async (req, res) => {
   const projectId = req.project.id;
   const { suiteId } = req.params;
   const parsed = UpdateSuiteSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
   const existing = await prisma.suite.findFirst({ where: { id: suiteId, projectId } });
   if (!existing) return res.status(404).json({ error: 'Suite not found' });
 
   const data: Record<string, unknown> = {};
   if (parsed.data.name !== undefined) data.name = parsed.data.name;
-  if (parsed.data.testCaseIds !== undefined) data.testCaseIds = JSON.stringify(parsed.data.testCaseIds);
+  if (parsed.data.stages !== undefined) {
+    data.stages = JSON.stringify(parsed.data.stages);
+    // Keep flat testCaseIds in sync
+    const allTcIds = Array.from(new Set(parsed.data.stages.flatMap(s => s.tcIds)));
+    data.testCaseIds = JSON.stringify(allTcIds);
+  } else if (parsed.data.testCaseIds !== undefined) {
+    data.testCaseIds = JSON.stringify(parsed.data.testCaseIds);
+  }
 
   const suite = await prisma.suite.update({ where: { id: suiteId }, data });
   res.json({ suite });
 }) as RequestHandler);
 
 // ── POST /projects/:projectId/suites/:suiteId/run ─────────────────────────
-//
-// CI/CD entry point — trigger a full suite run without knowing individual TC IDs.
-//
-// Request body:
-//   { environment, parallelWorkers?, headless?, browser?, name? }
-//
-// Response 201:
-//   { run: { id, runSeq, name, status, triggerType, ... } }
-//
-// Poll status via:
-//   GET /api/projects/:projectId/runs/:runId
-//   → run.status: "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "CANCELLED"
-//
-// Example (GitHub Actions):
-//   RUN_ID=$(curl -sf -X POST $QA_URL/api/projects/$PROJECT_ID/suites/$SUITE_ID/run \
-//     -H "Authorization: Bearer $TOKEN" \
-//     -H "Content-Type: application/json" \
-//     -d '{"environment":"Staging","parallelWorkers":4}' | jq -r '.run.id')
 
 router.post('/:suiteId/run', (async (req, res) => {
   const projectId = req.project.id;
   const { suiteId } = req.params;
 
-  // 1. Validate request body
   const parsed = RunSuiteSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
-  }
-  const { environment, parallelWorkers, headless, browser, name } = parsed.data;
+  if (!parsed.success) return res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+  const { parallelWorkers, headless, browser, name } = parsed.data;
 
-  // 2. Load suite and decode its test case list
   const suite = await prisma.suite.findFirst({ where: { id: suiteId, projectId } });
   if (!suite) return res.status(404).json({ error: 'Suite not found' });
 
-  let testCaseIds: string[];
-  try {
-    testCaseIds = JSON.parse(suite.testCaseIds) as string[];
-  } catch {
-    return res.status(500).json({ error: 'Suite testCaseIds is corrupted — re-save the suite.' });
+  // Resolve environment
+  let environment = parsed.data.environment ?? '';
+  if (!environment) {
+    const defaultEnv = await prisma.envConfig.findFirst({
+      where: { projectId, isDefault: true },
+      select: { name: true },
+    }) ?? await prisma.envConfig.findFirst({ where: { projectId }, select: { name: true } });
+    environment = defaultEnv?.name ?? 'QA';
+  }
+
+  // Parse stages (fall back to flat testCaseIds for older suites)
+  let stages: SuiteStage[] = [];
+  try { stages = JSON.parse(suite.stages) as SuiteStage[]; } catch { /* noop */ }
+
+  let testCaseIds: string[] = [];
+  if (stages.length > 0) {
+    testCaseIds = Array.from(new Set(stages.flatMap(s => s.tcIds)));
+  } else {
+    try { testCaseIds = JSON.parse(suite.testCaseIds) as string[]; } catch { /* noop */ }
   }
 
   if (testCaseIds.length === 0) {
-    return res.status(400).json({ error: `Suite "${suite.name}" has no test cases. Add test cases to the suite first.` });
+    return res.status(400).json({ error: `Suite "${suite.name}" has no test cases.` });
   }
 
-  // 3. Resolve which TC IDs have automation scripts
-  const resolved = await resolveScriptPaths(projectId, testCaseIds);
-  const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
-  const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
+  // Resolve script paths
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } });
+  const slug = project?.slug ?? projectId;
 
-  if (resolved.length === 0) {
-    return res.status(400).json({
-      error: `None of the ${testCaseIds.length} test case(s) in suite "${suite.name}" have automation scripts. Generate scripts first.`,
-      skippedCount: skippedTcIds.length,
-    });
+  const scriptPairs: { testCaseId: string; scriptPath: string }[] = [];
+  for (const tcId of testCaseIds) {
+    const path = await resolveScriptPath(slug, projectId, tcId);
+    if (path) scriptPairs.push({ testCaseId: tcId, scriptPath: path });
   }
 
-  // 4. Build run record
+  if (scriptPairs.length === 0) {
+    return res.status(400).json({ error: `No scripts found for suite "${suite.name}". Generate scripts first.` });
+  }
+
+  const skippedTcIds = testCaseIds.filter(id => !scriptPairs.some(s => s.testCaseId === id));
   const envConfig = await getEnvConfig(projectId, environment);
-  const runSeq   = await nextRunSeq();
-  const runName  = name ?? `Suite: ${suite.name} — ${environment}`;
+  const runSeq = await nextRunSeq();
+  const runName = name ?? `Suite: ${suite.name}`;
 
   const run = await prisma.run.create({
-    data: {
-      projectId,
-      runSeq,
-      name: runName,
-      environment,
-      status:      'PENDING',
-      triggerType: 'SUITE',
-    },
+    data: { projectId, runSeq, name: runName, environment, status: 'PENDING', triggerType: 'SUITE' },
   });
 
-  // 5. Enqueue the job (same BullMQ pipeline as every other trigger type)
   await addRunJob({
-    runId:          run.id,
+    runId: run.id,
     runSeq,
     projectId,
-    testCaseIds:    resolved.map((r) => r.testCaseId),
-    scriptPaths:    resolved.map((r) => r.scriptPath),
+    testCaseIds: scriptPairs.map(r => r.testCaseId),
+    scriptPaths: scriptPairs.map(r => r.scriptPath),
     skippedTcIds,
     environment,
-    envBaseUrl:     envConfig.baseUrl,
-    envUsername:    envConfig.username,
-    envPassword:    envConfig.password,
+    envBaseUrl: envConfig.baseUrl,
+    envUsername: envConfig.username,
+    envPassword: envConfig.password,
     parallelWorkers,
     headless,
     browser,
-    triggerType:    'SUITE',
+    triggerType: 'SUITE',
   });
 
-  // 6. Return run record so the caller can poll status
   return res.status(201).json({
     run,
     meta: {
       totalTestCases: testCaseIds.length,
-      scriptedCount:  resolved.length,
-      skippedCount:   skippedTcIds.length,
-      ...(skippedTcIds.length > 0 && {
-        skippedTcIds,
-        warning: `${skippedTcIds.length} test case(s) skipped — no automation script found.`,
-      }),
+      scriptedCount: scriptPairs.length,
+      skippedCount: skippedTcIds.length,
+      stageCount: stages.length,
+      ...(skippedTcIds.length > 0 && { skippedTcIds }),
     },
   });
 }) as RequestHandler);

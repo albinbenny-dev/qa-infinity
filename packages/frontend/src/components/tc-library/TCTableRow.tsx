@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useChatSidebarStore } from '../../stores/chatSidebarStore';
 import type { TestCase } from '../../types';
 
 interface TCTableRowProps {
@@ -120,6 +121,7 @@ export default function TCTableRow({
   isExpanded = false,
   onExpand,
 }: TCTableRowProps) {
+  const { open: openChat } = useChatSidebarStore();
   const suiteTags = tc.tags.filter((t) => t.startsWith('suite:'));
   const regularTags = tc.tags.filter((t) => !t.startsWith('suite:'));
 
@@ -134,7 +136,7 @@ export default function TCTableRow({
         className={`tc-item${selected ? ' selected' : ''}`}
         style={{
           display: 'grid',
-          gridTemplateColumns: '28px 1fr 60px 110px 96px 52px',
+          gridTemplateColumns: '28px 1fr 60px 110px 96px 80px',
           gap: '8px',
           padding: '9px 14px',
           alignItems: 'center',
@@ -282,6 +284,43 @@ export default function TCTableRow({
               ▶
             </button>
           )}
+          <button
+            title={hasScript ? 'Fix script via AI chat' : 'Generate script via AI chat'}
+            onClick={(e) => {
+              e.stopPropagation();
+              const prompt = hasScript
+                ? `Fix the script for ${tc.tcId} — ${tc.title}`
+                : `Generate a script for ${tc.tcId} — ${tc.title}`;
+              openChat({ prompt, context: { tcId: tc.tcId, tcTitle: tc.title, page: 'tc-library' } });
+            }}
+            style={{
+              width: '24px',
+              height: '24px',
+              borderRadius: '4px',
+              background: 'transparent',
+              border: '1px solid transparent',
+              color: 'var(--text-dim)',
+              fontSize: '11px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(99,102,241,0.12)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(99,102,241,0.3)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--violet)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+            }}
+          >
+            💬
+          </button>
           <button
             title={isExpanded ? 'Collapse details' : 'Expand details'}
             onClick={(e) => { e.stopPropagation(); onExpand?.(isExpanded ? null : tc.id); }}

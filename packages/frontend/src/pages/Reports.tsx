@@ -260,10 +260,10 @@ export default function Reports() {
         </div>
 
         {/* ── 2-column main layout ──────────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(260px, 420px)', gap: 16, alignItems: 'start' }}>
 
           {/* LEFT column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
 
             {/* Chart card */}
             <div
@@ -422,7 +422,7 @@ export default function Reports() {
           </div>
 
           {/* RIGHT sidebar */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
 
             {/* Flaky tests */}
             <div

@@ -22,6 +22,7 @@ import {
 } from '../hooks/useResources';
 import { useScriptJobs } from '../hooks/useScriptJobs';
 import { useExecutionStore } from '../stores/executionStore';
+import { useChatSidebarStore } from '../stores/chatSidebarStore';
 import { api } from '../lib/api';
 import { getToken } from '../lib/auth';
 import type { Script, TestCase, ScriptJob, ScriptJobPhase } from '../types';
@@ -181,7 +182,7 @@ const TYPE_CHIP: Record<string, { bg: string; color: string }> = {
 };
 
 function TCScriptRow({
-  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, onToggle, onOpen, onToggleGolden,
+  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, onToggle, onOpen, onToggleGolden, onChat,
 }: {
   tc: TestCase;
   isScripted: boolean;
@@ -192,6 +193,7 @@ function TCScriptRow({
   onToggle: () => void;
   onOpen: () => void;
   onToggleGolden?: () => void;
+  onChat: () => void;
 }) {
   const chip = TYPE_CHIP[tc.type] ?? { bg: 'var(--surface3)', color: 'var(--text-dim)' };
   const needsReview = isScripted && verificationStatus === 'MANUAL_REVIEW';
@@ -305,6 +307,29 @@ function TCScriptRow({
       ) : (
         <div style={{ width: 20, flexShrink: 0 }} />
       )}
+
+      {/* Chat button — open AI agent with this TC pre-loaded */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onChat(); }}
+        title={isScripted ? 'Fix or discuss this script in chat' : 'Generate script via AI chat'}
+        style={{
+          width: 20, height: 20, borderRadius: 3,
+          background: 'transparent', border: '1px solid transparent',
+          color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          transition: 'all 0.15s',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(99,102,241,0.12)';
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(99,102,241,0.3)';
+          (e.currentTarget as HTMLButtonElement).style.color = 'var(--violet)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+          (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+        }}
+      >💬</button>
     </div>
   );
 }
@@ -1556,6 +1581,7 @@ export default function Scripts() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { canWrite } = useRBAC();
+  const { open: openChat } = useChatSidebarStore();
 
   const { data: project } = useProject(slug);
   const projectId = project?.id;
@@ -2941,6 +2967,12 @@ export default function Scripts() {
                                   onToggle={() => handleTCToggle(tc.id)}
                                   onOpen={() => handleOpenTCScript(tc.id)}
                                   onToggleGolden={linkedScript ? () => handleToggleGolden(linkedScript.id) : undefined}
+                                  onChat={() => {
+                                    const prompt = linkedScript
+                                      ? `Fix the script for ${tc.tcId} — ${tc.title}`
+                                      : `Generate a script for ${tc.tcId} — ${tc.title}`;
+                                    openChat({ prompt, context: { tcId: tc.tcId, tcTitle: tc.title, page: 'scripts' } });
+                                  }}
                                 />
                               );
                             })}
@@ -3124,6 +3156,34 @@ export default function Scripts() {
                     }}
                   >
                     ↺ Regenerate
+                  </button>
+                )}
+                {activeTab?.kind === 'script' && activeTc && (
+                  <button
+                    onClick={() => {
+                      const prompt = `Fix the script for ${activeTc.tcId} — ${activeTc.title}`;
+                      openChat({ prompt, context: { tcId: activeTc.tcId, tcTitle: activeTc.title, page: 'scripts' } });
+                    }}
+                    title="Open AI chat for this script"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '3px 11px', borderRadius: 5, cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: '1px solid rgba(99,102,241,0.35)',
+                      background: 'rgba(99,102,241,0.08)',
+                      color: 'var(--violet)',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(99,102,241,0.16)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(99,102,241,0.6)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(99,102,241,0.08)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(99,102,241,0.35)';
+                    }}
+                  >
+                    💬 Chat
                   </button>
                 )}
                 {activeScript && (

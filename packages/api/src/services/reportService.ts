@@ -309,13 +309,14 @@ export interface TopSuiteEntry {
   runCount: number;
   lastRunStatuses: string[];
   successRate: number;
+  testCaseIds: string[];
 }
 
 export async function getTopSuites(projectId: string): Promise<TopSuiteEntry[]> {
   const runs = await prisma.run.findMany({
     where: {
       projectId,
-      triggerType: 'SUITE',
+      triggerType: { in: ['SUITE', 'SCHEDULED'] },
       status: { in: ['PASSED', 'FAILED', 'CANCELLED'] },
     },
     orderBy: { createdAt: 'desc' },
@@ -334,17 +335,37 @@ export async function getTopSuites(projectId: string): Promise<TopSuiteEntry[]> 
     }
   }
 
-  return [...byName.entries()]
+  const top5 = [...byName.entries()]
     .sort((a, b) => b[1].count - a[1].count)
-    .slice(0, 5)
-    .map(([name, { statuses, count }]) => {
-      const terminal = statuses.filter((s) => s === 'PASSED' || s === 'FAILED');
-      const successRate =
-        terminal.length > 0
-          ? Math.round((terminal.filter((s) => s === 'PASSED').length / terminal.length) * 100)
-          : 0;
-      return { name, runCount: count, lastRunStatuses: statuses, successRate };
-    });
+    .slice(0, 5);
+
+  // Fetch TC IDs for each suite tag in one query
+  const suiteNames = top5.map(([name]) => name);
+  const tcsWithTags = await prisma.testCase.findMany({
+    where: { projectId, tags: { hasSome: suiteNames.map((n) => `suite:${n}`) } },
+    select: { id: true, tags: true },
+  });
+
+  // Build a map: suiteName → testCaseIds
+  const suiteToIds = new Map<string, string[]>();
+  for (const tc of tcsWithTags) {
+    for (const tag of tc.tags) {
+      if (tag.startsWith('suite:')) {
+        const suiteName = tag.slice(6);
+        if (!suiteToIds.has(suiteName)) suiteToIds.set(suiteName, []);
+        suiteToIds.get(suiteName)!.push(tc.id);
+      }
+    }
+  }
+
+  return top5.map(([name, { statuses, count }]) => {
+    const terminal = statuses.filter((s) => s === 'PASSED' || s === 'FAILED');
+    const successRate =
+      terminal.length > 0
+        ? Math.round((terminal.filter((s) => s === 'PASSED').length / terminal.length) * 100)
+        : 0;
+    return { name, runCount: count, lastRunStatuses: statuses, successRate, testCaseIds: suiteToIds.get(name) ?? [] };
+  });
 }
 
 // ── getProjectTokenUsage ───────────────────────────────────────────────────

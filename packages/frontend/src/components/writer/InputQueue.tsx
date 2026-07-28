@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import type { EnvConfig } from '../../types';
 import { api } from '../../lib/api';
 
@@ -12,6 +12,8 @@ interface JiraStory {
 interface RefTC {
   id: string;
   label: string;
+  isGroup?: boolean;
+  tcIds?: string[];
 }
 
 export interface UIScreenEntry {
@@ -22,6 +24,7 @@ export interface UIScreenEntry {
   password?: string;
   menuContext?: string;
   agenticTrace?: boolean;
+  imageBase64?: string;
 }
 
 interface UploadedDoc {
@@ -47,6 +50,19 @@ export interface SeedTC {
   notes?: string;
 }
 
+export interface ApiInput {
+  tempId: string;
+  subType: 'openapi' | 'postman' | 'curl' | 'doc';
+  label: string;
+  // file-based
+  filePath?: string;
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+  // curl text
+  curlText?: string;
+}
+
 export interface InputQueueState {
   jiraStories: JiraStory[];
   jiraInput: string;
@@ -58,6 +74,8 @@ export interface InputQueueState {
   uiScreenUrls: UIScreenEntry[];
   additionalContext: string;
   testTypes: { UI: boolean; API: boolean; SIT: boolean };
+  apiInputs: ApiInput[];
+  apiSeedTCs: SeedTC[];
 }
 
 interface InputQueueProps {
@@ -78,7 +96,7 @@ interface InputQueueProps {
 }
 
 // ── Tab types ─────────────────────────────────────────────────
-type InputTab = 'screen' | 'ref' | 'docs' | 'jira';
+type InputTab = 'screen' | 'ref' | 'docs' | 'jira' | 'api';
 
 // ── Style helpers ─────────────────────────────────────────────
 const AMBER = '#f59e0b';
@@ -116,19 +134,28 @@ const TAB_COLOR: Record<InputTab, string> = {
   ref:    'var(--violet)',
   docs:   'var(--cyan)',
   jira:   'var(--sky)',
+  api:    'var(--amber)',
 };
 const TAB_DIM: Record<InputTab, string> = {
   screen: 'var(--emerald-dim)',
   ref:    'var(--violet-dim)',
   docs:   'var(--cyan-dim)',
   jira:   'var(--cyan-dim)',
+  api:    AMBER_BG,
 };
 
-// ── Tab button ────────────────────────────────────────────────
+// ── Tab button (icon + label, equal-width columns) ────────────
+const TAB_META: Record<InputTab, { icon: string; short: string }> = {
+  screen: { icon: '🖥',  short: 'Screen' },
+  ref:    { icon: '📋', short: 'Ref TCs' },
+  docs:   { icon: '📄', short: 'Docs'    },
+  jira:   { icon: '🎫', short: 'Jira'    },
+  api:    { icon: '⚡', short: 'API'     },
+};
+
 function TabBtn({
-  label, tab, active, count, onClick,
+  tab, active, count, onClick,
 }: {
-  label: string;
   tab: InputTab;
   active: boolean;
   count: number;
@@ -136,38 +163,54 @@ function TabBtn({
 }) {
   const color = TAB_COLOR[tab];
   const dim   = TAB_DIM[tab];
+  const meta  = TAB_META[tab];
   return (
     <button
       onClick={onClick}
+      title={meta.short}
       style={{
+        flex: 1,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: '4px',
-        padding: '5px 10px 7px',
+        gap: '2px',
+        padding: '6px 2px 5px',
         border: 'none',
-        borderBottom: active ? `2px solid ${color}` : '2px solid transparent',
-        background: 'transparent',
-        color: active ? color : 'var(--text-dim)',
-        fontSize: '10px',
-        fontFamily: 'var(--font-mono)',
-        fontWeight: active ? 700 : 400,
+        borderRadius: '6px',
+        background: active ? dim : 'transparent',
         cursor: 'pointer',
-        transition: 'all 0.15s',
-        whiteSpace: 'nowrap',
-        marginBottom: '-2px',
+        transition: 'background 0.12s',
+        position: 'relative',
+        minWidth: 0,
       }}
     >
-      {label}
+      <span style={{ fontSize: '14px', lineHeight: 1 }}>{meta.icon}</span>
+      <span style={{
+        fontSize: '9px',
+        fontFamily: 'var(--font-mono)',
+        fontWeight: active ? 700 : 400,
+        color: active ? color : 'var(--text-dim)',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        maxWidth: '100%',
+      }}>
+        {meta.short}
+      </span>
       {count > 0 && (
         <span style={{
-          fontSize: '8px',
+          position: 'absolute',
+          top: '3px',
+          right: '4px',
+          fontSize: '7px',
           fontWeight: 700,
-          minWidth: '14px',
-          padding: '0 3px',
+          minWidth: '12px',
+          padding: '0 2px',
           borderRadius: '6px',
           textAlign: 'center',
-          background: active ? dim : 'var(--surface3)',
-          color: active ? color : 'var(--text-dim)',
+          background: active ? color : 'var(--text-dim)',
+          color: 'var(--bg)',
+          lineHeight: '12px',
         }}>
           {count}
         </span>
@@ -194,6 +237,8 @@ export default function InputQueue({
 }: InputQueueProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const seedFileRef  = useRef<HTMLInputElement>(null);
+  const apiFileInputRef     = useRef<HTMLInputElement>(null);
+  const apiSeedFileInputRef = useRef<HTMLInputElement>(null);
 
   // Live UI Screen form state
   const [uiEnvId,      setUiEnvId]      = useState('');
@@ -202,6 +247,7 @@ export default function InputQueue({
   const [uiPassword,   setUiPassword]   = useState('');
   const [uiMenuContext, setUiMenuContext] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [pasteHint, setPasteHint] = useState(false);
 
   // Seed TC form state
   const [seedInputMode,  setSeedInputMode]  = useState<'manual' | 'excel'>('manual');
@@ -210,6 +256,17 @@ export default function InputQueue({
   const [seedExpected,   setSeedExpected]   = useState('');
   const [isParsing,      setIsParsing]      = useState(false);
   const [seedParseError, setSeedParseError] = useState<string | null>(null);
+
+  // API tab state
+  const [curlText,          setCurlText]         = useState('');
+  const [isParsingApiSeed,  setIsParsingApiSeed]  = useState(false);
+  const [apiSeedParseError, setApiSeedParseError] = useState<string | null>(null);
+
+  // Style Ref search
+  const [refSearchResults, setRefSearchResults] = useState<{ id: string; tcId: string; title: string; useCaseTag?: string }[]>([]);
+  const [refSearchOpen,    setRefSearchOpen]    = useState(false);
+  const [useCases,         setUseCases]         = useState<string[]>([]);
+  const [isAddingGroup,    setIsAddingGroup]    = useState(false);
 
   // Active tab — default to 'screen' (or 'ref' in standard mode)
   const [activeTab, setActiveTab] = useState<InputTab>(isStandardMode ? 'ref' : 'screen');
@@ -231,8 +288,13 @@ export default function InputQueue({
 
   const selectedEnv = envConfigs.find((e) => e.id === uiEnvId);
 
+  const [uploadError,   setUploadError]   = useState<string | null>(null);
+  const [isUploading,   setIsUploading]   = useState(false);
+
   const handleFileDrop = async (files: FileList | null) => {
     if (!files?.length) return;
+    setUploadError(null);
+    setIsUploading(true);
     for (const file of Array.from(files)) {
       try {
         const result = await onUploadFile(file);
@@ -243,8 +305,14 @@ export default function InputQueue({
             { tempId, filename: result.filename, filePath: result.filePath, mimeType: result.mimeType, size: result.size },
           ],
         });
-      } catch { /* silently skip */ }
+      } catch (err: unknown) {
+        const msg = (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
+          ?? (err as { message?: string })?.message
+          ?? 'Upload failed';
+        setUploadError(msg);
+      }
     }
+    setIsUploading(false);
   };
 
   const addJiraStory = () => {
@@ -366,11 +434,121 @@ export default function InputQueue({
   const canAddScreen = uiEnvId === '__custom__' ? uiCustomUrl.trim().length > 0 : uiEnvId !== '';
   const hasSeedMode  = state.refMode === 'seed';
 
+  // Auto-set test types when API tab becomes active
+  useEffect(() => {
+    if (activeTab === 'api') {
+      onChange({ testTypes: { UI: false, API: true, SIT: true } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Load use-case list for feature picker on Ref tab
+  useEffect(() => {
+    if (!projectId || useCases.length > 0) return;
+    api.get<{ useCases: string[] }>(`/projects/${projectId}/test-cases/use-cases`)
+      .then(r => setUseCases(r.data.useCases ?? []))
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  // Paste screenshot handler — active only on the Screen tab
+  useEffect(() => {
+    if (activeTab !== 'screen') return;
+    const handler = (e: ClipboardEvent) => {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const img = items.find(i => i.type.startsWith('image/'));
+      if (!img) return;
+      const blob = img.getAsFile();
+      if (!blob) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.split(',')[1];
+        const newScreen: UIScreenEntry = {
+          url: state.uiScreenUrls[0]?.url ?? '(pasted screenshot)',
+          label: 'Pasted screenshot',
+          envName: state.uiScreenUrls[0]?.envName ?? '',
+          username: state.uiScreenUrls[0]?.username ?? '',
+          password: state.uiScreenUrls[0]?.password ?? '',
+          menuContext: 'Pasted screenshot',
+          imageBase64: base64,
+        };
+        onChange({ uiScreenUrls: [...state.uiScreenUrls, newScreen] });
+        setPasteHint(false);
+      };
+      reader.readAsDataURL(blob);
+      e.preventDefault();
+    };
+    window.addEventListener('paste', handler);
+    return () => window.removeEventListener('paste', handler);
+  }, [activeTab, state.uiScreenUrls, onChange]);
+
+  // ── API tab handlers ────────────────────────────────────────
+
+  const handleApiFileDrop = async (files: FileList | null, forceSubType?: 'openapi' | 'postman' | 'doc') => {
+    if (!files?.length) return;
+    for (const file of Array.from(files)) {
+      try {
+        const result = await onUploadFile(file);
+        const lower = file.name.toLowerCase();
+        let subType: ApiInput['subType'] = forceSubType ?? 'doc';
+        if (!forceSubType) {
+          if (lower.endsWith('.yaml') || lower.endsWith('.yml')) subType = 'openapi';
+          else if (lower.endsWith('.json')) {
+            subType = lower.includes('postman') || lower.includes('collection') ? 'postman' : 'openapi';
+          }
+        }
+        const label = subType === 'openapi' ? `OpenAPI: ${result.filename}`
+          : subType === 'postman' ? `Postman: ${result.filename}`
+          : result.filename;
+        const inp: ApiInput = {
+          tempId: `api-${Date.now()}-${Math.random()}`,
+          subType, label,
+          filePath: result.filePath, filename: result.filename,
+          mimeType: result.mimeType, size: result.size,
+        };
+        onChange({ apiInputs: [...state.apiInputs, inp] });
+      } catch { /* skip */ }
+    }
+  };
+
+  const handleApiCurlAdd = () => {
+    const text = curlText.trim();
+    if (!text) return;
+    const inp: ApiInput = { tempId: `curl-${Date.now()}`, subType: 'curl', label: 'cURL Commands', curlText: text };
+    onChange({ apiInputs: [...state.apiInputs, inp] });
+    setCurlText('');
+  };
+
+  const handleApiSeedExcel = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setIsParsingApiSeed(true);
+    setApiSeedParseError(null);
+    try {
+      const result = await onUploadFile(files[0]);
+      const parsed = await onParseSeedFile(result.filePath);
+      if (!parsed.length) { setApiSeedParseError('No test cases found in file'); return; }
+      const newSeeds: SeedTC[] = parsed.map((tc, i) => ({
+        ...tc,
+        type: 'API' as const,
+        tempId: `api-seed-${Date.now()}-${i}`,
+        source: 'excel' as const,
+      }));
+      onChange({ apiSeedTCs: [...state.apiSeedTCs, ...newSeeds] });
+      if (apiSeedFileInputRef.current) apiSeedFileInputRef.current.value = '';
+    } catch {
+      setApiSeedParseError('Upload failed. Check the file format and try again.');
+    } finally {
+      setIsParsingApiSeed(false);
+    }
+  };
+
   // Tab badge counts
   const screenCount = state.uiScreenUrls.length;
   const refCount    = state.refTCs.length + state.seedTCs.length;
   const docsCount   = state.uploadedDocs.length;
   const jiraCount   = state.jiraStories.length;
+  const apiCount    = state.apiInputs.length + state.apiSeedTCs.length;
 
   // ── Render ────────────────────────────────────────────────
   return (
@@ -401,16 +579,26 @@ export default function InputQueue({
       {!isStandardMode && (
         <div style={{
           display: 'flex',
-          padding: '0 14px',
+          padding: '6px 10px',
           gap: '2px',
-          borderBottom: '2px solid var(--border)',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
           background: 'var(--surface)',
         }}>
-          <TabBtn label="🖥 Live Screen" tab="screen" active={activeTab === 'screen'} count={screenCount} onClick={() => setActiveTab('screen')} />
-          <TabBtn label="📋 Ref TCs"    tab="ref"    active={activeTab === 'ref'}    count={refCount}    onClick={() => setActiveTab('ref')} />
-          <TabBtn label="📄 Docs"       tab="docs"   active={activeTab === 'docs'}   count={docsCount}   onClick={() => setActiveTab('docs')} />
-          <TabBtn label="🎫 Jira"       tab="jira"   active={activeTab === 'jira'}   count={jiraCount}   onClick={() => setActiveTab('jira')} />
+          <div style={{
+            display: 'flex',
+            flex: 1,
+            gap: '2px',
+            background: 'var(--surface2)',
+            borderRadius: '8px',
+            padding: '2px',
+          }}>
+            <TabBtn tab="screen" active={activeTab === 'screen'} count={screenCount} onClick={() => setActiveTab('screen')} />
+            <TabBtn tab="ref"    active={activeTab === 'ref'}    count={refCount}    onClick={() => setActiveTab('ref')} />
+            <TabBtn tab="docs"   active={activeTab === 'docs'}   count={docsCount}   onClick={() => setActiveTab('docs')} />
+            <TabBtn tab="jira"   active={activeTab === 'jira'}   count={jiraCount}   onClick={() => setActiveTab('jira')} />
+            <TabBtn tab="api"    active={activeTab === 'api'}    count={apiCount}    onClick={() => setActiveTab('api')} />
+          </div>
         </div>
       )}
 
@@ -441,6 +629,13 @@ export default function InputQueue({
                   {entry.agenticTrace ? '🤖' : '🖥'}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  {entry.imageBase64 && (
+                    <img
+                      src={`data:image/png;base64,${entry.imageBase64}`}
+                      alt="screenshot"
+                      style={{ width: 40, height: 28, objectFit: 'cover', borderRadius: 3, border: '1px solid var(--border)', flexShrink: 0, marginBottom: 3 }}
+                    />
+                  )}
                   <div
                     title={entry.url}
                     style={{
@@ -452,11 +647,17 @@ export default function InputQueue({
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }}
                   >
-                    {entry.envName && (
-                      <><span style={{ color: 'var(--emerald)', fontWeight: 700 }}>{entry.envName}</span>
-                      <span style={{ color: 'var(--text-dim)' }}> · </span></>
+                    {entry.imageBase64 ? (
+                      <span>📎 {entry.menuContext ?? 'Screenshot'}</span>
+                    ) : (
+                      <>
+                        {entry.envName && (
+                          <><span style={{ color: 'var(--emerald)', fontWeight: 700 }}>{entry.envName}</span>
+                          <span style={{ color: 'var(--text-dim)' }}> · </span></>
+                        )}
+                        {entry.url}
+                      </>
                     )}
-                    {entry.url}
                   </div>
                   {entry.menuContext && (
                     <div style={{ marginTop: '3px', fontFamily: 'var(--font-mono)', fontSize: '9px', color: AMBER, display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -606,6 +807,74 @@ export default function InputQueue({
                 + Add Screen
               </button>
             </div>
+
+            {/* Screenshot paste/upload zone */}
+            <div style={{ marginTop: 8 }}>
+              <div
+                style={{
+                  border: '1px dashed var(--border)',
+                  borderRadius: 7,
+                  padding: '10px 12px',
+                  textAlign: 'center',
+                  fontSize: 11,
+                  color: 'var(--text-dim)',
+                  background: 'var(--bg)',
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  const inp = document.createElement('input');
+                  inp.type = 'file';
+                  inp.accept = 'image/png,image/jpeg,image/jpg';
+                  inp.multiple = true;
+                  inp.onchange = (e) => {
+                    const files = Array.from((e.target as HTMLInputElement).files ?? []);
+                    files.forEach(file => {
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const dataUrl = reader.result as string;
+                        const base64 = dataUrl.split(',')[1];
+                        const newScreen: UIScreenEntry = {
+                          url: state.uiScreenUrls[0]?.url ?? '(uploaded screenshot)',
+                          label: file.name.replace(/\.[^.]+$/, ''),
+                          envName: state.uiScreenUrls[0]?.envName ?? '',
+                          username: state.uiScreenUrls[0]?.username ?? '',
+                          password: state.uiScreenUrls[0]?.password ?? '',
+                          menuContext: file.name.replace(/\.[^.]+$/, ''),
+                          imageBase64: base64,
+                        };
+                        onChange({ uiScreenUrls: [...state.uiScreenUrls, newScreen] });
+                      };
+                      reader.readAsDataURL(file);
+                    });
+                  };
+                  inp.click();
+                }}
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => {
+                  e.preventDefault();
+                  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+                  files.forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const dataUrl = reader.result as string;
+                      const base64 = dataUrl.split(',')[1];
+                      onChange({ uiScreenUrls: [...state.uiScreenUrls, {
+                        url: state.uiScreenUrls[0]?.url ?? '(dropped screenshot)',
+                        label: file.name.replace(/\.[^.]+$/, ''),
+                        envName: state.uiScreenUrls[0]?.envName ?? '',
+                        username: '',
+                        password: '',
+                        menuContext: file.name.replace(/\.[^.]+$/, ''),
+                        imageBase64: base64,
+                      }]});
+                    };
+                    reader.readAsDataURL(file);
+                  });
+                }}
+              >
+                📎 Paste (Ctrl+V) or click to upload screenshot — skip live capture
+              </div>
+            </div>
           </>
         )}
 
@@ -646,32 +915,139 @@ export default function InputQueue({
             {!hasSeedMode && !isStandardMode && (
               <>
                 <p style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                  Add TC IDs as style/format reference — the agent mimics their step pattern and phrasing.
+                  Search by title, TC-ID, or feature name — agent mimics step patterns and avoids duplication.
                 </p>
                 {state.refTCs.map((ref, i) => (
                   <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    <div style={{ flex: 1, padding: '6px 10px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--violet)' }}>
-                      {ref.label}
-                    </div>
+                    {ref.isGroup ? (
+                      <div style={{ flex: 1, padding: '6px 10px', background: 'var(--cyan-dim)', border: '1px solid rgba(6,182,212,0.3)', borderRadius: 'var(--radius)', fontSize: '11px', color: 'var(--cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>📁</span>
+                        <span style={{ fontWeight: 600 }}>{ref.label}</span>
+                        {ref.tcIds && <span style={{ fontSize: '9px', opacity: 0.7, fontFamily: 'var(--font-mono)' }}>({ref.tcIds.length} TCs)</span>}
+                      </div>
+                    ) : (
+                      <div style={{ flex: 1, padding: '6px 10px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--violet)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {ref.label}
+                      </div>
+                    )}
                     <div
                       style={iconBtn('var(--rose)', 'var(--rose-dim)', 'rgba(220,38,38,0.2)')}
                       onClick={() => onChange({ refTCs: state.refTCs.filter((_, idx) => idx !== i) })}
                     >✕</div>
                   </div>
                 ))}
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <input
-                    className="input-field"
-                    style={{ flex: 1, fontSize: '11px', padding: '7px 10px', borderStyle: 'dashed' }}
-                    placeholder="Search or paste test case IDs..."
-                    value={state.refTCInput}
-                    onChange={(e) => onChange({ refTCInput: e.target.value })}
-                    onKeyDown={(e) => { if (e.key === 'Enter') addRefTC(); }}
-                  />
-                  <div
-                    style={{ width: '28px', height: '28px', borderRadius: '5px', background: 'transparent', border: '1px dashed var(--border2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', color: 'var(--text-dim)', cursor: 'pointer', flexShrink: 0 }}
-                    onClick={addRefTC}
-                  >+</div>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <input
+                      className="input-field"
+                      style={{ flex: 1, fontSize: '11px', padding: '7px 10px', borderStyle: 'dashed' }}
+                      placeholder="Search TC, title, or feature name…"
+                      value={state.refTCInput}
+                      autoComplete="off"
+                      onChange={(e) => {
+                        const q = e.target.value;
+                        onChange({ refTCInput: q });
+                        if (!projectId || q.trim().length < 1) { setRefSearchResults([]); setRefSearchOpen(false); return; }
+                        api.get<{ testCases: { id: string; tcId: string; title: string; useCaseTag?: string }[] }>(
+                          `/projects/${projectId}/test-cases/search?q=${encodeURIComponent(q.trim())}`
+                        ).then(r => { setRefSearchResults(r.data.testCases ?? []); setRefSearchOpen(true); }).catch(() => {});
+                        setRefSearchOpen(true);
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { addRefTC(); setRefSearchOpen(false); } if (e.key === 'Escape') setRefSearchOpen(false); }}
+                      onFocus={() => { if (refSearchResults.length > 0 || state.refTCInput.trim().length > 0) setRefSearchOpen(true); }}
+                      onBlur={() => setTimeout(() => setRefSearchOpen(false), 200)}
+                    />
+                    <div
+                      style={{ width: '28px', height: '28px', borderRadius: '5px', background: 'transparent', border: '1px dashed var(--border2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', color: 'var(--text-dim)', cursor: 'pointer', flexShrink: 0 }}
+                      onClick={() => { addRefTC(); setRefSearchOpen(false); }}
+                    >+</div>
+                  </div>
+                  {refSearchOpen && (() => {
+                    const q = state.refTCInput.trim().toLowerCase();
+                    const matchingFeatures = q.length >= 1
+                      ? useCases.filter(uc => uc.toLowerCase().includes(q) && !state.refTCs.some(r => r.isGroup && r.id === `group:${uc}`))
+                      : [];
+                    const hasContent = matchingFeatures.length > 0 || refSearchResults.length > 0;
+                    if (!hasContent) return null;
+                    return (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, marginTop: 2, maxHeight: 220, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+                        {/* Feature groups section */}
+                        {matchingFeatures.length > 0 && (
+                          <>
+                            <div style={{ padding: '4px 10px', fontSize: '9px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' }}>
+                              Features
+                            </div>
+                            {matchingFeatures.map(uc => (
+                              <div
+                                key={`uc-${uc}`}
+                                onMouseDown={async (e) => {
+                                  e.preventDefault();
+                                  setRefSearchOpen(false);
+                                  onChange({ refTCInput: '' });
+                                  setIsAddingGroup(true);
+                                  try {
+                                    const res = await api.get<{ testCases: { id: string; tcId: string }[] }>(
+                                      `/projects/${projectId}/test-cases?useCaseTag=${encodeURIComponent(uc)}&limit=100`
+                                    );
+                                    const tcs = res.data.testCases ?? [];
+                                    const tcIds = tcs.map(tc => tc.tcId);
+                                    onChange({
+                                      refTCs: [...state.refTCs, { id: `group:${uc}`, label: uc, isGroup: true, tcIds }],
+                                    });
+                                  } catch { /* silent */ } finally {
+                                    setIsAddingGroup(false);
+                                  }
+                                }}
+                                style={{ padding: '7px 10px', cursor: 'pointer', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'var(--cyan-dim)')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                              >
+                                <span style={{ fontSize: '13px', flexShrink: 0 }}>📁</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{uc}</div>
+                                  <div style={{ fontSize: '9px', color: 'var(--text-dim)', marginTop: 1 }}>Add all TCs as style reference</div>
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                        {/* Individual TC results */}
+                        {refSearchResults.length > 0 && (
+                          <>
+                            {matchingFeatures.length > 0 && (
+                              <div style={{ padding: '4px 10px', fontSize: '9px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' }}>
+                                Test Cases
+                              </div>
+                            )}
+                            {refSearchResults.map(tc => (
+                              <div
+                                key={tc.id}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  if (state.refTCs.some(r => r.id === tc.tcId)) return;
+                                  onChange({ refTCs: [...state.refTCs, { id: tc.tcId, label: `${tc.tcId} — ${tc.title}` }], refTCInput: '' });
+                                  setRefSearchResults([]);
+                                  setRefSearchOpen(false);
+                                }}
+                                style={{ padding: '7px 10px', cursor: 'pointer', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-start' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface2)')}
+                                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                              >
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--violet)', flexShrink: 0, paddingTop: 1 }}>{tc.tcId}</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: '11px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tc.title}</div>
+                                  {tc.useCaseTag && <div style={{ fontSize: '9px', color: 'var(--text-dim)', marginTop: 1 }}>{tc.useCaseTag}</div>}
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {isAddingGroup && (
+                    <div style={{ fontSize: '9px', color: 'var(--cyan)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>Loading feature TCs…</div>
+                  )}
                 </div>
               </>
             )}
@@ -860,7 +1236,7 @@ export default function InputQueue({
                 <span style={{ fontSize: '13px' }}>📄</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.filename}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-dim)' }}>{(doc.size / 1024 / 1024).toFixed(1)} MB</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-dim)' }}>{doc.size < 1024 * 1024 ? `${Math.round(doc.size / 1024)} KB` : `${(doc.size / 1024 / 1024).toFixed(1)} MB`}</div>
                 </div>
                 <div
                   style={{ color: 'var(--rose)', cursor: 'pointer', fontSize: '11px', padding: '2px 4px' }}
@@ -870,19 +1246,27 @@ export default function InputQueue({
             ))}
 
             <div
-              style={{ border: '1.5px dashed var(--border2)', borderRadius: 'var(--radius)', padding: '18px', textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s', background: 'transparent' }}
-              onDragOver={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).style.borderColor = 'var(--cyan)'; (e.currentTarget as HTMLElement).style.background = 'var(--cyan-dim)'; }}
-              onDragLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border2)'; (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-              onDrop={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).style.borderColor = 'var(--border2)'; (e.currentTarget as HTMLElement).style.background = 'transparent'; handleFileDrop(e.dataTransfer.files); }}
-              onClick={() => fileInputRef.current?.click()}
+              style={{ border: `1.5px dashed ${isUploading ? 'var(--cyan)' : 'var(--border2)'}`, borderRadius: 'var(--radius)', padding: '18px', textAlign: 'center', cursor: isUploading ? 'wait' : 'pointer', transition: 'all 0.2s', background: isUploading ? 'var(--cyan-dim)' : 'transparent' }}
+              onDragOver={(e) => { e.preventDefault(); if (!isUploading) { (e.currentTarget as HTMLElement).style.borderColor = 'var(--cyan)'; (e.currentTarget as HTMLElement).style.background = 'var(--cyan-dim)'; } }}
+              onDragLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = isUploading ? 'var(--cyan)' : 'var(--border2)'; (e.currentTarget as HTMLElement).style.background = isUploading ? 'var(--cyan-dim)' : 'transparent'; }}
+              onDrop={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).style.borderColor = 'var(--border2)'; (e.currentTarget as HTMLElement).style.background = 'transparent'; if (!isUploading) handleFileDrop(e.dataTransfer.files); }}
+              onClick={() => { if (!isUploading) fileInputRef.current?.click(); }}
             >
-              <div style={{ fontSize: '22px', marginBottom: '6px' }}>📁</div>
+              <div style={{ fontSize: '22px', marginBottom: '6px' }}>{isUploading ? '⏳' : '📁'}</div>
               <div style={{ fontSize: '12px', color: 'var(--text-mid)', lineHeight: 1.5 }}>
-                Drop <strong>PDF / Word / Excel / HLD</strong> or click<br />
+                {isUploading ? 'Uploading…' : <><strong>Drop PDF / Word / Excel / HLD</strong> or click</>}<br />
                 <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>Multiple files supported</span>
               </div>
-              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.docx,.doc,.txt,.md" style={{ display: 'none' }} onChange={(e) => handleFileDrop(e.target.files)} />
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.docx,.doc,.txt,.md"
+                style={{ opacity: 0, position: 'absolute', width: 0, height: 0 }}
+                onChange={(e) => { handleFileDrop(e.target.files); e.target.value = ''; }}
+              />
             </div>
+            {uploadError && (
+              <div style={{ fontSize: '10px', color: 'var(--fail)', marginTop: 4, padding: '4px 8px', background: 'rgba(220,38,38,0.08)', borderRadius: 4 }}>
+                {uploadError}
+              </div>
+            )}
           </>
         )}
 
@@ -930,6 +1314,146 @@ export default function InputQueue({
               >+</div>
             </div>
           </>
+        )}
+
+        {/* ════════════════════════════
+            API PANEL
+        ═══════════════════════════ */}
+        {activeTab === 'api' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+            {/* OpenAPI / Swagger */}
+            <div>
+              <span style={FL}>OpenAPI / Swagger Spec</span>
+              <div
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); void handleApiFileDrop(e.dataTransfer.files, 'openapi'); }}
+                onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.json,.yaml,.yml'; i.multiple = true; i.onchange = (e) => void handleApiFileDrop((e.target as HTMLInputElement).files, 'openapi'); i.click(); }}
+                style={{
+                  border: '1px dashed var(--border)', borderRadius: 7, padding: '10px 12px',
+                  cursor: 'pointer', textAlign: 'center', fontSize: 11, color: 'var(--text-dim)',
+                  background: 'var(--bg)',
+                }}
+              >
+                Drop .json / .yaml / .yml or click to upload
+              </div>
+            </div>
+
+            {/* Postman Collection */}
+            <div>
+              <span style={FL}>Postman Collection</span>
+              <div
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); void handleApiFileDrop(e.dataTransfer.files, 'postman'); }}
+                onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.json'; i.multiple = true; i.onchange = (e) => void handleApiFileDrop((e.target as HTMLInputElement).files, 'postman'); i.click(); }}
+                style={{
+                  border: '1px dashed var(--border)', borderRadius: 7, padding: '10px 12px',
+                  cursor: 'pointer', textAlign: 'center', fontSize: 11, color: 'var(--text-dim)',
+                  background: 'var(--bg)',
+                }}
+              >
+                Drop Postman collection .json or click to upload
+              </div>
+            </div>
+
+            {/* cURL Commands */}
+            <div>
+              <span style={FL}>cURL Commands</span>
+              <textarea
+                value={curlText}
+                onChange={e => setCurlText(e.target.value)}
+                placeholder={"curl -X POST https://api.example.com/v1/resource \\\n  -H 'Authorization: Bearer TOKEN' \\\n  -d '{\"field\": \"value\"}'\n\n# Paste multiple cURL commands — one per block"}
+                rows={5}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '8px 10px',
+                  background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7,
+                  color: 'var(--text)', fontSize: 11, fontFamily: 'var(--font-mono)',
+                  resize: 'vertical', outline: 'none',
+                }}
+              />
+              <button
+                type="button"
+                disabled={!curlText.trim()}
+                onClick={handleApiCurlAdd}
+                style={{
+                  marginTop: 5, padding: '5px 14px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                  background: curlText.trim() ? AMBER_BG : 'var(--bg)',
+                  border: `1px solid ${curlText.trim() ? AMBER_BORDER : 'var(--border)'}`,
+                  color: curlText.trim() ? AMBER : 'var(--text-dim)',
+                  cursor: curlText.trim() ? 'pointer' : 'not-allowed',
+                }}
+              >
+                + Add cURL
+              </button>
+            </div>
+
+            {/* Generic Docs */}
+            <div>
+              <span style={FL}>Supporting Docs (BRD, specs, test data)</span>
+              <div
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); void handleApiFileDrop(e.dataTransfer.files, 'doc'); }}
+                onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.pdf,.docx,.doc,.txt,.md,.xlsx,.xls'; i.multiple = true; i.onchange = (e) => void handleApiFileDrop((e.target as HTMLInputElement).files, 'doc'); i.click(); }}
+                style={{
+                  border: '1px dashed var(--border)', borderRadius: 7, padding: '10px 12px',
+                  cursor: 'pointer', textAlign: 'center', fontSize: 11, color: 'var(--text-dim)',
+                  background: 'var(--bg)',
+                }}
+              >
+                Drop PDF, Word, Excel, TXT, MD or click — multiple files supported
+              </div>
+            </div>
+
+            {/* Seed TCs */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={FL}>Seed TCs (Excel)</span>
+                <button type="button" onClick={handleDownloadTemplate} style={{ fontSize: 9, color: 'var(--text-dim)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Download template</button>
+              </div>
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                border: '1px dashed var(--border)', borderRadius: 7, cursor: 'pointer',
+                background: 'var(--bg)', fontSize: 11, color: 'var(--text-dim)',
+              }}>
+                <input ref={apiSeedFileInputRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+                  onChange={e => void handleApiSeedExcel(e.target.files)} disabled={isParsingApiSeed} />
+                {isParsingApiSeed ? '⏳ Parsing…' : '📎 Upload seed TC Excel (auto-typed as API)'}
+              </label>
+              {apiSeedParseError && <div style={{ fontSize: 10, color: 'var(--fail)', marginTop: 4 }}>{apiSeedParseError}</div>}
+            </div>
+
+            {/* Loaded API inputs list */}
+            {(state.apiInputs.length > 0 || state.apiSeedTCs.length > 0) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={FL}>Loaded ({state.apiInputs.length + state.apiSeedTCs.length})</span>
+                {state.apiInputs.map(inp => (
+                  <div key={inp.tempId} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
+                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
+                  }}>
+                    <span style={{ fontSize: 10 }}>
+                      {inp.subType === 'openapi' ? '📄' : inp.subType === 'postman' ? '📮' : inp.subType === 'curl' ? '⚡' : '📎'}
+                    </span>
+                    <span style={{ flex: 1, fontSize: 11, color: 'var(--text-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inp.label}</span>
+                    <button type="button" onClick={() => onChange({ apiInputs: state.apiInputs.filter(a => a.tempId !== inp.tempId) })}
+                      style={{ ...iconBtn('var(--fail)', 'transparent', 'transparent'), fontSize: 12 }}>✕</button>
+                  </div>
+                ))}
+                {state.apiSeedTCs.map(tc => (
+                  <div key={tc.tempId} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
+                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
+                  }}>
+                    <span style={{ fontSize: 10 }}>🧪</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.12)', color: AMBER }}>SEED</span>
+                    <span style={{ flex: 1, fontSize: 11, color: 'var(--text-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tc.title}</span>
+                    <button type="button" onClick={() => onChange({ apiSeedTCs: state.apiSeedTCs.filter(s => s.tempId !== tc.tempId) })}
+                      style={{ ...iconBtn('var(--fail)', 'transparent', 'transparent'), fontSize: 12 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
       </div>{/* /panel body */}

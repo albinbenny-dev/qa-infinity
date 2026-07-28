@@ -345,7 +345,7 @@ export async function runWriterAgent(input: WriterInput): Promise<WriterResult> 
   }
 
   const inputSummary = input.inputs
-    .map((inp) => `[${inp.type.toUpperCase()}] ${inp.label}:\n${inp.content.slice(0, 2000)}`)
+    .map((inp) => `[${inp.type.toUpperCase()}] ${inp.label}:\n${inp.content.slice(0, 8000)}`)
     .join('\n\n---\n\n');
 
   const seedCount = input.seedTestCases?.length ?? 0;

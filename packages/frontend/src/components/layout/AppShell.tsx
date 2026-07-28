@@ -26,7 +26,7 @@ export default function AppShell() {
   }, [isSuccess, projects, slug, setProjects, setActiveProject]);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+    <div style={{ height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
       {/* Global background listeners — fire notifications regardless of active page */}
       <ScanNotificationManager />
       <HealNotificationManager />
@@ -48,6 +48,7 @@ export default function AppShell() {
         <main
           style={{
             flex: 1,
+            minWidth: 0,
             overflowY: 'auto',
             overflowX: 'hidden',
             display: 'flex',
@@ -56,9 +57,10 @@ export default function AppShell() {
         >
           <Outlet />
         </main>
-      </div>
 
-      <ChatWidget />
+        {/* Chat sidebar — flex child so it pushes content rather than overlaying */}
+        <ChatWidget />
+      </div>
     </div>
   );
 }

@@ -1,6 +1,21 @@
 import { useState } from 'react';
 import type { TestCase } from '../../types';
 import TCTableRow from './TCTableRow';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 export interface UseCaseGroupProps {
   name: string;
@@ -17,6 +32,86 @@ export interface UseCaseGroupProps {
   onDeleteTc: (tc: TestCase) => void;
   onDeleteGroup: (name: string) => void;
   onEditTc: (tc: TestCase) => void;
+  onReorder?: (orderedIds: string[]) => void;
+}
+
+// ── Sortable drag handle wrapper ────────────────────────────────────────────
+
+interface SortableRowProps {
+  id: string;
+  tc: TestCase;
+  selected: boolean;
+  hasScript: boolean;
+  scriptedTcIds: Set<string>;
+  selectedIds: Set<string>;
+  expandedTcId: string | null;
+  onToggleTc: (id: string) => void;
+  onRunIndividual: (tc: TestCase) => void;
+  onDeleteTc: (tc: TestCase) => void;
+  onEditTc: (tc: TestCase) => void;
+  onExpand: (id: string | null) => void;
+}
+
+function SortableRow({ id, tc, selected, hasScript, expandedTcId, onToggleTc, onRunIndividual, onDeleteTc, onEditTc, onExpand }: SortableRowProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: 'relative' as const,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      {/* Drag handle — absolutely positioned on the left edge */}
+      <div
+        {...attributes}
+        {...listeners}
+        title="Drag to reorder"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: '14px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          color: 'var(--text-dim)',
+          fontSize: '10px',
+          opacity: 0.4,
+          zIndex: 1,
+          userSelect: 'none',
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = '0.9'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.opacity = '0.4'; }}
+      >
+        ⠿
+      </div>
+      <div style={{ paddingLeft: '14px' }}>
+        <TCTableRow
+          tc={tc}
+          selected={selected}
+          hasScript={hasScript}
+          onToggle={onToggleTc}
+          onRunIndividual={onRunIndividual}
+          onDelete={onDeleteTc}
+          onEdit={onEditTc}
+          isExpanded={expandedTcId === tc.id}
+          onExpand={onExpand}
+        />
+      </div>
+    </div>
+  );
 }
 
 const COLUMNS_HEADER = ['', 'Test Case', 'Type', 'Automation', 'Run History', ''];
@@ -36,9 +131,29 @@ export default function UseCaseGroup({
   onDeleteTc,
   onDeleteGroup,
   onEditTc,
+  onReorder,
 }: UseCaseGroupProps) {
   const [expandedTcId, setExpandedTcId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [localTcs, setLocalTcs] = useState<TestCase[]>(tcs);
+
+  // Keep localTcs in sync when tcs prop changes (e.g. after server refetch)
+  if (localTcs.length !== tcs.length || localTcs.some((t, i) => t.id !== tcs[i]?.id)) {
+    setLocalTcs(tcs);
+  }
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = localTcs.findIndex((tc) => tc.id === active.id);
+    const newIndex = localTcs.findIndex((tc) => tc.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(localTcs, oldIndex, newIndex);
+    setLocalTcs(reordered);
+    onReorder?.(reordered.map((tc) => tc.id));
+  }
 
   const tcIds = tcs.map((tc) => tc.id);
   const selectedCount = tcIds.filter((id) => selectedIds.has(id)).length;
@@ -255,7 +370,7 @@ export default function UseCaseGroup({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '28px 1fr 60px 100px 96px 72px',
+              gridTemplateColumns: '28px 1fr 60px 100px 96px 80px',
               gap: '8px',
               padding: '6px 14px',
               background: 'var(--surface2)',
@@ -279,21 +394,45 @@ export default function UseCaseGroup({
             ))}
           </div>
 
-          {/* TC rows */}
-          {tcs.map((tc) => (
-            <TCTableRow
-              key={tc.id}
-              tc={tc}
-              selected={selectedIds.has(tc.id)}
-              hasScript={scriptedTcIds.has(tc.id)}
-              onToggle={onToggleTc}
-              onRunIndividual={onRunIndividual}
-              onDelete={onDeleteTc}
-              onEdit={onEditTc}
-              isExpanded={expandedTcId === tc.id}
-              onExpand={handleExpandTc}
-            />
-          ))}
+          {/* TC rows — sortable when onReorder is provided */}
+          {onReorder ? (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={localTcs.map((tc) => tc.id)} strategy={verticalListSortingStrategy}>
+                {localTcs.map((tc) => (
+                  <SortableRow
+                    key={tc.id}
+                    id={tc.id}
+                    tc={tc}
+                    selected={selectedIds.has(tc.id)}
+                    hasScript={scriptedTcIds.has(tc.id)}
+                    scriptedTcIds={scriptedTcIds}
+                    selectedIds={selectedIds}
+                    expandedTcId={expandedTcId}
+                    onToggleTc={onToggleTc}
+                    onRunIndividual={onRunIndividual}
+                    onDeleteTc={onDeleteTc}
+                    onEditTc={onEditTc}
+                    onExpand={handleExpandTc}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            tcs.map((tc) => (
+              <TCTableRow
+                key={tc.id}
+                tc={tc}
+                selected={selectedIds.has(tc.id)}
+                hasScript={scriptedTcIds.has(tc.id)}
+                onToggle={onToggleTc}
+                onRunIndividual={onRunIndividual}
+                onDelete={onDeleteTc}
+                onEdit={onEditTc}
+                isExpanded={expandedTcId === tc.id}
+                onExpand={handleExpandTc}
+              />
+            ))
+          )}
         </div>
       )}
 

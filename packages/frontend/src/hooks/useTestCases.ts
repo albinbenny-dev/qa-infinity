@@ -80,6 +80,18 @@ export function useUseCases(projectId: string | undefined) {
   });
 }
 
+export function useReorderTestCases(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { useCaseTag: string | null; orderedIds: string[] }) => {
+      await api.patch(`/projects/${projectId}/test-cases/reorder`, payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+    },
+  });
+}
+
 export function useGenerateTestCases(projectId: string) {
   return useMutation({
     mutationFn: async (req: GenerateRequest) => {
@@ -316,7 +328,7 @@ export function useUploadFile() {
       const res = await api.post<{ filePath: string; filename: string; mimeType: string; size: number }>(
         '/upload',
         formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } },
+        { headers: { 'Content-Type': undefined } }, // let axios set multipart/form-data with boundary
       );
       return res.data;
     },

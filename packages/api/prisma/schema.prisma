@@ -21,8 +21,8 @@ model User {
   globalRole   String          @default("STANDARD_USER")   // "SUPER_ADMIN" | "ADMIN" | "SUPER_USER" | "STANDARD_USER"
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
-  memberships  ProjectMember[]
-  projects     Project[]       @relation("CreatedBy")
+  memberships    ProjectMember[]
+  projects       Project[]       @relation("CreatedBy")
 }
 
 model Project {
@@ -58,6 +58,8 @@ model Project {
   agentTraces     AgentTrace[]
   resources       ProjectResource[]
   skills          ProjectSkill[]
+  jiraIssues      JiraIssue[]
+  jiraConfig      JiraConfig?
 
   @@index([createdBy])
 }
@@ -121,6 +123,7 @@ model TestCase {
   sourceRef        String?
   generationHints  String?   // free-text locator/context hints injected into script agent
   runtimeVariables String?   // JSON: [{name, captureFrom, description?}] — dynamic values captured during test run
+  sortOrder        Int       @default(0)        // within useCaseTag group (drag-to-reorder)
   prerequisiteTcId String?                                                        // optional FK to another TC
   prerequisiteTc   TestCase?  @relation("PrerequisiteOf", fields: [prerequisiteTcId], references: [id], onDelete: SetNull)
   dependentTcs     TestCase[] @relation("PrerequisiteOf")
@@ -129,7 +132,6 @@ model TestCase {
   project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   scripts          Script[]
   runResults       RunResult[]
-
   @@unique([projectId, tcId])
   @@index([projectId])
   @@index([projectId, useCaseTag])
@@ -250,7 +252,8 @@ model Suite {
   id          String   @id @default(cuid())
   projectId   String
   name        String
-  testCaseIds String   @default("[]")  // JSON: string[]
+  stages      String   @default("[]")  // JSON: SuiteStage[]
+  testCaseIds String   @default("[]")  // JSON: string[] — kept for backward compat / CI/CD
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -415,6 +418,43 @@ model ProjectSkill {
   @@index([projectId, skillType])
   @@index([projectId, isActive])
   @@index([projectId, featureGroup])
+}
+
+model JiraIssue {
+  id             String    @id @default(cuid())
+  projectId      String
+  issueKey       String
+  summary        String?
+  status         String?
+  statusCategory String?   // "new" | "indeterminate" | "done"
+  issueType      String?
+  priorityName   String?
+  labels         String    @default("[]")   // JSON: string[]
+  components     String    @default("[]")   // JSON: string[]
+  assigneeName   String?
+  reporterName   String?
+  jiraCreatedAt  DateTime?
+  dueDate        DateTime?
+  jiraUpdatedAt  DateTime?
+  lastSyncedAt   DateTime
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, issueKey])
+  @@index([projectId])
+}
+
+model JiraConfig {
+  id                  String    @id @default(cuid())
+  projectId           String    @unique
+  jiraHost            String?   // e.g. "https://yourcompany.atlassian.net"
+  jiraEmail           String?
+  jiraApiToken        String?
+  jiraProjectKey      String?
+  pollIntervalMinutes Int       @default(5)
+  isEnabled           Boolean   @default(false)
+  lastPollAt          DateTime?
+  lastPollStatus      String?
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model LlmCall {

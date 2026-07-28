@@ -116,6 +116,7 @@ export async function autoScanPage(
   targetUrl: string,
   projectSlug: string,
   envConfig: { username: string; password: string } | null,
+  menuContext?: string,
 ): Promise<AutoScanSnapshot[]> {
   const chromiumPath = process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'];
   if (!chromiumPath || !fs.existsSync(chromiumPath)) return [];
@@ -184,6 +185,43 @@ export async function autoScanPage(
     // ── Step 2: Navigate to target page ───────────────────────────────────
     await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30_000 });
     await page.waitForTimeout(1500);
+
+    // ── Step 2b: Navigate to menuContext if provided ───────────────────────
+    if (menuContext) {
+      try {
+        const navSelectors = [
+          `a:has-text("${menuContext}")`,
+          `button:has-text("${menuContext}")`,
+          `[role="menuitem"]:has-text("${menuContext}")`,
+          `li:has-text("${menuContext}")`,
+          `span:has-text("${menuContext}")`,
+        ];
+        let clicked = false;
+        for (const sel of navSelectors) {
+          const el = page.locator(sel).first();
+          const count = await el.count();
+          if (count > 0) {
+            await el.click({ timeout: 5000 });
+            await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+            clicked = true;
+            break;
+          }
+        }
+        if (!clicked) {
+          const words = menuContext.split(/\s+/).filter(w => w.length > 3);
+          for (const word of words.slice(0, 2)) {
+            const el = page.locator(`a, button, [role="menuitem"]`).filter({ hasText: new RegExp(word, 'i') }).first();
+            if (await el.count() > 0) {
+              await el.click({ timeout: 5000 }).catch(() => {});
+              await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+              break;
+            }
+          }
+        }
+      } catch {
+        // Navigation click failed — proceed with screenshot of current page
+      }
+    }
 
     const [initBuf, pageTitle, html] = await Promise.all([
       page.screenshot({ type: 'jpeg', quality: 60, fullPage: false }),

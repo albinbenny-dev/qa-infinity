@@ -63,4 +63,5 @@ router.use('/projects/:projectId/resources', resourcesRouter);
 // ── Product Skills ────────────────────────────────────────────────────────
 router.use('/projects/:projectId/skills', skillsRouter);
 
+
 export default router;

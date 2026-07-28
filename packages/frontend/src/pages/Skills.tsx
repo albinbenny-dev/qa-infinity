@@ -14,6 +14,10 @@ import {
   useExtractSkillFromDoc,
   useConvertSkillFromText,
   useFeatureGroups,
+  useParseApiSpec,
+  useImportApiContracts,
+  type ParsedApiEndpoint,
+  type ApiSpecFormat,
 } from '../hooks/useSkills';
 import { useUploadFile, useSaveTestCases } from '../hooks/useTestCases';
 import { getToken } from '../lib/auth';
@@ -386,11 +390,13 @@ function SkillCard({
   onEdit,
   onDelete,
   onToggle,
+  hideFeatureBadge,
 }: {
   skill: ProjectSkill;
   onEdit: (s: ProjectSkill) => void;
   onDelete: (id: string) => void;
   onToggle: (id: string, active: boolean) => void;
+  hideFeatureBadge?: boolean;
 }) {
   const meta = SKILL_META[skill.skillType] ?? SKILL_META.HISTORICAL;
   const [expanded, setExpanded] = useState(false);
@@ -489,7 +495,7 @@ function SkillCard({
               📌 {skill.scope}
             </div>
           )}
-          {skill.featureGroup && (
+          {skill.featureGroup && !hideFeatureBadge && (
             <div style={{ marginTop: 3 }}>
               <span
                 style={{
@@ -615,7 +621,7 @@ function CreateSkillModal({
   onCreated: () => void;
 }) {
   const [activeSkillType, setActiveSkillType] = useState<SkillType>('BUSINESS_USE_CASE');
-  const [createMode, setCreateMode] = useState<'manual' | 'extract' | 'record'>('manual');
+  const [createMode, setCreateMode] = useState<'manual' | 'extract' | 'record' | 'import-spec'>('manual');
   const [name, setName] = useState('');
   const [scope, setScope] = useState('');
   const [featureGroup, setFeatureGroup] = useState('');
@@ -646,6 +652,13 @@ function CreateSkillModal({
   const [manualInputMode, setManualInputMode] = useState<'plain' | 'json'>('plain');
   const [plainText, setPlainText] = useState('');
 
+  // API spec import (API_CONTRACT only) — curl / OpenAPI / Postman
+  const [specText, setSpecText] = useState('');
+  const [specFormat, setSpecFormat] = useState<ApiSpecFormat | null>(null);
+  const [specEndpoints, setSpecEndpoints] = useState<ParsedApiEndpoint[]>([]);
+  const [selectedEndpoints, setSelectedEndpoints] = useState<Set<number>>(new Set());
+  const [isReadingSpecFile, setIsReadingSpecFile] = useState(false);
+
   const createMutation = useCreateSkill(projectId);
   const updateMutation = useUpdateSkill(projectId);
   const startRecordingMutation = useStartRecording(projectId);
@@ -654,6 +667,8 @@ function CreateSkillModal({
   const extractMutation = useExtractSkillFromDoc(projectId);
   const convertMutation = useConvertSkillFromText(projectId);
   const uploadMutation = useUploadFile();
+  const parseApiSpecMutation = useParseApiSpec(projectId);
+  const importApiContractsMutation = useImportApiContracts(projectId);
 
   const { data: envConfigs = [] } = useProjectEnvConfigs(projectId);
   const { data: featureGroupsData = [] } = useFeatureGroups(projectId);
@@ -797,13 +812,46 @@ function CreateSkillModal({
     }
   }
 
+  async function handleParseSpec() {
+    if (!specText.trim()) { toast.error('Paste a curl command, OpenAPI/Swagger spec, or Postman collection first'); return; }
+    try {
+      const result = await parseApiSpecMutation.mutateAsync(specText.trim());
+      setSpecFormat(result.format);
+      setSpecEndpoints(result.endpoints);
+      setSelectedEndpoints(new Set(result.endpoints.map((_, i) => i)));
+      toast.success(`Found ${result.endpoints.length} endpoint${result.endpoints.length !== 1 ? 's' : ''}`);
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Could not parse this input');
+    }
+  }
+
+  async function handleImportApiSpec() {
+    const chosen = specEndpoints.filter((_, i) => selectedEndpoints.has(i));
+    if (chosen.length === 0) { toast.error('Select at least one endpoint'); return; }
+    try {
+      const result = await importApiContractsMutation.mutateAsync({
+        scope: scope || undefined,
+        featureGroup: featureGroup || null,
+        endpoints: chosen,
+      });
+      toast.success(`Imported ${result.count} API contract skill${result.count !== 1 ? 's' : ''}`);
+      onCreated();
+      onClose();
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Import failed');
+    }
+  }
+
   const busy =
     createMutation.isPending ||
     convertMutation.isPending ||
     startRecordingMutation.isPending ||
     stopRecordingMutation.isPending ||
     extractMutation.isPending ||
-    isUploading;
+    parseApiSpecMutation.isPending ||
+    importApiContractsMutation.isPending ||
+    isUploading ||
+    isReadingSpecFile;
 
   return (
     <div
@@ -1047,6 +1095,11 @@ function CreateSkillModal({
 
           {/* Name + Scope */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {createMode === 'import-spec' ? (
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', paddingTop: 14 }}>
+                Each imported endpoint gets its own skill name (e.g. "GET /api/orders") automatically.
+              </div>
+            ) : (
             <div>
               <div
                 style={{
@@ -1074,6 +1127,7 @@ function CreateSkillModal({
                 style={{ width: '100%', boxSizing: 'border-box', fontSize: 12 }}
               />
             </div>
+            )}
             <div>
               <div
                 style={{
@@ -1173,7 +1227,10 @@ function CreateSkillModal({
                 Create From
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                {(['manual', 'extract'] as const).map((mode) => (
+                {(activeSkillType === 'API_CONTRACT'
+                  ? (['manual', 'extract', 'import-spec'] as const)
+                  : (['manual', 'extract'] as const)
+                ).map((mode) => (
                   <button
                     key={mode}
                     onClick={() => setCreateMode(mode)}
@@ -1189,7 +1246,7 @@ function CreateSkillModal({
                       color: createMode === mode ? meta.color : 'var(--text-dim)',
                     }}
                   >
-                    {mode === 'manual' ? '✏ Manual Entry' : '📎 Upload File'}
+                    {mode === 'manual' ? '✏ Manual Entry' : mode === 'extract' ? '📎 Upload Doc' : '🔗 Import Spec'}
                   </button>
                 ))}
               </div>
@@ -1343,6 +1400,175 @@ function CreateSkillModal({
                     }}
                   />
                 </label>
+              )}
+            </div>
+          )}
+
+          {/* API spec import — curl / OpenAPI / Postman */}
+          {createMode === 'import-spec' && (
+            <div
+              style={{
+                padding: 12,
+                background: meta.dim,
+                borderRadius: 'var(--radius)',
+                border: `1px solid ${meta.color}33`,
+              }}
+            >
+              <div style={{ fontSize: 11, color: meta.color, marginBottom: 8 }}>
+                🔗 Paste a curl command, an OpenAPI/Swagger spec (JSON or YAML), or a Postman collection (JSON) —
+                or upload one as a file. Multi-endpoint specs let you pick which endpoints become skills.
+              </div>
+
+              <textarea
+                className="input-field"
+                value={specText}
+                onChange={(e) => { setSpecText(e.target.value); setSpecFormat(null); setSpecEndpoints([]); }}
+                placeholder={`curl -X POST https://api.example.com/orders -H "Authorization: Bearer <token>" -d '{"productId":"P1"}'\n\n…or paste an OpenAPI/Swagger spec, or a Postman collection export.`}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  fontSize: 11,
+                  minHeight: 140,
+                  fontFamily: 'var(--font-mono)',
+                  resize: 'vertical',
+                }}
+              />
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <label style={{ cursor: 'pointer' }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '5px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--surface2)',
+                      color: 'var(--text-dim)',
+                      fontSize: 10,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isReadingSpecFile ? '⏳ Reading…' : '📎 Upload file'}
+                  </span>
+                  <input
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept=".json,.yaml,.yml,.txt"
+                    disabled={isReadingSpecFile}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsReadingSpecFile(true);
+                      try {
+                        const text = await file.text();
+                        setSpecText(text);
+                        setSpecFormat(null);
+                        setSpecEndpoints([]);
+                      } catch {
+                        toast.error('Could not read file');
+                      } finally {
+                        setIsReadingSpecFile(false);
+                      }
+                    }}
+                  />
+                </label>
+                <button
+                  onClick={() => void handleParseSpec()}
+                  disabled={parseApiSpecMutation.isPending || !specText.trim()}
+                  style={{
+                    padding: '5px 12px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: meta.color,
+                    color: '#fff',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: parseApiSpecMutation.isPending || !specText.trim() ? 'not-allowed' : 'pointer',
+                    opacity: parseApiSpecMutation.isPending || !specText.trim() ? 0.6 : 1,
+                  }}
+                >
+                  {parseApiSpecMutation.isPending ? '⏳ Parsing…' : '🔍 Parse'}
+                </button>
+              </div>
+
+              {specEndpoints.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      {specFormat} — {selectedEndpoints.size}/{specEndpoints.length} selected
+                    </span>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => setSelectedEndpoints(new Set(specEndpoints.map((_, i) => i)))}
+                        style={{ background: 'none', border: 'none', color: 'var(--cyan)', fontSize: 10, cursor: 'pointer', padding: 0 }}
+                      >Select all</button>
+                      <button
+                        onClick={() => setSelectedEndpoints(new Set())}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', padding: 0 }}
+                      >Clear</button>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: 220,
+                      overflowY: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      padding: 6,
+                    }}
+                  >
+                    {specEndpoints.map((ep, i) => {
+                      const checked = selectedEndpoints.has(i);
+                      return (
+                        <label
+                          key={i}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 8,
+                            padding: '5px 7px',
+                            borderRadius: 5,
+                            cursor: 'pointer',
+                            background: checked ? 'rgba(37,99,171,0.06)' : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedEndpoints((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(i)) next.delete(i);
+                                else next.add(i);
+                                return next;
+                              });
+                            }}
+                            style={{ marginTop: 2, cursor: 'pointer' }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <span style={{
+                                fontSize: 9, fontWeight: 700, padding: '0 5px', borderRadius: 4,
+                                background: 'var(--cyan-dim)', color: 'var(--cyan)', fontFamily: 'var(--font-mono)',
+                              }}>{ep.method}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ep.endpoint}</span>
+                              {ep.authRequired && <span style={{ fontSize: 9, color: 'var(--rose)' }}>🔒</span>}
+                            </div>
+                            {ep.purpose && (
+                              <div style={{ fontSize: 10, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {ep.purpose}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1566,6 +1792,30 @@ function CreateSkillModal({
                     {startRecordingMutation.isPending ? '⏳ Starting...' : '🔴 Start Recording'}
                   </button>
                 )
+              ) : createMode === 'import-spec' ? (
+                <button
+                  onClick={() => void (specEndpoints.length > 0 ? handleImportApiSpec() : handleParseSpec())}
+                  disabled={busy || (specEndpoints.length === 0 && !specText.trim())}
+                  style={{
+                    padding: '8px 22px',
+                    borderRadius: 'var(--radius)',
+                    border: 'none',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    background: meta.color,
+                    color: '#fff',
+                    cursor: busy || (specEndpoints.length === 0 && !specText.trim()) ? 'not-allowed' : 'pointer',
+                    opacity: busy || (specEndpoints.length === 0 && !specText.trim()) ? 0.7 : 1,
+                  }}
+                >
+                  {importApiContractsMutation.isPending
+                    ? '⏳ Importing...'
+                    : parseApiSpecMutation.isPending
+                    ? '⏳ Parsing...'
+                    : specEndpoints.length > 0
+                    ? `✓ Import ${selectedEndpoints.size} Skill${selectedEndpoints.size !== 1 ? 's' : ''}`
+                    : '🔍 Parse Spec'}
+                </button>
               ) : (
                 <button
                   onClick={handleSubmit}
@@ -2227,24 +2477,40 @@ function FeatureGenerateModal({
 
 // ── Main Skills page ──────────────────────────────────────────────────────
 
+const UNGROUPED_LABEL = 'Ungrouped';
+
+function groupSkillsByFeature(list: ProjectSkill[]): Array<[string, ProjectSkill[]]> {
+  const groups = new Map<string, ProjectSkill[]>();
+  for (const skill of list) {
+    const key = skill.featureGroup?.trim() || UNGROUPED_LABEL;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(skill);
+  }
+  const entries = [...groups.entries()];
+  entries.sort((a, b) => {
+    if (a[0] === UNGROUPED_LABEL) return 1;
+    if (b[0] === UNGROUPED_LABEL) return -1;
+    return a[0].localeCompare(b[0]);
+  });
+  return entries;
+}
+
 export default function Skills() {
   const { slug } = useParams<{ slug: string }>();
   const { data: project } = useProject(slug);
   const projectId = project?.id;
 
-  const [filterType, setFilterType] = useState<SkillType | 'ALL'>('ALL');
   const [showCreate, setShowCreate] = useState(false);
   const [editingSkill, setEditingSkill] = useState<ProjectSkill | null>(null);
   const [generateFeature, setGenerateFeature] = useState<{ name: string; skillCount: number } | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
 
   const {
     data: skillsData,
     refetch,
     isLoading,
-  } = useSkills(projectId, filterType !== 'ALL' ? filterType : undefined);
-
-  const { data: featureGroups } = useFeatureGroups(projectId);
+  } = useSkills(projectId);
 
   const updateMutation = useUpdateSkill(projectId ?? '');
   const deleteMutation = useDeleteSkill(projectId ?? '');
@@ -2258,6 +2524,27 @@ export default function Skills() {
     },
     {} as Record<SkillType, ProjectSkill[]>,
   );
+
+  const q = query.trim().toLowerCase();
+  const searchedSkills = q
+    ? skills.filter((s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.skillType.toLowerCase().includes(q) ||
+        (s.scope ?? '').toLowerCase().includes(q) ||
+        (s.featureGroup ?? '').toLowerCase().includes(q),
+      )
+    : skills;
+
+  const groups = groupSkillsByFeature(searchedSkills);
+
+  function toggleExpand(name: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
 
   async function handleToggle(skillId: string, isActive: boolean) {
     try {
@@ -2329,121 +2616,6 @@ export default function Skills() {
           ))}
         </div>
 
-        {/* Feature Groups section */}
-        {featureGroups && featureGroups.length > 0 && (
-          <div style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span>⬡</span>
-              <span>Feature Groups</span>
-              <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontWeight: 400 }}>
-                · generate all test cases for a feature in one click
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {featureGroups.map((fg) => {
-                const collapsed = collapsedGroups.has(fg.name);
-                const groupSkills = skills.filter((s) => s.featureGroup === fg.name);
-                return (
-                  <div
-                    key={fg.name}
-                    style={{
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                      minWidth: 220,
-                      flex: '1 1 220px',
-                      maxWidth: 340,
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: '10px 14px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        borderBottom: collapsed ? 'none' : '1px solid var(--border)',
-                        cursor: 'pointer',
-                        background: 'rgba(37,99,235,0.04)',
-                      }}
-                      onClick={() => {
-                        setCollapsedGroups((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(fg.name)) next.delete(fg.name);
-                          else next.add(fg.name);
-                          return next;
-                        });
-                      }}
-                    >
-                      <span style={{ fontSize: 16 }}>⬡</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--sky)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {fg.name}
-                        </div>
-                        <div style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                          {fg.skillCount} skill{fg.skillCount !== 1 ? 's' : ''} · {fg.activeCount} active
-                        </div>
-                      </div>
-                      <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>{collapsed ? '▶' : '▼'}</span>
-                    </div>
-                    {!collapsed && (
-                      <div style={{ padding: '8px 14px 10px' }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                          {fg.skillTypes.map((st) => {
-                            const m = SKILL_META[st as SkillType] ?? SKILL_META.HISTORICAL;
-                            return (
-                              <span
-                                key={st}
-                                style={{
-                                  fontSize: 9,
-                                  padding: '1px 6px',
-                                  borderRadius: 100,
-                                  background: m.dim,
-                                  color: m.color,
-                                  border: `1px solid ${m.color}33`,
-                                  fontFamily: 'var(--font-mono)',
-                                }}
-                              >
-                                {m.icon} {m.label}
-                              </span>
-                            );
-                          })}
-                        </div>
-                        {groupSkills.length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
-                            {groupSkills.map((s) => (
-                              <div key={s.id} style={{ fontSize: 10, color: 'var(--text-mid)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ color: s.isActive ? 'var(--emerald)' : 'var(--border2)', fontSize: 8 }}>●</span>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => setGenerateFeature({ name: fg.name, skillCount: fg.skillCount })}
-                          style={{
-                            width: '100%',
-                            padding: '6px 0',
-                            borderRadius: 6,
-                            border: '1px solid rgba(37,99,235,0.3)',
-                            background: 'rgba(37,99,235,0.08)',
-                            color: 'var(--sky)',
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          ✨ Generate TCs for this feature
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* Empty state */}
         {!isLoading && skills.length === 0 && (
           <div
@@ -2498,122 +2670,85 @@ export default function Skills() {
           </div>
         )}
 
-        {/* Filter tabs */}
+        {/* Search */}
         {skills.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 14 }}>
-            <button
-              onClick={() => setFilterType('ALL')}
-              style={{
-                padding: '4px 12px',
-                borderRadius: 6,
-                border: `1px solid ${filterType === 'ALL' ? 'var(--cyan)' : 'var(--border)'}`,
-                background: filterType === 'ALL' ? 'var(--cyan-dim)' : 'var(--surface2)',
-                color: filterType === 'ALL' ? 'var(--cyan)' : 'var(--text-dim)',
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              All ({skills.length})
-            </button>
-            {SKILL_TYPES.filter(
-              (t) => t !== 'HISTORICAL' || skillsByType.HISTORICAL.length > 0,
-            ).map((t) => {
-              const m = SKILL_META[t];
-              const count = skillsByType[t].length;
-              if (count === 0) return null;
-              const active = filterType === t;
-              return (
-                <button
-                  key={t}
-                  onClick={() => setFilterType(t)}
-                  style={{
-                    padding: '4px 12px',
-                    borderRadius: 6,
-                    border: `1px solid ${active ? m.color + '66' : 'var(--border)'}`,
-                    background: active ? m.dim : 'var(--surface2)',
-                    color: active ? m.color : 'var(--text-dim)',
-                    fontSize: 11,
-                    fontWeight: active ? 700 : 400,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span>{m.icon}</span>
-                  <span>{m.label}</span>
-                  <span
-                    style={{
-                      background: 'var(--surface3)',
-                      borderRadius: 8,
-                      padding: '0 5px',
-                      fontSize: 9,
-                    }}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
+          <div style={{ marginBottom: 14 }}>
+            <input
+              className="input-field"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search skills by name, type, or scope…"
+              style={{ width: '100%', maxWidth: 360, boxSizing: 'border-box', fontSize: 12 }}
+            />
           </div>
         )}
 
-        {/* Skills list — grouped when showing all */}
-        {filterType === 'ALL'
-          ? SKILL_TYPES.filter((t) => skillsByType[t].length > 0).map((t) => (
-              <div key={t} style={{ marginBottom: 18 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    marginBottom: 8,
-                  }}
-                >
-                  <span style={{ fontSize: 14 }}>{SKILL_META[t].icon}</span>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: SKILL_META[t].color,
-                    }}
-                  >
-                    {SKILL_META[t].label}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      color: 'var(--text-dim)',
-                      fontFamily: 'var(--font-mono)',
-                    }}
-                  >
-                    {skillsByType[t].length} skill
-                    {skillsByType[t].length !== 1 ? 's' : ''}
-                  </span>
+        {/* Skills list — grouped by feature, collapsed by default */}
+        {skills.length > 0 && searchedSkills.length === 0 && (
+          <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+            No skills match "{query}".
+          </div>
+        )}
+        {groups.map(([name, groupSkills]) => {
+          const isExpanded = q.length > 0 || expandedGroups.has(name);
+          const activeCount = groupSkills.filter((s) => s.isActive).length;
+          const types = [...new Set(groupSkills.map((s) => s.skillType))];
+          return (
+            <div key={name} style={{ marginBottom: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+              <div
+                onClick={() => toggleExpand(name)}
+                style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: 'rgba(37,99,235,0.04)' }}
+              >
+                <span style={{ fontSize: 9, color: 'var(--text-dim)', transition: 'transform 0.15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block', flexShrink: 0 }}>▶</span>
+                <span style={{ fontSize: 14, flexShrink: 0 }}>{name === UNGROUPED_LABEL ? '📦' : '⬡'}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: name === UNGROUPED_LABEL ? 'var(--text-dim)' : 'var(--sky)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {name}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+                    {types.map((st) => {
+                      const m = SKILL_META[st] ?? SKILL_META.HISTORICAL;
+                      return (
+                        <span key={st} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 100, background: m.dim, color: m.color, border: `1px solid ${m.color}33`, fontFamily: 'var(--font-mono)' }}>
+                          {m.icon} {m.label}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {skillsByType[t].map((skill) => (
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>
+                  {activeCount}/{groupSkills.length} active
+                </span>
+                {name !== UNGROUPED_LABEL && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setGenerateFeature({ name, skillCount: activeCount }); }}
+                    style={{
+                      padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(37,99,235,0.3)',
+                      background: 'rgba(37,99,235,0.08)', color: 'var(--sky)', fontSize: 10, fontWeight: 700,
+                      cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+                    }}
+                  >
+                    ✨ Generate TCs
+                  </button>
+                )}
+              </div>
+              {isExpanded && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px' }}>
+                  {groupSkills.map((skill) => (
                     <SkillCard
                       key={skill.id}
                       skill={skill}
                       onEdit={setEditingSkill}
                       onDelete={handleDelete}
                       onToggle={handleToggle}
+                      hideFeatureBadge={name !== UNGROUPED_LABEL}
                     />
                   ))}
                 </div>
-              </div>
-            ))
-          : skills.map((skill) => (
-              <SkillCard
-                key={skill.id}
-                skill={skill}
-                onEdit={setEditingSkill}
-                onDelete={handleDelete}
-                onToggle={handleToggle}
-              />
-            ))}
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {showCreate && projectId && (

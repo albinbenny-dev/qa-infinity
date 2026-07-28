@@ -74,6 +74,9 @@ services:
 
   # ── API ──────────────────────────────────────────────────────────────────
   qa-api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
     image: qa-infinity-qa-api:latest
     container_name: qa-api
     restart: unless-stopped
@@ -101,8 +104,6 @@ services:
       - ./scripts:/scripts
       - qa-artifacts:/artifacts
       - qa-reqdocs:/requirements
-      # Mount source so tsx watch picks up changes without a full rebuild
-      - ./packages/api/src:/app/packages/api/src:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
       interval: 15s
@@ -127,6 +128,9 @@ services:
   # qa-runner-2 and qa-runner-3 are headless replicas that share the same scripts
   # and artifacts volumes. All three sit behind qa-runner-lb.
   qa-runner:
+    build:
+      context: .
+      dockerfile: packages/runner/Dockerfile
     image: qa-infinity-qa-runner:latest
     container_name: qa-runner
     restart: unless-stopped
@@ -155,6 +159,9 @@ services:
 
   # ── UI ───────────────────────────────────────────────────────────────────
   qa-ui:
+    build:
+      context: .
+      dockerfile: packages/frontend/Dockerfile
     image: qa-infinity-qa-ui:latest
     container_name: qa-ui
     restart: unless-stopped
