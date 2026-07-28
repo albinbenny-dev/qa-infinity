@@ -138,6 +138,7 @@ async function startVncStack() {
     await new Promise((resolve) => waitForXvfb(VNC_DISPLAY, resolve));
     // Start Openbox window manager so --start-maximized works in Chromium
     spawnLogged('openbox', ['--display', VNC_DISPLAY]);
+    await new Promise((r) => setTimeout(r, 800));
   }
 
   // 2. x11vnc — start only if nothing is listening on VNC_PORT yet
@@ -470,6 +471,7 @@ const HOST_BROWSER_CONFIG_CONTENT = `module.exports = {
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--start-maximized',
+            '--window-size=1920,1080',
           ],
         },
     } },
