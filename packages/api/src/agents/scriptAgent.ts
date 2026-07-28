@@ -416,6 +416,16 @@ This is MANDATORY — skipping the Click means the keyboard input goes nowhere.
         Click    css=input[type='password']
         Keyboard Input    type    \${TC_PASSWORD}
 
+NEVER use a FOR loop to enter a password character by character. \${TC_PASSWORD} is a scalar string —
+iterating over it with @{TC_PASSWORD} causes a runtime error "not list or list-like". Always type the
+full password in one Keyboard Input call:
+  FORBIDDEN:
+        FOR    \${char}    IN    @{TC_PASSWORD}
+            Keyboard Input    type    \${char}
+        END
+  CORRECT:
+        Keyboard Input    type    \${TC_PASSWORD}
+
 ### Variables — exact declaration rules
 Declare ONLY these variables in *** Variables ***. Use EXACTLY these names and defaults:
 \${BASE_URL}      https://the-actual-base-url
