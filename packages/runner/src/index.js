@@ -1026,7 +1026,7 @@ const server = http.createServer(async (req, res) => {
     try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
 
     const pwBin = findPlaywrightBin();
-    const codegenProc = spawn(pwBin, ['codegen', '--ignore-https-errors', '--viewport-size=1280,720', '--output', outputPath, url], {
+    const codegenProc = spawn(pwBin, ['codegen', '--ignore-https-errors', '--viewport-size=1024,600', '--output', outputPath, url], {
       stdio: ['ignore', 'pipe', 'pipe'],
       // detached=true creates a new process group so we can kill the whole group
       // (parent playwright codegen + its Chromium child) with a single negative-PID signal
