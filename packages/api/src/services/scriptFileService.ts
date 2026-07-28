@@ -203,6 +203,65 @@ function walkForTree(root: string, dir: string): FileTreeNode[] {
   return [...dirs, ...files];
 }
 
+// ── Project-wide text search ────────────────────────────────────────────────
+
+export interface FileSearchMatch {
+  relPath: string;
+  line: number;
+  text: string;
+}
+
+export interface FileSearchGroup {
+  relPath: string;
+  matches: FileSearchMatch[];
+}
+
+const SEARCH_MAX_FILE_BYTES = 2 * 1024 * 1024; // skip anything bigger — not a real source file
+const SEARCH_MAX_MATCHES = 300;
+
+export function searchProjectFiles(slug: string, query: string): FileSearchGroup[] {
+  const root = projectRoot(slug);
+  const q = query.trim().toLowerCase();
+  if (!q || !fs.existsSync(root)) return [];
+
+  const groups: FileSearchGroup[] = [];
+  let total = 0;
+
+  function walk(dir: string): void {
+    if (total >= SEARCH_MAX_MATCHES) return;
+    for (const entry of fs.readdirSync(dir)) {
+      if (total >= SEARCH_MAX_MATCHES) return;
+      if (SKIP_DIRS.has(entry) || SKIP_NAMES.has(entry)) continue;
+      const abs = path.join(dir, entry);
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) { walk(abs); continue; }
+
+      const ext = path.extname(entry).toLowerCase();
+      if (BINARY_EXTS.has(ext) || SKIP_EXTS.has(ext)) continue;
+      if (stat.size > SEARCH_MAX_FILE_BYTES) continue;
+
+      let content: string;
+      try { content = fs.readFileSync(abs, 'utf-8'); } catch { continue; }
+
+      const lines = content.split('\n');
+      const matches: FileSearchMatch[] = [];
+      for (let i = 0; i < lines.length && total < SEARCH_MAX_MATCHES; i++) {
+        if (lines[i].toLowerCase().includes(q)) {
+          matches.push({ relPath: '', line: i + 1, text: lines[i].trim().slice(0, 300) });
+          total++;
+        }
+      }
+      if (matches.length > 0) {
+        const relPath = path.relative(root, abs).replace(/\\/g, '/');
+        groups.push({ relPath, matches: matches.map((m) => ({ ...m, relPath })) });
+      }
+    }
+  }
+
+  walk(root);
+  return groups;
+}
+
 // ── Zip import ────────────────────────────────────────────────────────────────
 
 export interface ZipImportFile {

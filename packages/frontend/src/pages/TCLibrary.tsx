@@ -5,6 +5,8 @@ import Topbar, { TbBtn } from '../components/layout/Topbar';
 import UseCaseGroup from '../components/tc-library/UseCaseGroup';
 import SelectionBar from '../components/tc-library/SelectionBar';
 import EditTCModal from '../components/tc-library/EditTCModal';
+import LinkScriptModal from '../components/tc-library/LinkScriptModal';
+import TCImportModal from '../components/tc-library/TCImportModal';
 import { useProject } from '../hooks/useProjects';
 import {
   useTestCases,
@@ -16,6 +18,7 @@ import {
   useBulkDelete,
   useBulkAddTag,
   useReorderTestCases,
+  useBulkLinkScript,
 } from '../hooks/useTestCases';
 import { useExecutionStore } from '../stores/executionStore';
 import { useScripts } from '../hooks/useScripts';
@@ -138,6 +141,7 @@ export default function TCLibrary() {
   const bulkDeleteMutation = useBulkDelete(projectId ?? '');
   const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
   const reorderTcMutation = useReorderTestCases(projectId ?? '');
+  const bulkLinkScriptMutation = useBulkLinkScript(projectId ?? '');
   const createRun = useCreateRun(projectId ?? '');
   const { activeProject } = useProjectStore();
   const { canWrite } = useRBAC();
@@ -146,6 +150,8 @@ export default function TCLibrary() {
 
   const [editingTc, setEditingTc] = useState<TestCase | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [linkScriptOpen, setLinkScriptOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -333,6 +339,19 @@ export default function TCLibrary() {
     }
   }
 
+  // ── Bulk link script ─────────────────────────────────────────────────────
+  async function handleLinkScript(scriptId: string) {
+    const tcIds = Array.from(selectedIds);
+    if (!tcIds.length || !projectId) return;
+    try {
+      await bulkLinkScriptMutation.mutateAsync({ tcIds, scriptId });
+      setLinkScriptOpen(false);
+      toast.success(`Linked ${tcIds.length} TC${tcIds.length !== 1 ? 's' : ''} to script`);
+    } catch {
+      toast.error('Link failed');
+    }
+  }
+
   const sendBtnEnabled = selectedIds.size > 0;
 
   const dropdownItemStyle: React.CSSProperties = {
@@ -424,6 +443,11 @@ export default function TCLibrary() {
               )}
             </div>
             {canWrite && (
+              <TbBtn variant="ghost" onClick={() => setImportOpen(true)}>
+                📥 Import Excel
+              </TbBtn>
+            )}
+            {canWrite && (
               <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/writer`)}>
                 + Generate More
               </TbBtn>
@@ -501,6 +525,7 @@ export default function TCLibrary() {
           onClear={() => dispatch({ type: 'CLEAR_SELECTION' })}
           onSendToExecution={handleSendToExecution}
           onDelete={handleDeleteSelected}
+          onLinkScript={canWrite ? () => setLinkScriptOpen(true) : undefined}
         />
 
         {/* UseCase groups */}
@@ -549,6 +574,23 @@ export default function TCLibrary() {
           onClose={() => setEditingTc(null)}
         />
       )}
+
+      {projectId && (
+        <TCImportModal
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          projectId={projectId}
+        />
+      )}
+
+      <LinkScriptModal
+        open={linkScriptOpen}
+        onClose={() => setLinkScriptOpen(false)}
+        scripts={scripts}
+        selectedCount={selectedIds.size}
+        onLink={handleLinkScript}
+        isPending={bulkLinkScriptMutation.isPending}
+      />
     </div>
   );
 }

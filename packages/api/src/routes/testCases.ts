@@ -768,6 +768,30 @@ router.post('/bulk-add-tag', async (req: Request, res: Response, next: NextFunct
   }
 });
 
+// ── POST /bulk-link-script — link N selected TCs to one script (or unlink) ──
+
+router.post('/bulk-link-script', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { tcIds, scriptId } = req.body as { tcIds: string[]; scriptId: string | null };
+    if (!Array.isArray(tcIds) || tcIds.length === 0) {
+      res.status(400).json({ error: 'tcIds must be a non-empty array' });
+      return;
+    }
+    // Verify script belongs to this project (skip check when unlinking)
+    if (scriptId) {
+      const script = await prisma.script.findFirst({ where: { id: scriptId, projectId: req.project.id } });
+      if (!script) { res.status(404).json({ error: 'Script not found' }); return; }
+    }
+    const result = await prisma.testCase.updateMany({
+      where: { id: { in: tcIds }, projectId: req.project.id },
+      data: { linkedScriptId: scriptId ?? null },
+    });
+    res.json({ updated: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET /seed-template — download a pre-formatted Excel template ───────────
 
 router.get('/seed-template', (_req: Request, res: Response, next: NextFunction) => {

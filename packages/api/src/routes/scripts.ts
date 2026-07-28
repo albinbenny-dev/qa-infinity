@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import multer from 'multer';
+import fs from 'fs';
 import { z } from 'zod';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — @langchain/core types are resolved inside Docker; ignore locally
@@ -24,6 +25,7 @@ import {
   exportFolderZip,
   getProjectFileContent,
   deleteProjectFile,
+  searchProjectFiles,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
@@ -76,9 +78,26 @@ const robotUpload = multer({
   },
 });
 
+// Large project-folder imports (500MB+) stream straight to disk instead of
+// buffering the whole archive in the process's memory during upload.
+const ZIP_UPLOAD_TMP = process.env.UPLOAD_TMP ?? '/tmp/uploads';
+
 const zipUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        fs.mkdirSync(ZIP_UPLOAD_TMP, { recursive: true });
+        cb(null, ZIP_UPLOAD_TMP);
+      } catch (err) {
+        cb(err as Error, ZIP_UPLOAD_TMP);
+      }
+    },
+    filename: (_req, file, cb) => {
+      const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      cb(null, `${Date.now()}-${safe}`);
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
   fileFilter: (_req, file, cb) => {
     if (file.originalname.endsWith('.zip')) cb(null, true);
     else cb(new Error('Only .zip files are allowed'));
@@ -476,6 +495,21 @@ router.patch('/:id/golden', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] PATCH /:id/golden', err);
     res.status(500).json({ error: 'Failed to update golden status' });
+  }
+});
+
+// ── DELETE /project-file — delete a file or folder by relative path ────────────
+// Must be registered BEFORE DELETE /:id to prevent Express matching 'project-file' as :id
+
+router.delete('/project-file', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    deleteProjectFile(req.project.slug, relPath);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[scripts] DELETE /project-file', err);
+    res.status(500).json({ error: err.message ?? 'Delete failed' });
   }
 });
 
@@ -923,6 +957,20 @@ router.get('/file-tree', async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /search — grep project files for a keyword/phrase ────────────────────
+
+router.get('/search', async (req: Request, res: Response) => {
+  try {
+    const q = String(req.query.q ?? '').trim();
+    if (q.length < 2) { res.json({ groups: [] }); return; }
+    const groups = searchProjectFiles(req.project.slug, q);
+    res.json({ groups });
+  } catch (err) {
+    console.error('[scripts] GET /search', err);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
 // ── GET /project-file/download — download a single file by relative path ──────
 
 router.get('/project-file/download', async (req: Request, res: Response) => {
@@ -954,20 +1002,6 @@ router.get('/project-file/download-zip', async (req: Request, res: Response) => 
   }
 });
 
-// ── DELETE /project-file — delete a file or folder by relative path ────────────
-
-router.delete('/project-file', async (req: Request, res: Response) => {
-  try {
-    const relPath = req.query.path as string;
-    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
-    deleteProjectFile(req.project.slug, relPath);
-    res.json({ ok: true });
-  } catch (err: any) {
-    console.error('[scripts] DELETE /project-file', err);
-    res.status(500).json({ error: err.message ?? 'Delete failed' });
-  }
-});
-
 // ── POST /import-folder — import a zip archive maintaining folder structure ────
 // Accepts a .zip file with QAASR-compatible structure:
 //   TestCases/{UseCase}/TC01_name.robot → DB Script record + TestCase link
@@ -987,8 +1021,13 @@ router.post(
     try {
       if (!req.file) { res.status(400).json({ error: 'No zip file uploaded (field name: folder)' }); return; }
       const { id: projectId, slug } = req.project;
+      // createTCs=false → load scripts only, skip TC creation (feature 3: import confirmation)
+      const createTCs = req.body?.createTCs !== 'false';
 
-      const { files, warnings } = await importFromZip(slug, req.file.buffer);
+      const zipBuffer = fs.readFileSync(req.file.path);
+      fs.unlink(req.file.path, () => { /* best-effort temp cleanup */ });
+
+      const { files, warnings } = await importFromZip(slug, zipBuffer);
 
       // Only test scripts under TestCases/ get DB records
       const testScripts = files.filter(f => f.isTestScript);
@@ -1020,8 +1059,8 @@ router.post(
               });
               testCaseId = tc?.id ?? null;
             }
-            // Auto-create TC if no match
-            if (!testCaseId) {
+            // Auto-create TC if no match and createTCs is enabled
+            if (!testCaseId && createTCs) {
               const title = filename.replace(/\.(robot|spec\.ts|spec\.js)$/, '').replace(/_/g, ' ');
               const maxTc = await prisma.testCase.findFirst({
                 where: { projectId },

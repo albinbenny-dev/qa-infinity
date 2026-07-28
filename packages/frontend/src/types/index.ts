@@ -158,6 +158,7 @@ export interface Script {
   scriptType?: 'PLAYWRIGHT' | 'ROBOT';
   isCustomUpload: boolean;
   isGolden?: boolean;
+  useCaseFolder?: string | null;
   verificationStatus?: 'NOT_VERIFIED' | 'VERIFIED' | 'MANUAL_REVIEW';
   suspectedIssue?: string | null;
   createdAt: string;

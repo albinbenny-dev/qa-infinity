@@ -91,7 +91,7 @@ services:
       - PORT=4000
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@qa-redis:6379
       - DATABASE_URL=postgresql://${POSTGRES_USER:-qauser}:${POSTGRES_PASSWORD}@qa-postgres:5432/${POSTGRES_DB:-qa_infinity}
-      - CORS_ORIGIN=http://localhost:3100
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3100}
       - RUNNER_URL=http://qa-runner:5001
       - RUNNER_PRIMARY_URL=http://qa-runner:5001
     depends_on:
@@ -116,7 +116,7 @@ services:
       resources:
         limits:
           cpus: '0.75'
-          memory: 1200M
+          memory: 2048M
         reservations:
           cpus: '0.25'
           memory: 512M

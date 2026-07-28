@@ -334,3 +334,34 @@ export function useUploadFile() {
     },
   });
 }
+
+export function useParseSeedFileUpload(projectId: string) {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post<{ seedTCs: SeedTCPayload[] }>(
+        `/projects/${projectId}/test-cases/parse-seed`,
+        formData,
+        { headers: { 'Content-Type': undefined } },
+      );
+      return res.data.seedTCs;
+    },
+  });
+}
+
+export function useBulkLinkScript(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ tcIds, scriptId }: { tcIds: string[]; scriptId: string | null }) => {
+      const res = await api.post<{ updated: number }>(
+        `/projects/${projectId}/test-cases/bulk-link-script`,
+        { tcIds, scriptId },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+    },
+  });
+}

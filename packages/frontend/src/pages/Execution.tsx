@@ -448,7 +448,7 @@ export default function Execution() {
     try {
       const run = await createRun.mutateAsync({
         testCaseIds: tcIds,
-        environment,
+        environment: environment || 'Dev',
         parallelWorkers,
         headless: false,
         browser: 'chromium',
@@ -474,7 +474,7 @@ export default function Execution() {
     try {
       const run = await createGroupRun.mutateAsync({
         useCaseTag,
-        environment,
+        environment: environment || 'Dev',
         parallelWorkers,
         headless: false,
         browser: 'chromium',
@@ -499,7 +499,7 @@ export default function Execution() {
     try {
       const run = await createIndividualRun.mutateAsync({
         testCaseId: tc.id,
-        environment,
+        environment: environment || 'Dev',
         browser: 'chromium',
         headless: false,
       });

@@ -10,39 +10,44 @@
 # (3100/4100/5655/6180) and different remote directory. No overlap.
 #
 # Usage:
-#   .\deploy.ps1                                  # build + deploy (first run creates everything)
-#   .\deploy.ps1 -Mode full                       # release + DB dump/restore (see note below)
+#   .\deploy.ps1                                  # SYNC mode by default - fast code deploy (~3-5 min)
+#   .\deploy.ps1 -Mode release                    # full image build+transfer (first run, or runner changed)
+#   .\deploy.ps1 -Mode full                       # release + DB dump/restore
+#   .\deploy.ps1 -Services qa-api                 # sync api only (~90s)
 #   .\deploy.ps1 -SSH my-alias                    # override SSH alias/host
 #   .\deploy.ps1 -CorsOrigin http://10.0.0.5:3100 # set CORS origin for remote server (see below)
 #   .\deploy.ps1 -RemoteComposeCmd 'docker-compose'   # force a specific compose invocation
 #
+# Modes:
+#   sync (DEFAULT) - Fastest for routine code changes.
+#     Pushes local commits to GitHub, then pulls on the remote and rebuilds
+#     with Docker layer cache. .env and scripts/ are gitignored - untouched.
+#     Docker volumes (DB data, artifacts) are completely unaffected.
+#     Transfer: seconds. Build: ~2-3 min (only src layer rebuilds).
+#     Use for: any code change to api or ui.
+#
+#   release - Full image build+save+transfer+load. Use for:
+#     - First-time setup on a new remote (before git is initialised there)
+#     - Runner Dockerfile changes (qa-runner image)
+#     - Dependency (pnpm-lock.yaml) changes
+#     - When sync mode hits an unexpected issue
+#
+#   full - release + DB dump/restore from local to remote.
+#     Only needed when you have local data to push to an existing remote instance.
+#
 # CorsOrigin:
-#   The docker-compose.yml hardcodes CORS_ORIGIN=http://localhost:3100 for local
-#   dev. On a remote server the browser reaches the API from a different origin.
-#   Pass -CorsOrigin http://<server-ip-or-hostname>:3100 on first deploy (and
-#   any time the server address changes). It patches docker-compose.yml in-flight
-#   before upload; nothing is committed to disk.
-#
-# First-time setup:
-#   Just run with defaults (+ -CorsOrigin if needed). Remote dir is created
-#   automatically. Postgres/Redis are initialized fresh on first boot; the API
-#   container runs `prisma db push` on every start. A bootstrap SUPER_ADMIN
-#   account is seeded automatically if you set SEED_ADMIN_EMAIL /
-#   SEED_ADMIN_PASSWORD in your local .env before running (see .env.example).
-#   Without this there is no way to log in until you create one manually.
-#
-# -Mode full:
-#   Only needed when you already have local data you want to push to a
-#   currently-running remote instance, overwriting it. Not needed on a fresh
-#   remote - there is nothing to overwrite. Full mode assumes the remote stack
-#   already exists so it can stop it before restoring.
+#   The docker-compose.yml reads CORS_ORIGIN from the remote .env (with a
+#   localhost fallback). Set CORS_ORIGIN=http://<server-ip>:3100 in the remote
+#   .env once and it survives every git pull.
 # ==============================================================================
 
 param(
-    [ValidateSet('release', 'full')]
-    [string]$Mode = 'release',
+    [ValidateSet('sync', 'release', 'full')]
+    [string]$Mode = 'sync',
     [string]$SSH  = 'qa-server',
     [string]$RemoteDir = '/data/autoab/qa-infinity',
+    # Services to deploy in sync mode (default: api + ui; runner rarely changes)
+    [string]$Services = 'qa-api qa-ui',
     # Pass http://<server-ip>:3100 to patch CORS_ORIGIN for the remote server.
     # Leave blank to keep the compose default (http://localhost:3100).
     [string]$CorsOrigin,
@@ -53,9 +58,9 @@ param(
 $RemoteComposeCmdExplicit = $PSBoundParameters.ContainsKey('RemoteComposeCmd')
 
 $ErrorActionPreference = 'Stop'
-$ProjectName = 'qa-infinity'
-$Services    = 'qa-postgres qa-redis qa-api qa-runner qa-ui'
-$TmpDir      = "$PSScriptRoot\.deploy-tmp"
+$ProjectName    = 'qa-infinity'
+$AllServices    = 'qa-postgres qa-redis qa-api qa-runner qa-ui'   # used by release/full modes
+$TmpDir         = "$PSScriptRoot\.deploy-tmp"
 
 # -- Helpers -------------------------------------------------------------------
 function Log-Step  { param($msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -107,6 +112,80 @@ if (-not (Test-Path "$PSScriptRoot\.env")) {
     Log-Error ".env not found at $PSScriptRoot\.env - copy .env.example to .env and fill it in first."
 }
 
+# ==============================================================================
+# SYNC MODE - fast path: git push locally, git pull + layer-cached build on remote
+# Typical time: ~2-4 min total.
+# .env and scripts/ are gitignored - untouched by pull.
+# Docker named volumes (qa-pgdata, qa-data, etc.) are completely unaffected.
+# Exit early once done; the release/full phases below are skipped.
+# ==============================================================================
+if ($Mode -eq 'sync') {
+    Log-Step "SYNC mode: git pull on remote + layer-cached build"
+
+    # Detect remote compose command
+    if (-not $RemoteComposeCmdExplicit) {
+        $probe = ssh $SSH "sudo docker compose version >/dev/null 2>&1 && echo V2 || (sudo docker-compose version >/dev/null 2>&1 && echo V1 || echo NONE)"
+        switch ($probe.Trim()) {
+            'V2' { $RemoteComposeCmd = 'docker compose' }
+            'V1' { $RemoteComposeCmd = 'docker-compose' }
+            default { Log-Error "Neither 'sudo docker compose' nor 'sudo docker-compose' works on $SSH." }
+        }
+        Log-Ok "Remote compose: '$RemoteComposeCmd'"
+    }
+
+    # Guard: warn if Dockerfiles or pnpm-lock.yaml changed vs what is on remote.
+    $remoteSha = (ssh $SSH "cd $RemoteDir && git rev-parse HEAD 2>/dev/null || echo ''").Trim()
+    $localSha  = (git -C $PSScriptRoot rev-parse HEAD 2>$null).Trim()
+    if ($remoteSha -and $localSha -and ($remoteSha -ne $localSha)) {
+        $releaseFiles = @('pnpm-lock.yaml','packages/api/Dockerfile','packages/frontend/Dockerfile','packages/runner/Dockerfile')
+        $changedCritical = git -C $PSScriptRoot diff --name-only $remoteSha $localSha -- $releaseFiles 2>$null
+        if ($changedCritical) {
+            Write-Host ""
+            Write-Host "  [!!] Critical files changed since remote HEAD ($remoteSha):" -ForegroundColor Yellow
+            $changedCritical | ForEach-Object { Write-Host "       $_" -ForegroundColor Yellow }
+            Write-Host "  [!!] Use -Mode release to rebuild images with new deps/Dockerfile." -ForegroundColor Yellow
+            Write-Host ""
+            $cont = Read-Host "  Continue with sync anyway? (y/N)"
+            if ($cont -ne 'y' -and $cont -ne 'Y') { Write-Host "Aborted." -ForegroundColor Yellow; exit 0 }
+        }
+    }
+
+    # Step 1: push local commits to GitHub so the remote can pull them
+    Log-Step "Pushing local commits to GitHub"
+    git -C $PSScriptRoot push
+    if ($LASTEXITCODE -ne 0) { Log-Error "git push failed" }
+    Log-Ok "Pushed"
+
+    # Step 2: pull on remote + layer-cached build + restart
+    # .env and scripts/ are gitignored - untouched by pull.
+    # Docker named volumes (qa-pgdata etc.) are completely unaffected.
+    Log-Step "Pulling + building on remote for: $Services"
+    ssh $SSH "cd $RemoteDir && git pull && sudo $RemoteComposeCmd -p $ProjectName build --parallel $Services && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
+    if ($LASTEXITCODE -ne 0) { Log-Error "Remote pull/build/restart failed" }
+    Log-Ok "Build and restart complete"
+
+    # Health check
+    Log-Step "Waiting for API health check (port 4100)"
+    $healthy = $false
+    for ($i = 1; $i -le 20; $i++) {
+        Start-Sleep -Seconds 5
+        $result = ssh $SSH "curl -sf http://localhost:4100/health 2>/dev/null && echo OK || echo FAIL"
+        if ($result -match 'OK') { $healthy = $true; break }
+        Write-Host "    Waiting... ($($i * 5)s)" -ForegroundColor Gray
+    }
+    if ($healthy) { Log-Ok "API is healthy" }
+    else { Log-Warn "API health check timed out. Check: ssh $SSH 'sudo docker logs qa-api --tail 50'" }
+
+    Write-Host ""
+    Write-Host "  Sync deploy complete!" -ForegroundColor Green
+    Write-Host "  Services : $Services" -ForegroundColor White
+    Write-Host "  Target   : $SSH -> $RemoteDir" -ForegroundColor White
+    Write-Host "  UI       : http://<server>:3100" -ForegroundColor White
+    Write-Host "  API      : http://<server>:4100" -ForegroundColor White
+    Write-Host ""
+    exit 0
+}
+
 if ($Mode -eq 'full') {
     Log-Warn "FULL MIGRATION mode - this will stop remote services and overwrite the remote database with your local one."
     $confirm = Read-Host "  Type YES to continue"
@@ -146,7 +225,7 @@ New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 Log-Step "Building Docker images (api, runner, ui)"
 
 Push-Location $PSScriptRoot
-docker compose build --no-cache qa-api qa-runner qa-ui
+docker compose build qa-api qa-runner qa-ui
 if ($LASTEXITCODE -ne 0) { Log-Error "Docker build failed" }
 Log-Ok "Images built"
 
@@ -320,10 +399,10 @@ if ($Mode -eq 'full') {
     Log-Ok "Database restored"
 
     Log-Step "Starting all services"
-    Run-SSH "cd $RemoteDir && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
+    Run-SSH "cd $RemoteDir && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $AllServices"
 } else {
     Log-Step "Rolling (re)start on remote"
-    Run-SSH "cd $RemoteDir && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
+    Run-SSH "cd $RemoteDir && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $AllServices"
 }
 
 Log-Ok "Services (re)started"
@@ -380,6 +459,13 @@ if (Test-Path "$PSScriptRoot\scripts\backup-db.sh") {
 # ==============================================================================
 Log-Step "Remote disk usage"
 Run-SSH "df -h /data"
+
+# Record current SHA - future sync deploys will diff against this
+$currentSha = (git -C $PSScriptRoot rev-parse HEAD 2>$null).Trim()
+if ($currentSha) {
+    Run-SSH "echo '$currentSha' > $RemoteDir/.last-deploy-sha"
+    Log-Ok "Recorded deploy SHA: $currentSha"
+}
 
 # -- Cleanup -------------------------------------------------------------------
 Log-Step "Cleaning up local temp files"

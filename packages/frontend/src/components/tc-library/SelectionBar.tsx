@@ -9,6 +9,7 @@ interface SelectionBarProps {
   onClear: () => void;
   onSendToExecution: () => void;
   onDelete: () => void;
+  onLinkScript?: () => void;
   visible: boolean;
 }
 
@@ -20,6 +21,7 @@ export default function SelectionBar({
   onClear,
   onSendToExecution,
   onDelete,
+  onLinkScript,
   visible,
 }: SelectionBarProps) {
   const [moveTarget, setMoveTarget] = useState('');
@@ -203,6 +205,34 @@ export default function SelectionBar({
         >
           Clear
         </button>
+
+        <Divider />
+
+        {/* Link Script */}
+        {onLinkScript && (
+          <>
+            <Divider />
+            <button
+              onClick={onLinkScript}
+              style={{
+                padding: '5px 12px',
+                background: 'rgba(99,102,241,0.1)',
+                border: '1px solid rgba(99,102,241,0.3)',
+                borderRadius: '5px',
+                color: 'var(--violet)',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              🔗 Link Script
+            </button>
+          </>
+        )}
 
         <Divider />
 

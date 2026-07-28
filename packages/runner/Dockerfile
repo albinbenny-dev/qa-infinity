@@ -8,10 +8,21 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
        openbox x11-apps \
   && corepack enable && corepack prepare pnpm@9.15.9 --activate
 
+# Google Chrome for legacy SeleniumLibrary-based scripts (RF Browser/Playwright
+# scripts don't need this — only suites that still import SeleniumLibrary do).
+# Selenium 4.6+'s bundled Selenium Manager auto-downloads a matching chromedriver
+# at runtime, so no separate driver package/version pinning is needed here.
+RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/chrome.deb \
+  && rm -f /tmp/chrome.deb
+
 # Install Robot Framework + RF Browser into a venv so it never conflicts with system pip
 RUN python3 -m venv /opt/rfbrowser \
   && /opt/rfbrowser/bin/pip install --upgrade pip \
-  && /opt/rfbrowser/bin/pip install robotframework robotframework-browser pandas openpyxl
+  && /opt/rfbrowser/bin/pip install robotframework robotframework-browser pandas openpyxl \
+       robotframework-sshlibrary paramiko \
+       urllib3 robotframework-requests robotframework-seleniumlibrary \
+       robotframework-databaselibrary oracledb
 
 # Initialise RF Browser — downloads Playwright browsers managed by RF Browser
 RUN /opt/rfbrowser/bin/python -m Browser.entry init || true

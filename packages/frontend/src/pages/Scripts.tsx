@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import * as Dialog from '@radix-ui/react-dialog';
 import Editor from '@monaco-editor/react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,6 +16,7 @@ import {
   useSaveScriptContent,
   useUploadScript,
   useUploadScriptWithExtract,
+  useDeleteScript,
 } from '../hooks/useScripts';
 import {
   useResources,
@@ -33,6 +35,17 @@ interface FileTreeNode {
   type: 'file' | 'dir';
   ext?: string;
   children?: FileTreeNode[];
+}
+
+interface FileSearchMatch {
+  relPath: string;
+  line: number;
+  text: string;
+}
+
+interface FileSearchGroup {
+  relPath: string;
+  matches: FileSearchMatch[];
 }
 
 // ── Domain constants ────────────────────────────────────────────────────────
@@ -182,7 +195,7 @@ const TYPE_CHIP: Record<string, { bg: string; color: string }> = {
 };
 
 function TCScriptRow({
-  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, onToggle, onOpen, onToggleGolden, onChat,
+  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, onToggle, onOpen, onToggleGolden, onChat, onDelete,
 }: {
   tc: TestCase;
   isScripted: boolean;
@@ -194,6 +207,7 @@ function TCScriptRow({
   onOpen: () => void;
   onToggleGolden?: () => void;
   onChat: () => void;
+  onDelete?: () => void;
 }) {
   const chip = TYPE_CHIP[tc.type] ?? { bg: 'var(--surface3)', color: 'var(--text-dim)' };
   const needsReview = isScripted && verificationStatus === 'MANUAL_REVIEW';
@@ -330,6 +344,33 @@ function TCScriptRow({
           (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
         }}
       >💬</button>
+
+      {/* Delete script — only for scripted TCs */}
+      {isScripted && onDelete ? (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title="Delete this script"
+          style={{
+            width: 20, height: 20, borderRadius: 3,
+            background: 'transparent', border: '1px solid transparent',
+            color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.12)';
+            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(220,38,38,0.3)';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--fail)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+          }}
+        >🗑</button>
+      ) : (
+        <div style={{ width: 20, flexShrink: 0 }} />
+      )}
     </div>
   );
 }
@@ -1591,6 +1632,7 @@ export default function Scripts() {
   const { data: useCases = [] } = useUseCases(projectId);
 
   const save = useSaveScriptContent(projectId ?? '');
+  const deleteScriptMutation = useDeleteScript(projectId ?? '');
   const createIndividualRun = useCreateIndividualRun(projectId ?? '');
   const { data: envConfigs = [] } = useProjectEnvConfigs(projectId);
 
@@ -1826,12 +1868,11 @@ export default function Scripts() {
 
   async function handleQuickRun() {
     if (!projectId || !activeScript?.testCaseId) return;
-    const defaultEnv =
-      envConfigs.find((e) => e.isDefault) ?? envConfigs[0];
-    if (!defaultEnv) {
-      toast.error('No environment configured — add one in Project Settings first.');
-      return;
-    }
+    // No EnvConfig row is fine — many projects are self-contained (URLs baked
+    // into the script/resource files), so fall back to a plain env name and
+    // let the runner proceed without injecting a base URL/credentials.
+    const defaultEnv = envConfigs.find((e) => e.isDefault) ?? envConfigs[0];
+    const environmentName = defaultEnv?.name ?? 'Dev';
     // Auto-save first if dirty
     if (activeTabId && dirtyTabs.has(activeTabId)) {
       try {
@@ -1847,7 +1888,7 @@ export default function Scripts() {
     try {
       const run = await createIndividualRun.mutateAsync({
         testCaseId: activeScript.testCaseId,
-        environment: defaultEnv.name,
+        environment: environmentName,
       });
       setQuickRunId(run.id);
       // Open execution monitor
@@ -1862,11 +1903,9 @@ export default function Scripts() {
 
   async function handleHostBrowserRun() {
     if (!projectId || !activeScript?.testCaseId) return;
+    // No EnvConfig row is fine — see handleQuickRun.
     const defaultEnv = envConfigs.find((e) => e.isDefault) ?? envConfigs[0];
-    if (!defaultEnv) {
-      toast.error('No environment configured — add one in Project Settings first.');
-      return;
-    }
+    const environmentName = defaultEnv?.name ?? 'Dev';
     if (activeTabId && dirtyTabs.has(activeTabId)) {
       try {
         await save.mutateAsync({ scriptId: activeTabId, content: tabContents[activeTabId] ?? '' });
@@ -1887,7 +1926,7 @@ export default function Scripts() {
     try {
       const run = await createIndividualRun.mutateAsync({
         testCaseId: activeScript.testCaseId,
-        environment: defaultEnv.name,
+        environment: environmentName,
         hostBrowser: true,
       });
       setHostRunId(run.id);
@@ -1975,7 +2014,9 @@ export default function Scripts() {
       await api.delete(`/projects/${projectId}/scripts/project-file`, { params: { path: relPath } });
       toast.success('Deleted');
       loadFileTree();
-    } catch { toast.error('Delete failed'); }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Delete failed', { duration: 6000 });
+    }
   }
 
   function handleOpenFileFromTree(path: string) {
@@ -1990,16 +2031,53 @@ export default function Scripts() {
     downloadProjectFile(path);
   }
 
+  // ── Project-wide file search ("Find in Files") ────────────────────────────
+  const [fileSearchOpen, setFileSearchOpen] = useState(false);
+  const [fileSearchQuery, setFileSearchQuery] = useState('');
+  const [fileSearchGroups, setFileSearchGroups] = useState<FileSearchGroup[]>([]);
+  const [fileSearchLoading, setFileSearchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!fileSearchOpen) return;
+    const q = fileSearchQuery.trim();
+    if (q.length < 2) { setFileSearchGroups([]); return; }
+    const timer = setTimeout(async () => {
+      setFileSearchLoading(true);
+      try {
+        const { data } = await api.get(`/projects/${projectId}/scripts/search`, { params: { q } });
+        setFileSearchGroups(data.groups ?? []);
+      } catch {
+        setFileSearchGroups([]);
+      } finally {
+        setFileSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [fileSearchQuery, fileSearchOpen, projectId]);
+
+  function openSearchResult(path: string, line: number) {
+    const filename = path.split('/').pop() ?? path;
+    const matchedScript = scripts.find(s => s.filename === filename);
+    if (matchedScript) { pendingRevealLineRef.current = line; openTab(matchedScript); return; }
+    const matchedResource = resources.find(r => (r.filename.split('/').pop() ?? r.filename) === filename);
+    if (matchedResource) { openResourceTab(matchedResource.filename, line); return; }
+    downloadProjectFile(path);
+  }
+
   // ── Import folder (zip) ───────────────────────────────────────────────────
   const importFolderRef = useRef<HTMLInputElement>(null);
+  const [importConfirmFile, setImportConfirmFile] = useState<File | null>(null);
 
-  async function handleImportFolder(file: File) {
+  async function handleImportFolder(file: File, createTCs = true) {
+    setImportConfirmFile(null);
     const toastId = toast.loading('Importing zip…');
     try {
       const form = new FormData();
       form.append('folder', file);
+      form.append('createTCs', createTCs ? 'true' : 'false');
       const { data } = await api.post(`/projects/${projectId}/scripts/import-folder`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30 * 60 * 1000, // large project folders can take minutes to upload + import
       });
       toast.success(
         `Imported ${data.imported?.length ?? 0} scripts, ${data.resourceFiles ?? 0} resource files` +
@@ -2007,6 +2085,7 @@ export default function Scripts() {
         { id: toastId, duration: 5000 },
       );
       qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+      qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       loadFileTree();
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'Import failed', { id: toastId });
@@ -2370,6 +2449,20 @@ export default function Scripts() {
     }
   }
 
+  // ── Delete script ──────────────────────────────────────────────────────────
+
+  async function handleDeleteScript(scriptId: string, label: string) {
+    if (!window.confirm(`Delete the script for "${label}"? This removes both the file and its run history. This cannot be undone.`)) return;
+    try {
+      await deleteScriptMutation.mutateAsync(scriptId);
+      closeTab(scriptId);
+      loadFileTree();
+      toast.success('Script deleted');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to delete script');
+    }
+  }
+
   // ── Send to execution ─────────────────────────────────────────────────────
 
   function handleSendToExecution() {
@@ -2663,7 +2756,7 @@ export default function Scripts() {
         type="file"
         accept=".zip"
         style={{ display: 'none' }}
-        onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFolder(f); e.target.value = ''; }}
+        onChange={e => { const f = e.target.files?.[0]; if (f) setImportConfirmFile(f); e.target.value = ''; }}
       />
 
       {/* 2-column body */}
@@ -2973,6 +3066,7 @@ export default function Scripts() {
                                       : `Generate a script for ${tc.tcId} — ${tc.title}`;
                                     openChat({ prompt, context: { tcId: tc.tcId, tcTitle: tc.title, page: 'scripts' } });
                                   }}
+                                  onDelete={linkedScript && canWrite ? () => handleDeleteScript(linkedScript.id, `${tc.tcId} — ${tc.title}`) : undefined}
                                 />
                               );
                             })}
@@ -3057,10 +3151,91 @@ export default function Scripts() {
                   style={{ padding: '5px 8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-mid)', fontSize: 13 }}
                   title="Refresh"
                 >↺</button>
+                <button
+                  onClick={() => {
+                    setFileSearchOpen((o) => !o);
+                    if (fileSearchOpen) setFileSearchQuery('');
+                  }}
+                  style={{
+                    padding: '5px 8px', borderRadius: 5, cursor: 'pointer', fontSize: 13,
+                    background: fileSearchOpen ? 'var(--cyan-dim)' : 'transparent',
+                    border: `1px solid ${fileSearchOpen ? 'var(--cyan)' : 'var(--border)'}`,
+                    color: fileSearchOpen ? 'var(--cyan)' : 'var(--text-mid)',
+                  }}
+                  title="Search across all project files"
+                >🔍</button>
               </div>
-              {/* File tree */}
+
+              {/* Find-in-files search box */}
+              {fileSearchOpen && (
+                <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                  <input
+                    autoFocus
+                    className="input-field"
+                    value={fileSearchQuery}
+                    onChange={(e) => setFileSearchQuery(e.target.value)}
+                    placeholder="Search keyword, selector, text… across all project files"
+                    style={{ width: '100%', boxSizing: 'border-box', fontSize: 12 }}
+                  />
+                </div>
+              )}
+
+              {/* File tree OR search results */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-                {fileTreeLoading ? (
+                {fileSearchOpen && fileSearchQuery.trim().length >= 2 ? (
+                  fileSearchLoading ? (
+                    <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12, textAlign: 'center' }}>Searching…</div>
+                  ) : fileSearchGroups.length === 0 ? (
+                    <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                      No matches for "{fileSearchQuery}".
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 10px' }}>
+                      {fileSearchGroups.map((group) => (
+                        <div key={group.relPath}>
+                          <div
+                            onClick={() => openSearchResult(group.relPath, group.matches[0]?.line ?? 1)}
+                            style={{
+                              fontSize: 11, fontWeight: 700, color: 'var(--sky)', cursor: 'pointer',
+                              marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                            title={group.relPath}
+                          >
+                            📄 {group.relPath}
+                          </div>
+                          {group.matches.map((m, i) => {
+                            const idx = m.text.toLowerCase().indexOf(fileSearchQuery.trim().toLowerCase());
+                            return (
+                              <div
+                                key={i}
+                                onClick={() => openSearchResult(group.relPath, m.line)}
+                                style={{
+                                  display: 'flex', gap: 8, padding: '2px 6px', borderRadius: 4,
+                                  cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11,
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                              >
+                                <span style={{ color: 'var(--text-dim)', flexShrink: 0, minWidth: 28, textAlign: 'right' }}>{m.line}</span>
+                                <span style={{ color: 'var(--text-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {idx === -1 ? m.text : (
+                                    <>
+                                      {m.text.slice(0, idx)}
+                                      <mark style={{ background: 'rgba(251,191,36,0.35)', color: 'var(--text)', borderRadius: 2 }}>
+                                        {m.text.slice(idx, idx + fileSearchQuery.trim().length)}
+                                      </mark>
+                                      {m.text.slice(idx + fileSearchQuery.trim().length)}
+                                    </>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : fileTreeLoading ? (
                   <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12, textAlign: 'center' }}>Loading…</div>
                 ) : fileTree.length === 0 ? (
                   <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
@@ -3215,6 +3390,33 @@ export default function Scripts() {
                     }}
                   >
                     {activeScript.isGolden ? '★ Golden' : '☆ Golden'}
+                  </button>
+                )}
+
+                {/* 🗑 Delete script */}
+                {activeScript && canWrite && (
+                  <button
+                    onClick={() => handleDeleteScript(activeScript.id, `${activeTc?.tcId ?? ''} — ${activeTc?.title ?? activeScript.filename}`)}
+                    title="Delete this script"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '3px 9px', borderRadius: 5, cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: '1px solid rgba(248,113,113,0.4)',
+                      background: 'transparent',
+                      color: 'rgba(226,232,240,0.4)',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.12)';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--fail)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'rgba(226,232,240,0.4)';
+                    }}
+                  >
+                    🗑 Delete
                   </button>
                 )}
 
@@ -3544,6 +3746,87 @@ export default function Scripts() {
         </div>
       </div>
 
+      {/* Import folder confirmation dialog */}
+      <Dialog.Root open={!!importConfirmFile} onOpenChange={(o) => !o && setImportConfirmFile(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 9998 }} />
+          <Dialog.Content
+            style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px',
+              padding: '28px', width: '440px', boxShadow: '0 24px 64px rgba(0,0,0,0.5)', zIndex: 9999,
+              display: 'flex', flexDirection: 'column', gap: '18px',
+            }}
+          >
+            <div>
+              <Dialog.Title style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)', margin: 0 }}>
+                📦 Import Folder
+              </Dialog.Title>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-dim)', margin: '4px 0 0' }}>
+                {importConfirmFile?.name}
+              </p>
+            </div>
+
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-mid)', fontWeight: 700, marginBottom: '10px' }}>
+                How should test scripts be handled?
+              </div>
+              <ImportOption
+                label="Load scripts + auto-create TC Library entries"
+                description="Scripts are imported and a TC Library record is auto-created for each one. Recommended for legacy test suites."
+                badge="Recommended"
+                badgeColor="var(--emerald)"
+                onClick={() => importConfirmFile && handleImportFolder(importConfirmFile, true)}
+              />
+              <ImportOption
+                label="Load scripts only"
+                description="Scripts are imported but no TC Library entries are created. Use when TCs already exist or you'll link manually."
+                onClick={() => importConfirmFile && handleImportFolder(importConfirmFile, false)}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Dialog.Close asChild>
+                <button className="tb-btn tb-btn-ghost" onClick={() => setImportConfirmFile(null)}>Cancel</button>
+              </Dialog.Close>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
     </div>
+  );
+}
+
+function ImportOption({
+  label, description, badge, badgeColor, onClick,
+}: { label: string; description: string; badge?: string; badgeColor?: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'block', width: '100%', textAlign: 'left', padding: '12px 14px',
+        background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px',
+        cursor: 'pointer', marginBottom: '8px', transition: 'border-color 0.1s',
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(99,102,241,0.5)'; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+        <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>{label}</span>
+        {badge && (
+          <span style={{
+            fontSize: '9px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px',
+            background: `color-mix(in srgb, ${badgeColor} 15%, transparent)`,
+            color: badgeColor, fontFamily: 'var(--font-mono)',
+          }}>
+            {badge}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: '10px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
+        {description}
+      </div>
+    </button>
   );
 }
