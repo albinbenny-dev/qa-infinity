@@ -136,6 +136,8 @@ async function startVncStack() {
     console.log('[qa-runner] Starting Xvfb on display ' + VNC_DISPLAY);
     spawnLogged('Xvfb', [VNC_DISPLAY, '-screen', '0', '1920x1080x24', '-ac']);
     await new Promise((resolve) => waitForXvfb(VNC_DISPLAY, resolve));
+    // Start Openbox window manager so --start-maximized works in Chromium
+    spawnLogged('openbox', ['--display', VNC_DISPLAY]);
   }
 
   // 2. x11vnc — start only if nothing is listening on VNC_PORT yet
