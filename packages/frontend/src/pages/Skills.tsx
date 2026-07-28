@@ -2141,9 +2141,20 @@ function FeatureGenerateModal({
   const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState<{ step: number; total: number; skillName: string; skillType: string } | null>(null);
   const [allTCs, setAllTCs] = useState<GeneratedTC[]>([]);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [errMsg, setErrMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [additionalContext, setAdditionalContext] = useState('');
+
+  // Auto-select newly streamed-in TCs
+  React.useEffect(() => {
+    setSelectedIndices(prev => {
+      if (prev.size === allTCs.length) return prev;
+      const next = new Set(prev);
+      for (let i = 0; i < allTCs.length; i++) next.add(i);
+      return next;
+    });
+  }, [allTCs.length]);
   const abortRef = useRef<AbortController | null>(null);
 
   const pct = progress ? Math.round((progress.step / progress.total) * 100) : 0;
@@ -2238,8 +2249,9 @@ function FeatureGenerateModal({
     if (allTCs.length === 0) return;
     setSaving(true);
     try {
+      const toSave = allTCs.filter((_, i) => selectedIndices.has(i));
       await saveTCsMutation.mutateAsync(
-        allTCs.map((tc) => ({
+        toSave.map((tc) => ({
           title: String(tc.title ?? 'Untitled'),
           description: tc.description ? String(tc.description) : undefined,
           steps: Array.isArray(tc.steps) ? (tc.steps as string[]) : [],
@@ -2251,7 +2263,7 @@ function FeatureGenerateModal({
           useCaseTag: featureGroup,
         })),
       );
-      toast.success(`${allTCs.length} test cases saved`);
+      toast.success(`${toSave.length} test cases saved`);
       qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
       onClose();
     } catch {
@@ -2426,43 +2438,92 @@ function FeatureGenerateModal({
 
           {allTCs.length > 0 && (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>
-                {allTCs.length} test case{allTCs.length !== 1 ? 's' : ''} generated
-                {phase === 'running' ? ' so far…' : ''}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 340, overflowY: 'auto' }}>
-                {allTCs.map((tc, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      padding: '8px 12px',
-                      background: 'var(--surface2)',
-                      borderRadius: 6,
-                      border: '1px solid var(--border)',
-                    }}
-                  >
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>
-                      {tc.title}
-                    </div>
-                    {tc.description && (
-                      <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                        {tc.description}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', gap: 5, marginTop: 5 }}>
-                      {tc.type && (
-                        <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 100, background: 'var(--cyan-dim)', color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
-                          {String(tc.type)}
-                        </span>
-                      )}
-                      {tc.priority && (
-                        <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 100, background: 'var(--surface3)', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                          {String(tc.priority)}
-                        </span>
-                      )}
-                    </div>
+              {/* List header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>
+                  {phase === 'running'
+                    ? `${allTCs.length} generated so far…`
+                    : `${selectedIndices.size} of ${allTCs.length} selected`}
+                </div>
+                {phase !== 'running' && (
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      onClick={() => setSelectedIndices(new Set(allTCs.map((_, i) => i)))}
+                      style={{ fontSize: 11, color: 'var(--sky)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      onClick={() => setSelectedIndices(new Set())}
+                      style={{ fontSize: 11, color: 'var(--text-dim)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      Deselect all
+                    </button>
                   </div>
-                ))}
+                )}
+              </div>
+
+              {/* TC rows */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 340, overflowY: 'auto' }}>
+                {allTCs.map((tc, i) => {
+                  const checked = selectedIndices.has(i);
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => {
+                        if (phase === 'running') return;
+                        setSelectedIndices(prev => {
+                          const next = new Set(prev);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        });
+                      }}
+                      style={{
+                        padding: '8px 12px',
+                        background: checked ? 'var(--surface2)' : 'var(--surface)',
+                        borderRadius: 6,
+                        border: `1px solid ${checked ? 'var(--border)' : 'var(--border)'}`,
+                        opacity: checked ? 1 : 0.45,
+                        cursor: phase === 'running' ? 'default' : 'pointer',
+                        display: 'flex',
+                        gap: 10,
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      {phase !== 'running' && (
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {}}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ marginTop: 2, flexShrink: 0, cursor: 'pointer', accentColor: 'var(--sky)' }}
+                        />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>
+                          {tc.title}
+                        </div>
+                        {tc.description && (
+                          <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                            {tc.description}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 5, marginTop: 5 }}>
+                          {tc.type && (
+                            <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 100, background: 'var(--cyan-dim)', color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
+                              {String(tc.type)}
+                            </span>
+                          )}
+                          {tc.priority && (
+                            <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 100, background: 'var(--surface3)', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                              {String(tc.priority)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2491,20 +2552,22 @@ function FeatureGenerateModal({
           {phase === 'done' && allTCs.length > 0 && (
             <button
               onClick={() => void handleSave()}
-              disabled={saving}
+              disabled={saving || selectedIndices.size === 0}
               style={{
                 padding: '8px 22px',
                 borderRadius: 'var(--radius)',
                 border: 'none',
                 fontSize: 12,
                 fontWeight: 700,
-                background: 'linear-gradient(135deg, var(--emerald), #059669)',
-                color: '#fff',
-                cursor: saving ? 'not-allowed' : 'pointer',
+                background: selectedIndices.size === 0
+                  ? 'var(--surface3)'
+                  : 'linear-gradient(135deg, var(--emerald), #059669)',
+                color: selectedIndices.size === 0 ? 'var(--text-dim)' : '#fff',
+                cursor: (saving || selectedIndices.size === 0) ? 'not-allowed' : 'pointer',
                 opacity: saving ? 0.7 : 1,
               }}
             >
-              {saving ? '⏳ Saving...' : `✓ Save ${allTCs.length} Test Cases`}
+              {saving ? '⏳ Saving...' : selectedIndices.size === 0 ? 'No TCs selected' : `✓ Save ${selectedIndices.size} Test Cases`}
             </button>
           )}
         </div>
