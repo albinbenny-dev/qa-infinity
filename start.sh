@@ -37,7 +37,8 @@ echo ""
 cd "$SCRIPT_DIR"
 
 # ==============================================================================
-# Detect whether sudo is needed to reach the Docker socket
+# Detect whether sudo is needed and whether to use V2 (docker compose)
+# or V1 (docker-compose)
 # ==============================================================================
 DOCKER="docker"
 if ! docker info > /dev/null 2>&1; then
@@ -46,17 +47,29 @@ if ! docker info > /dev/null 2>&1; then
   fi
 fi
 
+# V2 plugin ships as `docker compose`; V1 is a standalone `docker-compose` binary
+if $DOCKER compose version > /dev/null 2>&1; then
+  COMPOSE="$DOCKER compose"
+elif command -v docker-compose > /dev/null 2>&1; then
+  COMPOSE="docker-compose"
+  [ "$DOCKER" = "sudo docker" ] && COMPOSE="sudo docker-compose"
+else
+  echo "    [ERR] Neither 'docker compose' (V2) nor 'docker-compose' (V1) found."
+  echo "    Install Docker Compose and try again."
+  exit 1
+fi
+
 # -- Stop mode -----------------------------------------------------------------
 if $STOP; then
   step "Stopping QA Infinity"
-  $DOCKER compose stop
+  $COMPOSE stop
   ok "All containers stopped. Data is preserved."
   exit 0
 fi
 
 # -- Logs mode -----------------------------------------------------------------
 if $LOGS; then
-  $DOCKER compose logs -f --tail=50
+  $COMPOSE logs -f --tail=50
   exit 0
 fi
 
@@ -136,10 +149,10 @@ fi
 if $BUILD || $is_first_run; then
   if $is_first_run; then
     step "First run — building Docker images (this takes ~3-5 minutes)"
-    $DOCKER compose build qa-api qa-runner qa-ui
+    $COMPOSE build qa-api qa-runner qa-ui
   else
     step "Building Docker images (--no-cache)"
-    $DOCKER compose build --no-cache qa-api qa-runner qa-ui
+    $COMPOSE build --no-cache qa-api qa-runner qa-ui
   fi
   ok "Images built"
 else
@@ -151,7 +164,7 @@ fi
 # STEP 4 — Start the stack
 # ==============================================================================
 step "Starting QA Infinity stack"
-$DOCKER compose up -d
+$COMPOSE up -d
 
 # ==============================================================================
 # STEP 5 — Wait for API health
