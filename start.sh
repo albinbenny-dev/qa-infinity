@@ -36,17 +36,27 @@ echo ""
 
 cd "$SCRIPT_DIR"
 
+# ==============================================================================
+# Detect whether sudo is needed to reach the Docker socket
+# ==============================================================================
+DOCKER="docker"
+if ! docker info > /dev/null 2>&1; then
+  if sudo docker info > /dev/null 2>&1; then
+    DOCKER="sudo docker"
+  fi
+fi
+
 # -- Stop mode -----------------------------------------------------------------
 if $STOP; then
   step "Stopping QA Infinity"
-  docker compose stop
+  $DOCKER compose stop
   ok "All containers stopped. Data is preserved."
   exit 0
 fi
 
 # -- Logs mode -----------------------------------------------------------------
 if $LOGS; then
-  docker compose logs -f --tail=50
+  $DOCKER compose logs -f --tail=50
   exit 0
 fi
 
@@ -54,12 +64,16 @@ fi
 # STEP 1 — Check Docker
 # ==============================================================================
 step "Checking Docker"
-if ! docker info > /dev/null 2>&1; then
+if ! $DOCKER info > /dev/null 2>&1; then
   err "Docker is not running or not accessible."
   echo "    Start Docker and try again (or run: sudo systemctl start docker)"
   exit 1
 fi
-ok "Docker is running"
+if [ "$DOCKER" = "sudo docker" ]; then
+  ok "Docker is running (using sudo — add user to 'docker' group to avoid this)"
+else
+  ok "Docker is running"
+fi
 
 # ==============================================================================
 # STEP 2 — First-time .env setup
@@ -115,17 +129,17 @@ ok ".env is configured (provider: $provider)"
 # STEP 3 — Build or pull images
 # ==============================================================================
 is_first_run=false
-if ! docker images -q qa-infinity-qa-api:latest 2>/dev/null | grep -q .; then
+if ! $DOCKER images -q qa-infinity-qa-api:latest 2>/dev/null | grep -q .; then
   is_first_run=true
 fi
 
 if $BUILD || $is_first_run; then
   if $is_first_run; then
     step "First run — building Docker images (this takes ~3-5 minutes)"
-    docker compose build qa-api qa-runner qa-ui
+    $DOCKER compose build qa-api qa-runner qa-ui
   else
     step "Building Docker images (--no-cache)"
-    docker compose build --no-cache qa-api qa-runner qa-ui
+    $DOCKER compose build --no-cache qa-api qa-runner qa-ui
   fi
   ok "Images built"
 else
@@ -137,7 +151,7 @@ fi
 # STEP 4 — Start the stack
 # ==============================================================================
 step "Starting QA Infinity stack"
-docker compose up -d
+$DOCKER compose up -d
 
 # ==============================================================================
 # STEP 5 — Wait for API health
@@ -172,7 +186,7 @@ if $healthy; then
 else
   warn "API did not become healthy within 2 minutes."
   echo "    Check logs with:  ./start.sh --logs"
-  echo "    Or directly:      docker logs qa-api --tail 50"
+  echo "    Or directly:      $DOCKER logs qa-api --tail 50"
 fi
 
 echo ""
