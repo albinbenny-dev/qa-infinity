@@ -514,6 +514,45 @@ router.post('/stop-recording', async (req: Request, res: Response, next: NextFun
   }
 });
 
+// ── POST /import-script — save a locally-recorded Playwright script as a skill ──
+
+router.post('/import-script', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { name, targetUrl, scriptContent, scope, featureGroup } = req.body as {
+      name?: string;
+      targetUrl?: string;
+      scriptContent?: string;
+      scope?: string;
+      featureGroup?: string;
+    };
+    if (!name?.trim()) { res.status(400).json({ error: 'name is required' }); return; }
+    if (!targetUrl?.trim()) { res.status(400).json({ error: 'targetUrl is required' }); return; }
+    if (!scriptContent?.trim()) { res.status(400).json({ error: 'scriptContent is required' }); return; }
+
+    const skillContent = parsePlaywrightCodegen(scriptContent, targetUrl);
+
+    const skill = await prisma.projectSkill.create({
+      data: {
+        projectId: req.project.id,
+        skillType: 'UI_FLOW',
+        name: name.trim(),
+        scope: scope ?? null,
+        featureGroup: featureGroup ?? null,
+        content: JSON.stringify(skillContent),
+        captureMethod: 'USER_RECORDED',
+        confidence: 0.95,
+      },
+    });
+    if (skill.isActive) {
+      saveSkillFile(req.project.slug, skill.id, toSkillFileData(skill));
+    }
+
+    res.status(201).json({ skill });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── POST /cancel-recording — kill codegen without saving ──────────────────
 
 router.post('/cancel-recording', async (req: Request, res: Response, next: NextFunction) => {

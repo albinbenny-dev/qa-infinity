@@ -167,6 +167,29 @@ export function useCancelRecording(projectId: string) {
   });
 }
 
+export function useImportScript(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      name: string;
+      targetUrl: string;
+      scriptContent: string;
+      scope?: string;
+      featureGroup?: string | null;
+    }) => {
+      const res = await api.post<{ skill: import('../types').ProjectSkill }>(
+        `/projects/${projectId}/skills/import-script`,
+        payload,
+        { timeout: 15_000 },
+      );
+      return res.data.skill;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills', projectId] });
+    },
+  });
+}
+
 export function useFeatureGroups(projectId: string | undefined) {
   return useQuery({
     queryKey: ['skill-features', projectId],

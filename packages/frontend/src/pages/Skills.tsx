@@ -11,6 +11,7 @@ import {
   useStartRecording,
   useStopRecording,
   useCancelRecording,
+  useImportScript,
   useExtractSkillFromDoc,
   useConvertSkillFromText,
   useFeatureGroups,
@@ -651,6 +652,8 @@ function CreateSkillModal({
 
   const [manualInputMode, setManualInputMode] = useState<'plain' | 'json'>('plain');
   const [plainText, setPlainText] = useState('');
+  const [recordSubMode, setRecordSubMode] = useState<'browser' | 'paste'>('browser');
+  const [pastedScript, setPastedScript] = useState('');
 
   // API spec import (API_CONTRACT only) — curl / OpenAPI / Postman
   const [specText, setSpecText] = useState('');
@@ -664,6 +667,7 @@ function CreateSkillModal({
   const startRecordingMutation = useStartRecording(projectId);
   const stopRecordingMutation = useStopRecording(projectId);
   const cancelRecordingMutation = useCancelRecording(projectId);
+  const importScriptMutation = useImportScript(projectId);
   const extractMutation = useExtractSkillFromDoc(projectId);
   const convertMutation = useConvertSkillFromText(projectId);
   const uploadMutation = useUploadFile();
@@ -726,6 +730,26 @@ function CreateSkillModal({
       setAnnotationStep({ skillId: savedSkill.id, skillContent: savedSkill.content });
     } catch (err) {
       toast.error((err as Error).message ?? 'Failed to save recording');
+    }
+  }
+
+  async function handleImportScript() {
+    if (!name.trim()) { toast.error('Name is required'); return; }
+    if (!targetUrl.trim()) { toast.error('Target URL is required'); return; }
+    if (!pastedScript.trim()) { toast.error('Paste a Playwright script first'); return; }
+    try {
+      const savedSkill = await importScriptMutation.mutateAsync({
+        name: name.trim(),
+        targetUrl,
+        scriptContent: pastedScript,
+        scope: scope || undefined,
+        featureGroup: featureGroup || null,
+      });
+      toast.success('Script imported — annotate to improve TC generation');
+      setPastedScript('');
+      setAnnotationStep({ skillId: savedSkill.id, skillContent: savedSkill.content });
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Failed to import script');
     }
   }
 
@@ -1255,90 +1279,140 @@ function CreateSkillModal({
 
           {/* Record flow fields */}
           {createMode === 'record' && activeSkillType === 'UI_FLOW' && (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                padding: 12,
-                background: activeRecording ? 'rgba(239,68,68,0.06)' : 'var(--emerald-dim)',
-                borderRadius: 'var(--radius)',
-                border: `1px solid ${activeRecording ? 'rgba(239,68,68,0.25)' : 'rgba(42,157,143,0.2)'}`,
-              }}
-            >
-              {!activeRecording ? (
-                <>
-                  <div style={{ fontSize: 11, color: 'var(--emerald)' }}>
-                    🔴 A browser window opens on the server — you perform the flow yourself, then click Stop & Save
-                  </div>
-                  {envConfigs.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>
-                        Pick environment
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                        {envConfigs.map((env: { id: string; name: string; baseUrl: string; isDefault: boolean }) => (
-                          <button
-                            key={env.id}
-                            type="button"
-                            onClick={() => setTargetUrl(env.baseUrl)}
-                            style={{
-                              padding: '4px 10px',
-                              fontSize: 11,
-                              borderRadius: 5,
-                              border: `1px solid ${targetUrl === env.baseUrl ? 'var(--emerald)' : 'var(--border2)'}`,
-                              background: targetUrl === env.baseUrl ? 'var(--emerald-dim)' : 'var(--surface2)',
-                              color: targetUrl === env.baseUrl ? 'var(--emerald)' : 'var(--text-dim)',
-                              cursor: 'pointer',
-                              fontWeight: targetUrl === env.baseUrl ? 700 : 400,
-                            }}
-                          >
-                            {env.name}{env.isDefault ? ' ★' : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <input
-                    className="input-field"
-                    value={targetUrl}
-                    onChange={(e) => setTargetUrl(e.target.value)}
-                    placeholder="Target URL (e.g. https://yourapp.com/orders/new)"
-                    style={{ fontSize: 11 }}
-                  />
-                </>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 14 }}>🔴</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>
-                      Recording in progress
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                    The browser tab should have opened. Perform your UI flow there,
-                    then click <strong>Stop & Save Skill</strong> when done.
-                  </div>
-                  <button
-                    onClick={() => {
-                      const novncUrl = `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?autoconnect=1&resize=scale`;
-                      window.open(novncUrl, '_blank');
-                    }}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 6,
-                      border: '1px solid rgba(239,68,68,0.3)',
-                      background: 'rgba(239,68,68,0.08)',
-                      color: '#ef4444',
-                      fontSize: 11,
-                      cursor: 'pointer',
-                      alignSelf: 'flex-start',
-                    }}
-                  >
-                    ↗ Re-open browser tab
-                  </button>
-                </>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Sub-mode toggle — only shown when not actively recording */}
+              {!activeRecording && (
+                <div style={{ display: 'flex', gap: 4, background: 'var(--surface2)', borderRadius: 6, padding: 3, alignSelf: 'flex-start' }}>
+                  {(['browser', 'paste'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setRecordSubMode(m)}
+                      style={{
+                        padding: '4px 12px',
+                        fontSize: 11,
+                        borderRadius: 4,
+                        border: 'none',
+                        background: recordSubMode === m ? 'var(--surface)' : 'transparent',
+                        color: recordSubMode === m ? 'var(--text)' : 'var(--text-dim)',
+                        fontWeight: recordSubMode === m ? 600 : 400,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {m === 'browser' ? '🔴 Record in Browser' : '📋 Paste Local Script'}
+                    </button>
+                  ))}
+                </div>
               )}
+
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  padding: 12,
+                  background: activeRecording ? 'rgba(239,68,68,0.06)' : 'var(--emerald-dim)',
+                  borderRadius: 'var(--radius)',
+                  border: `1px solid ${activeRecording ? 'rgba(239,68,68,0.25)' : 'rgba(42,157,143,0.2)'}`,
+                }}
+              >
+                {!activeRecording ? (
+                  recordSubMode === 'browser' ? (
+                    <>
+                      <div style={{ fontSize: 11, color: 'var(--emerald)' }}>
+                        🔴 A browser window opens on the server — you perform the flow yourself, then click Stop & Save
+                      </div>
+                      {envConfigs.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>
+                            Pick environment
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                            {envConfigs.map((env: { id: string; name: string; baseUrl: string; isDefault: boolean }) => (
+                              <button
+                                key={env.id}
+                                type="button"
+                                onClick={() => setTargetUrl(env.baseUrl)}
+                                style={{
+                                  padding: '4px 10px',
+                                  fontSize: 11,
+                                  borderRadius: 5,
+                                  border: `1px solid ${targetUrl === env.baseUrl ? 'var(--emerald)' : 'var(--border2)'}`,
+                                  background: targetUrl === env.baseUrl ? 'var(--emerald-dim)' : 'var(--surface2)',
+                                  color: targetUrl === env.baseUrl ? 'var(--emerald)' : 'var(--text-dim)',
+                                  cursor: 'pointer',
+                                  fontWeight: targetUrl === env.baseUrl ? 700 : 400,
+                                }}
+                              >
+                                {env.name}{env.isDefault ? ' ★' : ''}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <input
+                        className="input-field"
+                        value={targetUrl}
+                        onChange={(e) => setTargetUrl(e.target.value)}
+                        placeholder="Target URL (e.g. https://yourapp.com/orders/new)"
+                        style={{ fontSize: 11 }}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 11, color: 'var(--emerald)', lineHeight: 1.6 }}>
+                        📋 Run <code style={{ background: 'var(--surface2)', padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>npx playwright codegen &lt;url&gt;</code> locally, then paste the output below.
+                      </div>
+                      <input
+                        className="input-field"
+                        value={targetUrl}
+                        onChange={(e) => setTargetUrl(e.target.value)}
+                        placeholder="Target URL (e.g. https://yourapp.com/orders/new)"
+                        style={{ fontSize: 11 }}
+                      />
+                      <textarea
+                        className="input-field"
+                        value={pastedScript}
+                        onChange={(e) => setPastedScript(e.target.value)}
+                        placeholder={"Paste Playwright script here...\n\nimport { test, expect } from '@playwright/test';\n\ntest('test', async ({ page }) => {\n  await page.goto('https://...');\n  ..."}
+                        rows={10}
+                        style={{ fontSize: 11, fontFamily: 'var(--font-mono)', resize: 'vertical' }}
+                      />
+                    </>
+                  )
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14 }}>🔴</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>
+                        Recording in progress
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+                      The browser tab should have opened. Perform your UI flow there,
+                      then click <strong>Stop & Save Skill</strong> when done.
+                    </div>
+                    <button
+                      onClick={() => {
+                        const novncUrl = `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?autoconnect=1&resize=scale`;
+                        window.open(novncUrl, '_blank');
+                      }}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: 6,
+                        border: '1px solid rgba(239,68,68,0.3)',
+                        background: 'rgba(239,68,68,0.08)',
+                        color: '#ef4444',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        alignSelf: 'flex-start',
+                      }}
+                    >
+                      ↗ Re-open browser tab
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -1772,6 +1846,24 @@ function CreateSkillModal({
                     }}
                   >
                     {stopRecordingMutation.isPending ? '⏳ Saving...' : '⏹ Stop & Save Skill'}
+                  </button>
+                ) : recordSubMode === 'paste' ? (
+                  <button
+                    onClick={handleImportScript}
+                    disabled={importScriptMutation.isPending}
+                    style={{
+                      padding: '8px 22px',
+                      borderRadius: 'var(--radius)',
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      background: 'linear-gradient(135deg, var(--emerald), #059669)',
+                      color: '#fff',
+                      cursor: importScriptMutation.isPending ? 'not-allowed' : 'pointer',
+                      opacity: importScriptMutation.isPending ? 0.7 : 1,
+                    }}
+                  >
+                    {importScriptMutation.isPending ? '⏳ Saving...' : '📋 Save Script'}
                   </button>
                 ) : (
                   <button
