@@ -123,7 +123,7 @@ const SYSTEM_PROMPT_BASE = `You are a senior QA automation engineer.
 Generate a production-ready Playwright TypeScript test using @playwright/test
 for the target application (baseUrl: {BASE_URL}).
 Page Object Model pattern required. Import POMs from ./pages/.
-Locator priority: getByTestId > getByRole > getByLabel > CSS. Never use XPath.
+Locator priority: getByTestId > locator('#id') > getByRole > getByLabel > CSS. Never use XPath.
 Return ONLY raw TypeScript — no markdown fences, no explanations.
 
 {PLATFORM_CONTEXT}
@@ -177,7 +177,7 @@ This is the highest-priority instruction — it overrides your default locator p
 
 ### Heal History — learn from past failures
 If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
-- SELECTOR heals: the listed selector was unstable. Prefer getByTestId/getByRole/getByLabel over it.
+- SELECTOR heals: the listed selector was unstable. Prefer getByTestId/locator('#id')/getByRole/getByLabel over it.
 - FLOW heals: timing or navigation was wrong. Add explicit waits, waitForResponse, or waitForLoadState.
 - API_SCHEMA heals: response shape changed. Validate only stable fields; avoid brittle assertions.
 Absorb these patterns so you do not regenerate scripts that will need the same fix.
@@ -203,7 +203,7 @@ Generate a production-ready Playwright TypeScript test using @playwright/test
 for the target application (baseUrl: {BASE_URL}).
 Self-contained mode: do NOT import from ./pages/ or any local modules.
 All page interactions must be written inline in this single file.
-Locator priority: getByTestId > getByRole > getByLabel > CSS. Never use XPath.
+Locator priority: getByTestId > locator('#id') > getByRole > getByLabel > CSS. Never use XPath.
 Return ONLY raw TypeScript — no markdown fences, no explanations.
 
 {PLATFORM_CONTEXT}
@@ -254,7 +254,7 @@ This is the highest-priority instruction — it overrides your default locator p
 
 ### Heal History — learn from past failures
 If the prompt includes a PAST HEALS section, these are real failures that were auto-fixed on this project.
-- SELECTOR heals: the listed selector was unstable. Prefer getByTestId/getByRole/getByLabel over it.
+- SELECTOR heals: the listed selector was unstable. Prefer getByTestId/locator('#id')/getByRole/getByLabel over it.
 - FLOW heals: timing or navigation was wrong. Add explicit waits, waitForResponse, or waitForLoadState.
 - API_SCHEMA heals: response shape changed. Validate only stable fields; avoid brittle assertions.
 Absorb these patterns so you do not regenerate scripts that will need the same fix.
@@ -681,7 +681,7 @@ export async function getProjectPlatformSection(
       '## Platform Context',
       '(No UI scan found for this project — run a UI scan from Project Settings > UI Scanner to enable real locators)',
       '',
-      'Locator priority: getByTestId > getByRole > getByLabel > CSS. Never use XPath.',
+      'Locator priority: getByTestId > locator('#id') > getByRole > getByLabel > CSS. Never use XPath.',
     ].join('\n');
   }
 

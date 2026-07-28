@@ -106,7 +106,7 @@ function buildSystemPrompt(opts: BrowserAgentOptions): string {
     `- After every submit/save action, add assert_visible to confirm the result.`,
     ``,
     `LOCATOR RULES:`,
-    `- Priority: testid > role > label > placeholder > text > css`,
+    `- Priority: testid > id > role > label > placeholder > text > css`,
     `- selectorType "role": encode as "roleName|Accessible Name" — e.g., "button|Save Order", "combobox|Status"`,
     `  NEVER use a bare role without a name (e.g., "button" alone is wrong — use "button|Save")`,
     `- selectorType "label": use the exact label text from the audit`,
@@ -310,6 +310,8 @@ async function getRichDomAudit(page: Page): Promise<string> {
     const bestLocator = function(el: HTMLElement, tag: string, label: string): string {
       const testid = el.getAttribute('data-testid');
       if (testid) return 'getByTestId("' + testid + '")';
+      const id = el.getAttribute('id');
+      if (id && /^[a-zA-Z][\w-]*$/.test(id)) return 'locator("#' + id + '")';
       const role = el.getAttribute('role') || tag;
       if (role === 'button' || tag === 'button') {
         return label ? 'getByRole("button", { name: "' + trunc(label, 40) + '" })' : 'locator("button")';
@@ -321,8 +323,7 @@ async function getRichDomAudit(page: Page): Promise<string> {
         if (ph) return 'getByPlaceholder("' + trunc(ph, 40) + '")';
       }
       if (role && label) return 'getByRole("' + role + '", { name: "' + trunc(label, 40) + '" })';
-      const id = el.getAttribute('id');
-      return id ? 'locator("#' + id + '")' : 'locator("' + tag + '")';
+      return 'locator("' + tag + '")';
     };
 
     const visible = function(el: Element): boolean {

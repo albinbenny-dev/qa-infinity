@@ -733,8 +733,8 @@ async function extractLocators(page: Page): Promise<KeyLocator[]> {
       const innerText = (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 50);
 
       if (dataTestId) return { name: dataTestId.replace(/[-_]/g, ' '), selector: `[data-testid="${dataTestId}"]`, type: 'testid' };
+      if (id && /^[a-zA-Z][\w-]*$/.test(id)) return { name: labelText || id, selector: `#${id}`, type: 'id' };
       if (ariaLabel) return { name: ariaLabel, selector: `[aria-label="${ariaLabel}"]`, type: 'aria' };
-      if (labelText && id) return { name: labelText, selector: `#${id}`, type: 'label' };
       if (placeholder) return { name: `${inputType || tag} "${placeholder}"`, selector: `${tag}[placeholder="${placeholder}"]`, type: 'css' };
       if (innerText && (tag === 'button' || el.getAttribute('role') === 'button' || el.getAttribute('role') === 'tab' || el.getAttribute('role') === 'menuitem')) {
         return { name: `${innerText}`, selector: `${tag}:has-text("${innerText.slice(0, 30)}")`, type: 'text' };
