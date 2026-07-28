@@ -2239,7 +2239,7 @@ function FeatureGenerateModal({
   const [additionalContext, setAdditionalContext] = useState('');
 
   // Auto-select newly streamed-in TCs
-  React.useEffect(() => {
+  useEffect(() => {
     setSelectedIndices(prev => {
       if (prev.size === allTCs.length) return prev;
       const next = new Set(prev);

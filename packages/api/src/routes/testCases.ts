@@ -1,4 +1,9 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
+
+function detectImageMediaType(base64: string): 'image/png' | 'image/jpeg' {
+  if (base64.startsWith('/9j/')) return 'image/jpeg';
+  return 'image/png'; // PNG magic bytes start with iVBORw0KGgo in base64
+}
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
@@ -198,7 +203,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
                   pageTitle: snapLabel,
                   screenshotBase64: inp.meta.uploadedScreenshot,
                   interactiveElements: '',
-                  mediaType: 'image/jpeg',
+                  mediaType: detectImageMediaType(inp.meta.uploadedScreenshot),
                   label: snapLabel,
                 });
                 content = `[Uploaded screenshot: "${snapLabel}"]`;
@@ -230,7 +235,7 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
                     pageTitle: s.pageTitle,
                     screenshotBase64: s.screenshotBase64,
                     interactiveElements: s.interactiveElements,
-                    mediaType: 'image/jpeg',
+                    mediaType: detectImageMediaType(s.screenshotBase64 ?? ''),
                     label: s.label,
                   });
                 }

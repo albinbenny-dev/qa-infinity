@@ -636,6 +636,13 @@ const server = http.createServer(async (req, res) => {
       const listenerPath = path.join(effectiveOutputDir, 'QaRunnerListener.py');
       try { fs.writeFileSync(listenerPath, listenerCode, 'utf8'); } catch { /* non-fatal */ }
 
+      // Only inject env credentials when the script doesn't declare its own —
+      // scripts with multi-persona flows declare ${TC_USERNAME} / ${TC_PASSWORD}
+      // in their *** Variables *** section and must not be overridden.
+      let scriptSource = '';
+      try { scriptSource = fs.readFileSync(scriptPath, 'utf8'); } catch { /* non-fatal */ }
+      const scriptDeclares = (name) => new RegExp(`^\\$\\{${name}\\}`, 'm').test(scriptSource);
+
       const robotArgs = [
         '--outputdir', effectiveOutputDir,
         '--output', 'output.xml',
@@ -643,11 +650,11 @@ const server = http.createServer(async (req, res) => {
         '--log', 'log.html',
         '--listener', `${listenerPath}:${effectiveOutputDir}`,
         '--variable', `BASE_URL:${baseUrl || ''}`,
-        '--variable', `TC_USERNAME:${username || ''}`,
-        '--variable', `TC_PASSWORD:${password || ''}`,
         '--variable', `OUTPUTDIR:${effectiveOutputDir}`,
         '--variable', `HEADLESS:${hostBrowser ? 'False' : 'True'}`,
       ];
+      if (!scriptDeclares('TC_USERNAME') && username) robotArgs.push('--variable', `TC_USERNAME:${username}`);
+      if (!scriptDeclares('TC_PASSWORD') && password) robotArgs.push('--variable', `TC_PASSWORD:${password}`);
 
       // Hierarchy-based projects (e.g. Airtel Ventas) keep custom Python libs in
       // Resource/PageObjects/ — expose them to Robot Framework via --pythonpath.
