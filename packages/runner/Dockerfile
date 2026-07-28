@@ -19,8 +19,11 @@ RUN /opt/rfbrowser/bin/python -m Browser.entry init || true
 # Make `robot` available on PATH from the venv
 ENV PATH="/opt/rfbrowser/bin:${PATH}"
 
-# Point the pnpm-installed @playwright/test at the browsers the base image already has
+# Point the pnpm-installed @playwright/test at the browsers the base image already has.
+# The base image ships a specific chromium revision; if pnpm installs a different patch
+# of @playwright/test that expects a different revision, install it explicitly here.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN node /app/node_modules/.pnpm/@playwright+test@1.60.0/node_modules/@playwright/test/cli.js install chromium || true
 
 WORKDIR /app
 
