@@ -134,7 +134,7 @@ async function startVncStack() {
       try { fs.unlinkSync(xvfbLock); } catch {}
     }
     console.log('[qa-runner] Starting Xvfb on display ' + VNC_DISPLAY);
-    spawnLogged('Xvfb', [VNC_DISPLAY, '-screen', '0', '1366x768x24', '-ac']);
+    spawnLogged('Xvfb', [VNC_DISPLAY, '-screen', '0', '1600x900x24', '-ac']);
     await new Promise((resolve) => waitForXvfb(VNC_DISPLAY, resolve));
   }
 
@@ -459,7 +459,7 @@ const HOST_BROWSER_CONFIG_CONTENT = `module.exports = {
   projects: [
     { name: 'chromium', use: {
         browserName: 'chromium',
-        viewport: { width: 1366, height: 720 },
+        viewport: { width: 1600, height: 812 },
         launchOptions: {
           args: [
             '--disable-blink-features=AutomationControlled',
@@ -1026,7 +1026,7 @@ const server = http.createServer(async (req, res) => {
     try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
 
     const pwBin = findPlaywrightBin();
-    const codegenProc = spawn(pwBin, ['codegen', '--ignore-https-errors', '--viewport-size=1024,600', '--output', outputPath, url], {
+    const codegenProc = spawn(pwBin, ['codegen', '--ignore-https-errors', '--viewport-size=1280,768', '--output', outputPath, url], {
       stdio: ['ignore', 'pipe', 'pipe'],
       // detached=true creates a new process group so we can kill the whole group
       // (parent playwright codegen + its Chromium child) with a single negative-PID signal
