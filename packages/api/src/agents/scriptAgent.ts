@@ -681,7 +681,7 @@ export async function getProjectPlatformSection(
       '## Platform Context',
       '(No UI scan found for this project — run a UI scan from Project Settings > UI Scanner to enable real locators)',
       '',
-      'Locator priority: getByTestId > locator('#id') > getByRole > getByLabel > CSS. Never use XPath.',
+      "Locator priority: getByTestId > locator('#id') > getByRole > getByLabel > CSS. Never use XPath.",
     ].join('\n');
   }
 
