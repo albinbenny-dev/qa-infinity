@@ -13,6 +13,7 @@ scripts/
 *.pptx
 *.html
 !QA-Infinity-User-Guide.html
+!install-guide.html
 fix-script-*.js
 gen_qa_infinity_deck*.py
 qa-dom-recorder.html

@@ -1,0 +1,632 @@
+<title>QA Infinity — Installation Guide</title>
+<style>
+  :root {
+    --bg:        #0D1117;
+    --surface:   #161B22;
+    --border:    #30363D;
+    --text:      #E6EDF3;
+    --muted:     #8B949E;
+    --accent:    #00B4D8;
+    --accent-dim:#0A3D52;
+    --green:     #3FB950;
+    --yellow:    #D29922;
+    --red:       #F85149;
+    --code-bg:   #1C2128;
+    --step-size: 2rem;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:        #F6F8FA;
+      --surface:   #FFFFFF;
+      --border:    #D0D7DE;
+      --text:      #1F2328;
+      --muted:     #636C76;
+      --accent:    #0969DA;
+      --accent-dim:#DDF4FF;
+      --green:     #1A7F37;
+      --yellow:    #9A6700;
+      --red:       #CF222E;
+      --code-bg:   #F0F2F4;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0D1117;--surface:#161B22;--border:#30363D;--text:#E6EDF3;--muted:#8B949E;
+    --accent:#00B4D8;--accent-dim:#0A3D52;--green:#3FB950;--yellow:#D29922;--red:#F85149;--code-bg:#1C2128;
+  }
+  :root[data-theme="light"] {
+    --bg:#F6F8FA;--surface:#FFFFFF;--border:#D0D7DE;--text:#1F2328;--muted:#636C76;
+    --accent:#0969DA;--accent-dim:#DDF4FF;--green:#1A7F37;--yellow:#9A6700;--red:#CF222E;--code-bg:#F0F2F4;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+    padding: 2rem 1rem 4rem;
+  }
+
+  .page { max-width: 820px; margin: 0 auto; }
+
+  /* Header */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.5rem;
+    margin-bottom: 2.5rem;
+  }
+  .header-top {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.4rem;
+  }
+  .logo-icon {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; flex-shrink: 0;
+  }
+  h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    background: var(--accent-dim); color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 999px;
+    padding: 0.15rem 0.65rem; font-size: 0.75rem; font-weight: 600;
+    margin-top: 0.6rem;
+  }
+
+  /* Section headings */
+  h2 {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 2.5rem 0 1rem;
+  }
+  h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; }
+
+  /* Prereq grid */
+  .prereq-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .prereq-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+  }
+  .prereq-card .label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 0.3rem;
+  }
+  .prereq-card .value { font-size: 0.88rem; }
+  .prereq-card .value code {
+    background: var(--code-bg); border-radius: 4px;
+    padding: 0.1em 0.4em; font-size: 0.82rem;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  }
+
+  /* Steps */
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: grid;
+    grid-template-columns: var(--step-size) 1fr;
+    gap: 0 1.25rem;
+    position: relative;
+  }
+  .step:not(:last-child) .step-line {
+    position: absolute;
+    left: calc(var(--step-size) / 2 - 1px);
+    top: calc(var(--step-size) + 0.25rem);
+    bottom: -0.25rem;
+    width: 2px;
+    background: var(--border);
+  }
+  .step-num {
+    width: var(--step-size); height: var(--step-size);
+    border-radius: 50%;
+    background: var(--accent-dim);
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 700;
+    flex-shrink: 0; z-index: 1;
+  }
+  .step-body { padding-bottom: 2rem; }
+  .step-title {
+    font-size: 1rem; font-weight: 700;
+    margin-bottom: 0.5rem;
+    line-height: var(--step-size);
+  }
+  .step-desc { color: var(--muted); font-size: 0.88rem; margin-bottom: 0.75rem; }
+
+  /* Code blocks */
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+  }
+  .code-block .cb-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.4rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem; color: var(--muted);
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+  }
+  .code-block pre {
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+    font-size: 0.83rem;
+    line-height: 1.65;
+    white-space: pre;
+  }
+  .comment { color: var(--muted); }
+  .cmd { color: var(--text); }
+  .highlight { color: var(--accent); }
+
+  /* Callout */
+  .callout {
+    display: flex; gap: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--yellow);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+  .callout.info { border-left-color: var(--accent); }
+  .callout.success { border-left-color: var(--green); }
+  .callout .icon { flex-shrink: 0; font-size: 1rem; line-height: 1.4; }
+  .callout p { color: var(--muted); }
+  .callout p strong { color: var(--text); }
+  .callout code {
+    background: var(--code-bg); border-radius: 4px;
+    padding: 0.1em 0.35em;
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+    font-size: 0.82em; color: var(--text);
+  }
+
+  /* Env table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 0.75rem; }
+  th {
+    background: var(--code-bg); color: var(--muted);
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; text-align: left;
+    padding: 0.5rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code {
+    background: var(--code-bg); border-radius: 4px;
+    padding: 0.1em 0.4em;
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+    font-size: 0.82em;
+  }
+  .required { color: var(--red); font-size: 0.75rem; font-weight: 700; }
+  .optional { color: var(--muted); font-size: 0.75rem; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+
+  /* Verify grid */
+  .verify-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+  }
+  .verify-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    display: flex; flex-direction: column; gap: 0.2rem;
+  }
+  .verify-card .vc-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; }
+  .verify-card .vc-url { font-family: "SF Mono","Fira Code","Consolas",monospace; font-size: 0.8rem; color: var(--accent); }
+  .verify-card .vc-desc { font-size: 0.78rem; color: var(--muted); }
+
+  /* Updates section */
+  .update-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+  }
+  .update-block .ub-header {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78rem; font-weight: 600; color: var(--muted);
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  .update-block pre {
+    padding: 0.75rem 1rem;
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+    font-size: 0.83rem;
+    line-height: 1.65;
+    overflow-x: auto;
+  }
+
+  /* Tag pills */
+  .pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.72rem; font-weight: 600;
+  }
+  .pill-green { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+  .pill-yellow { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul { padding-left: 1.2rem; color: var(--muted); font-size: 0.88rem; }
+  ul li { margin-bottom: 0.2rem; }
+  ul li strong { color: var(--text); }
+
+  @media (max-width: 500px) {
+    .prereq-grid, .verify-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div style="position:fixed;top:1rem;right:1rem;z-index:999">
+  <a id="dl-link" download="qa-infinity-install-guide.html" style="
+    background:var(--accent,#00B4D8);color:#fff;border-radius:6px;
+    padding:0.45rem 0.9rem;font-size:0.8rem;font-weight:600;cursor:pointer;
+    display:flex;align-items:center;gap:0.4rem;font-family:inherit;
+    box-shadow:0 2px 8px rgba(0,0,0,0.3);text-decoration:none">
+    ⬇ Download
+  </a>
+</div>
+<script>
+window.addEventListener('load', function() {
+  try {
+    var html = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+      + document.head.innerHTML
+      + '\n</head>\n<body>\n'
+      + document.body.innerHTML
+      + '\n</body>\n</html>';
+    var blob = new Blob([html], {type: 'text/html;charset=utf-8'});
+    document.getElementById('dl-link').href = URL.createObjectURL(blob);
+  } catch(e) {
+    var link = document.getElementById('dl-link');
+    link.href = 'data:text/html;charset=utf-8,' + encodeURIComponent(
+      '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="UTF-8">\n'
+      + document.head.innerHTML + '\n</head>\n<body>\n'
+      + document.body.innerHTML + '\n</body>\n</html>'
+    );
+  }
+});
+</script>
+
+<div class="page">
+
+  <div class="header">
+    <div class="header-top">
+      <div class="logo-icon">∞</div>
+      <h1>QA Infinity</h1>
+    </div>
+    <div class="subtitle">Installation Guide — Fresh Server Setup</div>
+    <div class="badge">
+      <span>▲</span> GitHub: albinbenny-dev/qa-infinity
+    </div>
+  </div>
+
+  <!-- Prerequisites -->
+  <h2>Prerequisites</h2>
+
+  <div class="prereq-grid">
+    <div class="prereq-card">
+      <div class="label">Server OS</div>
+      <div class="value">Ubuntu 20.04+ · Debian 11+<br>RHEL 8+ · CentOS 7+</div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">Minimum Hardware</div>
+      <div class="value">2 CPU cores · 4 GB RAM<br>20 GB free disk</div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">Ports Required</div>
+      <div class="value">
+        <code>3100</code> UI &nbsp;·&nbsp;
+        <code>4100</code> API<br>
+        <code>6180</code> noVNC (optional)
+      </div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">Server Software</div>
+      <div class="value">Docker Engine + Docker Compose<br>Git · curl</div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">Internet Access</div>
+      <div class="value">GitHub (clone) · Docker Hub (base images) · LLM API endpoint</div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">LLM API Key</div>
+      <div class="value">Anthropic · OpenRouter<br>or internal LiteLLM proxy</div>
+    </div>
+  </div>
+
+  <!-- Steps -->
+  <h2>Installation Steps</h2>
+
+  <div class="steps">
+
+    <!-- Step 1 -->
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Install Docker</div>
+        <div class="step-desc">Run the official Docker convenience script. Works on Ubuntu, Debian, RHEL, and CentOS.</div>
+        <div class="code-block">
+          <div class="cb-header">bash — run as root or with sudo</div>
+          <pre><span class="comment"># Install Docker Engine</span>
+<span class="cmd">curl -fsSL https://get.docker.com | sh</span>
+<span class="cmd">sudo systemctl enable --now docker</span>
+
+<span class="comment"># Optional: run docker without sudo (log out and back in after)</span>
+<span class="cmd">sudo usermod -aG docker $USER</span></pre>
+        </div>
+        <div class="callout info">
+          <div class="icon">ℹ</div>
+          <p><strong>Already have Docker?</strong> Skip this step. <code>docker --version</code> confirms it's installed.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Install Docker Compose</div>
+        <div class="step-desc">Docker Compose may already be included with Docker. Check first.</div>
+        <div class="code-block">
+          <div class="cb-header">bash — check which version is available</div>
+          <pre><span class="comment"># Check if already installed (either version works)</span>
+<span class="cmd">docker compose version  </span><span class="comment">  # V2 (preferred)</span>
+<span class="cmd">docker-compose --version</span><span class="comment">  # V1 (also supported)</span></pre>
+        </div>
+        <div class="code-block">
+          <div class="cb-header">bash — install V2 plugin if neither is available</div>
+          <pre><span class="comment"># Ubuntu / Debian</span>
+<span class="cmd">sudo apt-get update && sudo apt-get install -y docker-compose-plugin</span>
+
+<span class="comment"># RHEL / CentOS</span>
+<span class="cmd">sudo yum install -y docker-compose-plugin</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Install Git</div>
+        <div class="step-desc">Needed to clone the repo and receive future updates via <code>git pull</code>.</div>
+        <div class="code-block">
+          <div class="cb-header">bash</div>
+          <pre><span class="comment"># Ubuntu / Debian</span>
+<span class="cmd">sudo apt-get install -y git curl</span>
+
+<span class="comment"># RHEL / CentOS</span>
+<span class="cmd">sudo yum install -y git curl</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Clone the Repository</div>
+        <div class="step-desc">Clone into a directory that will persist across reboots. <code>/opt</code> or <code>/data</code> are good choices.</div>
+        <div class="code-block">
+          <div class="cb-header">bash</div>
+          <pre><span class="cmd">git clone https://github.com/albinbenny-dev/qa-infinity.git</span>
+<span class="cmd">cd qa-infinity</span>
+<span class="cmd">chmod +x start.sh</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Configure Environment</div>
+        <div class="step-desc">Run <code>start.sh</code> once — it creates <code>.env</code> from the template and exits with instructions.</div>
+        <div class="code-block">
+          <div class="cb-header">bash</div>
+          <pre><span class="cmd">./start.sh</span>
+<span class="comment"># Exits and asks you to fill in .env</span>
+
+<span class="cmd">nano .env</span>
+<span class="comment"># Or: vi .env</span></pre>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Description</th>
+                <th>Example</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>POSTGRES_PASSWORD</code></td>
+                <td>PostgreSQL password. Set once — cannot change after DB initializes without ALTER ROLE.</td>
+                <td><code>MyStr0ng!Pass</code></td>
+                <td><span class="required">REQUIRED</span></td>
+              </tr>
+              <tr>
+                <td><code>JWT_SECRET</code></td>
+                <td>Signing secret for auth tokens. Any long random string.</td>
+                <td>3 concatenated UUIDs</td>
+                <td><span class="required">REQUIRED</span></td>
+              </tr>
+              <tr>
+                <td><code>ANTHROPIC_API_KEY</code></td>
+                <td>Anthropic API key (if using LLM_PROVIDER=anthropic).</td>
+                <td><code>sk-ant-api03-...</code></td>
+                <td><span class="required">REQUIRED*</span></td>
+              </tr>
+              <tr>
+                <td><code>OPENROUTER_API_KEY</code></td>
+                <td>OpenRouter key (alternative to Anthropic).</td>
+                <td><code>sk-or-v1-...</code></td>
+                <td><span class="required">REQUIRED*</span></td>
+              </tr>
+              <tr>
+                <td><code>CORS_ORIGIN</code></td>
+                <td>URL the browser uses to reach the UI. Set to the server's IP if accessing remotely.</td>
+                <td><code>http://10.0.6.3:3100</code></td>
+                <td><span class="optional">recommended</span></td>
+              </tr>
+              <tr>
+                <td><code>ALLOWED_DOMAINS</code></td>
+                <td>Restrict registration to these email domains. Leave blank for any domain.</td>
+                <td><code>6dtech.co.in</code></td>
+                <td><span class="optional">optional</span></td>
+              </tr>
+              <tr>
+                <td><code>JIRA_HOST</code> / <code>JIRA_API_TOKEN</code></td>
+                <td>Jira integration for the Writer Agent. Leave blank to skip.</td>
+                <td></td>
+                <td><span class="optional">optional</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem">* One LLM provider key is required. Set <code>LLM_PROVIDER=anthropic</code> or <code>LLM_PROVIDER=openrouter</code> to match the key you provide.</p>
+      </div>
+    </div>
+
+    <!-- Step 6 -->
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Start QA Infinity</div>
+        <div class="step-desc">Run <code>start.sh</code> again. It detects first run, builds all Docker images (~3–5 min), starts the stack, and health-checks the API.</div>
+        <div class="code-block">
+          <div class="cb-header">bash</div>
+          <pre><span class="cmd">./start.sh</span></pre>
+        </div>
+        <div class="callout">
+          <div class="icon">⚠</div>
+          <p><strong>First build takes 3–5 minutes.</strong> Docker compiles the API and bundles the frontend. Subsequent starts are instant — images are cached.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 7 -->
+    <div class="step">
+      <div class="step-num">7</div>
+      <div class="step-body">
+        <div class="step-title">Verify &amp; Register</div>
+        <div class="step-desc">Once <code>start.sh</code> reports the stack is ready, open these URLs from a browser.</div>
+        <div class="verify-grid">
+          <div class="verify-card">
+            <div class="vc-label">UI</div>
+            <div class="vc-url">http://&lt;server-ip&gt;:3100</div>
+            <div class="vc-desc">Main application</div>
+          </div>
+          <div class="verify-card">
+            <div class="vc-label">API Health</div>
+            <div class="vc-url">http://&lt;server-ip&gt;:4100/health</div>
+            <div class="vc-desc">Should return <code>{"status":"ok"}</code></div>
+          </div>
+          <div class="verify-card">
+            <div class="vc-label">Live Runner View</div>
+            <div class="vc-url">http://&lt;server-ip&gt;:6180</div>
+            <div class="vc-desc">noVNC — watch tests execute in real time</div>
+          </div>
+        </div>
+        <div class="callout success">
+          <div class="icon">✓</div>
+          <p><strong>First account gets Super Admin.</strong> Go to <code>/register</code> and create your account — it's automatically granted the Super Admin role.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Updates -->
+  <h2>Updating to the Latest Version</h2>
+
+  <div class="update-block">
+    <div class="ub-header">🔄 Routine update — code changes only (API / UI)</div>
+    <pre><span class="cmd">git pull && ./start.sh --build</span></pre>
+  </div>
+
+  <div class="update-block">
+    <div class="ub-header">📦 Full rebuild — after dependency or Dockerfile changes</div>
+    <pre><span class="cmd">git pull && ./start.sh --build</span>
+<span class="comment"># start.sh detects image changes and does a full rebuild automatically</span></pre>
+  </div>
+
+  <!-- Other commands -->
+  <h2>Other Commands</h2>
+
+  <div class="prereq-grid">
+    <div class="prereq-card">
+      <div class="label">Stop the stack</div>
+      <div class="value"><code>./start.sh --stop</code></div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">View live logs</div>
+      <div class="value"><code>./start.sh --logs</code></div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">API logs only</div>
+      <div class="value"><code>sudo docker logs qa-api --tail 50 -f</code></div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">List containers</div>
+      <div class="value"><code>sudo docker ps --filter name=qa-</code></div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">List data volumes</div>
+      <div class="value"><code>sudo docker volume ls | grep qa-</code></div>
+    </div>
+    <div class="prereq-card">
+      <div class="label">Disk usage</div>
+      <div class="value"><code>df -h /</code> &nbsp;·&nbsp; <code>sudo docker system df</code></div>
+    </div>
+  </div>
+
+  <!-- Troubleshooting -->
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>UI loads but API calls fail</strong> — check <code>CORS_ORIGIN</code> in <code>.env</code> matches the URL in your browser exactly (including port).</li>
+    <li><strong>Stack starts but login fails immediately</strong> — <code>JWT_SECRET</code> is likely empty; set it and run <code>./start.sh --build</code>.</li>
+    <li><strong>API container exits on start</strong> — run <code>sudo docker logs qa-api</code> to read the error. Usually a missing <code>.env</code> variable.</li>
+    <li><strong>Port already in use</strong> — another process is on 3100 or 4100. Find it with <code>sudo ss -tlnp | grep 3100</code> and stop it.</li>
+    <li><strong>Build fails with "no space left"</strong> — free disk space with <code>sudo docker system prune -f</code> (safe — only removes unused images/containers).</li>
+    <li><strong>"unknown shorthand flag: 'd'"</strong> — your Docker is V1 (<code>docker-compose</code>). <code>start.sh</code> handles this automatically; make sure you cloned the latest version.</li>
+  </ul>
+
+</div>
