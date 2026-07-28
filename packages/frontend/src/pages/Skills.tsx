@@ -2143,6 +2143,7 @@ function FeatureGenerateModal({
   const [allTCs, setAllTCs] = useState<GeneratedTC[]>([]);
   const [errMsg, setErrMsg] = useState('');
   const [saving, setSaving] = useState(false);
+  const [additionalContext, setAdditionalContext] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   const pct = progress ? Math.round((progress.step / progress.total) * 100) : 0;
@@ -2166,7 +2167,7 @@ function FeatureGenerateModal({
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ featureGroup }),
+          body: JSON.stringify({ featureGroup, additionalContext: additionalContext.trim() || undefined }),
           signal: abort.signal,
         },
       );
@@ -2320,30 +2321,67 @@ function FeatureGenerateModal({
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {phase === 'idle' && (
-            <div style={{ textAlign: 'center', padding: '24px 0' }}>
-              <div style={{ fontSize: 36, marginBottom: 12 }}>⬡</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
-                Ready to generate test cases
+            <div style={{ padding: '20px 0 4px' }}>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>⬡</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
+                  Ready to generate test cases
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.65, maxWidth: 420, margin: '0 auto' }}>
+                  Each skill in <strong>{featureGroup}</strong> will be processed in sequence.
+                  The AI will generate unique test cases per skill, skipping duplicates.
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.65, maxWidth: 420, margin: '0 auto 20px' }}>
-                Each skill in <strong>{featureGroup}</strong> will be processed in sequence.
-                The AI will generate unique test cases per skill, skipping duplicates.
+
+              {/* Additional context */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '0.8px', textTransform: 'uppercase', color: 'var(--text-mid)', marginBottom: 6 }}>
+                  Additional context <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional)</span>
+                </label>
+                <textarea
+                  value={additionalContext}
+                  onChange={(e) => setAdditionalContext(e.target.value)}
+                  placeholder={`e.g. "Focus on edge cases for new customer flow. Avoid happy-path duplicates. Priority: negative scenarios."`}
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    background: 'var(--surface2)',
+                    color: 'var(--text)',
+                    fontSize: 12,
+                    fontFamily: 'var(--font-ui)',
+                    lineHeight: 1.55,
+                    resize: 'vertical',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--sky)')}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+                  Injected as extra instruction for every skill in this group.
+                </div>
               </div>
-              <button
-                onClick={() => void startGeneration()}
-                style={{
-                  padding: '10px 28px',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: 'linear-gradient(135deg, var(--sky), #2563eb)',
-                  color: '#fff',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                ▶ Start Generation
-              </button>
+
+              <div style={{ textAlign: 'center' }}>
+                <button
+                  onClick={() => void startGeneration()}
+                  style={{
+                    padding: '10px 28px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: 'linear-gradient(135deg, var(--sky), #2563eb)',
+                    color: '#fff',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ▶ Start Generation
+                </button>
+              </div>
             </div>
           )}
 
