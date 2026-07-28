@@ -12,6 +12,7 @@ llm-audit.jsonl
 scripts/
 *.pptx
 *.html
+!QA-Infinity-User-Guide.html
 fix-script-*.js
 gen_qa_infinity_deck*.py
 qa-dom-recorder.html

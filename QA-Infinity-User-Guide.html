@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QA Infinity — User Guide</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222638;
+    --surface3: #2a2f47;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --cyan: #06b6d4;
+    --cyan-dim: rgba(6,182,212,0.1);
+    --violet: #818cf8;
+    --violet-dim: rgba(129,140,248,0.1);
+    --green: #22c55e;
+    --green-dim: rgba(34,197,94,0.1);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.1);
+    --rose: #f43f5e;
+    --rose-dim: rgba(244,63,94,0.1);
+    --text: #e2e8f0;
+    --text-mid: #94a3b8;
+    --text-dim: #64748b;
+    --font-mono: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    --radius: 8px;
+    --sidebar-w: 268px;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f8fafc; --surface: #ffffff; --surface2: #f1f5f9; --surface3: #e2e8f0;
+      --border: rgba(0,0,0,0.07); --border2: rgba(0,0,0,0.12);
+      --text: #0f172a; --text-mid: #475569; --text-dim: #94a3b8;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f8fafc; --surface: #ffffff; --surface2: #f1f5f9; --surface3: #e2e8f0;
+    --border: rgba(0,0,0,0.07); --border2: rgba(0,0,0,0.12);
+    --text: #0f172a; --text-mid: #475569; --text-dim: #94a3b8;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1117; --surface: #1a1d27; --surface2: #222638; --surface3: #2a2f47;
+    --border: rgba(255,255,255,0.07); --border2: rgba(255,255,255,0.12);
+    --text: #e2e8f0; --text-mid: #94a3b8; --text-dim: #64748b;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border2);
+    overflow-y: auto; overflow-x: hidden;
+    z-index: 100; display: flex; flex-direction: column;
+  }
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .sidebar-header {
+    padding: 20px 20px 16px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface); z-index: 1;
+  }
+  .sidebar-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--cyan), var(--violet));
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .logo-text { font-weight: 700; font-size: 15px; color: var(--text); }
+  .logo-sub { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); letter-spacing: 0.05em; }
+
+  .sidebar-nav { padding: 10px 0 24px; flex: 1; }
+  .nav-section-label {
+    font-size: 9px; font-family: var(--font-mono); text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--text-dim); padding: 14px 20px 4px;
+  }
+  .nav-link {
+    display: block; padding: 6px 20px; font-size: 13px; color: var(--text-mid);
+    text-decoration: none; border-left: 2px solid transparent; transition: all 0.15s;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .nav-link:hover { color: var(--text); background: var(--surface2); }
+  .nav-link.active { color: var(--cyan); border-left-color: var(--cyan); background: var(--cyan-dim); }
+  .nav-link.sub { padding-left: 32px; font-size: 12px; }
+
+  /* ── Main ── */
+  .main { margin-left: var(--sidebar-w); flex: 1; min-width: 0; padding: 0 0 80px; }
+
+  .top-bar {
+    position: sticky; top: 0; z-index: 50; background: var(--bg);
+    border-bottom: 1px solid var(--border); padding: 12px 48px;
+    display: flex; align-items: center; justify-content: space-between;
+    backdrop-filter: blur(8px);
+  }
+  .top-bar-title { font-size: 13px; color: var(--text-dim); font-family: var(--font-mono); }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 10px;
+    font-family: var(--font-mono); padding: 2px 8px; border-radius: 20px;
+    background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(6,182,212,0.25);
+  }
+
+  .content { max-width: 860px; padding: 48px 48px 0; }
+
+  /* ── Sections ── */
+  .section { margin-bottom: 64px; scroll-margin-top: 56px; }
+  h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 10px; line-height: 1.2; }
+  h1 span { background: linear-gradient(90deg, var(--cyan), var(--violet)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .lead { font-size: 16px; color: var(--text-mid); line-height: 1.7; max-width: 700px; }
+  h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border2); display: flex; align-items: center; gap: 10px; }
+  h2 .h2-icon { font-size: 18px; }
+  h3 { font-size: 15px; font-weight: 700; margin: 24px 0 10px; color: var(--text); }
+  p { margin-bottom: 14px; color: var(--text-mid); font-size: 14px; }
+  li { color: var(--text-mid); font-size: 14px; margin-bottom: 5px; }
+  ul, ol { padding-left: 20px; margin-bottom: 14px; }
+
+  /* ── Code ── */
+  code {
+    font-family: var(--font-mono); font-size: 12px; background: var(--surface2);
+    padding: 1px 6px; border-radius: 4px; color: var(--cyan); border: 1px solid var(--border);
+  }
+  pre {
+    background: #0d1117; border: 1px solid var(--border2); border-radius: var(--radius);
+    padding: 20px; overflow-x: auto; margin: 16px 0; position: relative;
+  }
+  pre code { background: none; padding: 0; border: none; color: #c9d1d9; font-size: 13px; line-height: 1.6; }
+  .pre-label {
+    position: absolute; top: 10px; right: 12px; font-size: 9px; font-family: var(--font-mono);
+    text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.08em;
+  }
+  .kw { color: #ff7b72; } .str { color: #a5d6ff; } .cm { color: #8b949e; font-style: italic; }
+  .key { color: #79c0ff; } .val { color: #a5d6ff; } .cmd { color: #7ee787; }
+
+  /* ── Callouts ── */
+  .callout {
+    border-radius: var(--radius); padding: 14px 18px; margin: 16px 0; border-left: 3px solid;
+    font-size: 13px; display: flex; gap: 12px; align-items: flex-start;
+  }
+  .callout-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .callout-body { flex: 1; }
+  .callout-body strong { display: block; margin-bottom: 4px; }
+  .callout.info  { background: var(--cyan-dim);   border-color: var(--cyan);   color: var(--text); }
+  .callout.warning { background: var(--amber-dim); border-color: var(--amber); color: var(--text); }
+  .callout.danger  { background: var(--rose-dim);  border-color: var(--rose);  color: var(--text); }
+  .callout.tip     { background: var(--green-dim); border-color: var(--green); color: var(--text); }
+
+  /* ── Cards / Steps ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card { background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius); padding: 16px; }
+  .card-icon { font-size: 22px; margin-bottom: 8px; }
+  .card-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .card-desc { font-size: 12px; color: var(--text-mid); }
+
+  .steps { list-style: none; padding: 0; margin: 16px 0; }
+  .step { display: flex; gap: 14px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .step:last-child { border-bottom: none; }
+  .step-num {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--cyan-dim);
+    border: 1px solid rgba(6,182,212,0.3); color: var(--cyan); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-family: var(--font-mono);
+  }
+  .step-body { flex: 1; }
+  .step-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .step-desc { font-size: 13px; color: var(--text-mid); }
+
+  /* ── Table ── */
+  .table-wrap { overflow-x: auto; margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    background: var(--surface2); text-align: left; padding: 10px 14px; font-size: 10px;
+    font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-dim); border-bottom: 1px solid var(--border2);
+  }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-mid); vertical-align: top; }
+  tr:hover td { background: var(--surface2); }
+  td code { font-size: 11px; }
+
+  .env-row td:first-child { font-family: var(--font-mono); font-size: 12px; color: var(--violet); white-space: nowrap; }
+  .req { color: var(--rose); font-size: 9px; font-family: var(--font-mono); font-weight: 700; background: var(--rose-dim); padding: 1px 5px; border-radius: 3px; }
+  .opt { color: var(--text-dim); font-size: 9px; font-family: var(--font-mono); background: var(--surface2); padding: 1px 5px; border-radius: 3px; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .port { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--amber); }
+
+  /* ── Feature grid ── */
+  .feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .feature-card {
+    background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius);
+    padding: 16px; display: flex; gap: 12px;
+  }
+  .feature-card-icon { font-size: 24px; flex-shrink: 0; }
+  .feature-card-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .feature-card-desc { font-size: 12px; color: var(--text-mid); line-height: 1.6; }
+
+  /* ── FAQ ── */
+  .faq-item { background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+  .faq-q {
+    padding: 14px 18px; font-size: 13px; font-weight: 600; color: var(--text);
+    cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; user-select: none;
+  }
+  .faq-q:hover { background: var(--surface2); }
+  .faq-chevron { font-size: 10px; color: var(--text-dim); transition: transform 0.2s; flex-shrink: 0; }
+  .faq-a {
+    padding: 12px 18px 14px; font-size: 13px; color: var(--text-mid); line-height: 1.7;
+    display: none; border-top: 1px solid var(--border);
+  }
+  .faq-item.open .faq-a { display: block; }
+  .faq-item.open .faq-chevron { transform: rotate(90deg); }
+
+  .tag { display: inline-block; font-size: 9px; font-family: var(--font-mono); font-weight: 700; padding: 1px 6px; border-radius: 3px; vertical-align: middle; margin-left: 4px; }
+  .tag-cyan   { background: var(--cyan-dim);   color: var(--cyan);   border: 1px solid rgba(6,182,212,0.25); }
+  .tag-violet { background: var(--violet-dim); color: var(--violet); border: 1px solid rgba(129,140,248,0.25); }
+  .tag-amber  { background: var(--amber-dim);  color: var(--amber);  border: 1px solid rgba(245,158,11,0.25); }
+  .tag-green  { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(34,197,94,0.25); }
+
+  .theme-btn {
+    background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px;
+    padding: 4px 10px; font-size: 11px; color: var(--text-mid); cursor: pointer;
+    display: flex; align-items: center; gap: 5px; transition: all 0.15s;
+  }
+  .theme-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; }
+    .content { padding: 24px 20px 0; }
+    .feature-grid { grid-template-columns: 1fr; }
+    .top-bar { padding: 12px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <a class="sidebar-logo" href="#overview">
+      <div class="logo-icon">&#9854;</div>
+      <div>
+        <div class="logo-text">QA Infinity</div>
+        <div class="logo-sub">User Guide v1.1</div>
+      </div>
+    </a>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-section-label">Getting Started</div>
+    <a class="nav-link" href="#overview">Overview</a>
+    <a class="nav-link" href="#prerequisites">Prerequisites</a>
+    <a class="nav-link" href="#copy-packages">Get the Code</a>
+    <a class="nav-link" href="#configure">Configure</a>
+    <a class="nav-link sub" href="#env-vars">Environment Variables</a>
+    <a class="nav-link sub" href="#llm-provider">LLM Provider</a>
+    <a class="nav-link" href="#deploy">Deploy</a>
+    <a class="nav-link sub" href="#startup-script">Startup Script</a>
+    <a class="nav-link sub" href="#first-run">First Run</a>
+    <a class="nav-link sub" href="#updating">Updating</a>
+    <a class="nav-link sub" href="#ports">Service Ports</a>
+
+    <div class="nav-section-label">User Manual</div>
+    <a class="nav-link" href="#projects">Projects</a>
+    <a class="nav-link" href="#test-writer">Test Writer</a>
+    <a class="nav-link sub" href="#input-screen">Screen Input</a>
+    <a class="nav-link sub" href="#input-api">API Input</a>
+    <a class="nav-link sub" href="#input-docs">Docs Input</a>
+    <a class="nav-link sub" href="#input-ref">Style Ref</a>
+    <a class="nav-link sub" href="#input-jira">Jira Input</a>
+    <a class="nav-link sub" href="#seed-tcs">Seed TCs</a>
+    <a class="nav-link" href="#tc-library">TC Library</a>
+    <a class="nav-link" href="#scripts">Scripts</a>
+    <a class="nav-link" href="#test-runs">Test Runs</a>
+    <a class="nav-link" href="#healing">Healing</a>
+    <a class="nav-link" href="#skills">Skills</a>
+    <a class="nav-link" href="#reports">Reports</a>
+    <a class="nav-link" href="#chat">AI Chat</a>
+
+    <div class="nav-section-label">Best Practices</div>
+    <a class="nav-link" href="#best-practices">Tips for Best Output</a>
+    <a class="nav-link" href="#troubleshooting">Troubleshooting</a>
+    <a class="nav-link" href="#faq">FAQ</a>
+  </div>
+</nav>
+
+<!-- ── Main ── -->
+<div class="main">
+  <div class="top-bar">
+    <span class="top-bar-title">qa-infinity / docs</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="badge">&#9854; v1.0</span>
+      <button class="theme-btn" onclick="toggleTheme()">&#9728; / &#9790; Theme</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- OVERVIEW -->
+    <section class="section" id="overview">
+      <h1><span>QA Infinity</span> User Guide</h1>
+      <p class="lead">A self-hosted, AI-driven QA automation platform that generates test cases from natural language inputs, auto-writes Robot Framework scripts, runs them in a managed browser cluster, and self-heals broken selectors &mdash; all from a single Docker Compose stack.</p>
+
+      <div class="feature-grid" style="margin-top:28px">
+        <div class="feature-card">
+          <div class="feature-card-icon">&#9997;&#65039;</div>
+          <div><div class="feature-card-title">AI Test Writer</div><div class="feature-card-desc">Generate full test cases from URLs, API specs, Jira stories, PDFs, screenshots, or existing TC patterns.</div></div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon">&#128220;</div>
+          <div><div class="feature-card-title">Script Generation</div><div class="feature-card-desc">Automatically produces Robot Framework scripts with locked locators and trace-verified selector hints.</div></div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon">&#9654;&#65039;</div>
+          <div><div class="feature-card-title">Managed Execution</div><div class="feature-card-desc">Runs scripts in a headless Playwright cluster. Watch live via built-in noVNC browser.</div></div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon">&#129657;</div>
+          <div><div class="feature-card-title">Self-Healing</div><div class="feature-card-desc">Detects broken selectors and proposes AI-generated fixes without re-running the entire suite.</div></div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon">&#127919;</div>
+          <div><div class="feature-card-title">Skills System</div><div class="feature-card-desc">Teach the AI how to log in, navigate menus, and fill forms &mdash; reusable across all generated scripts.</div></div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon">&#128172;</div>
+          <div><div class="feature-card-title">AI Chat</div><div class="feature-card-desc">Ask questions about your test suite, generate ad-hoc tests, or get explanations via project-aware chat.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PREREQUISITES -->
+    <section class="section" id="prerequisites">
+      <h2><span class="h2-icon">&#128295;</span> Prerequisites</h2>
+      <p>QA Infinity runs entirely inside Docker. You need the following on the host machine:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Requirement</th><th>Version</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Docker Desktop</strong> or Docker Engine</td><td>24+</td><td>With <code>docker compose</code> plugin (V2)</td></tr>
+            <tr><td><strong>Docker Compose</strong></td><td>2.20+</td><td>Run <code>docker compose version</code> to check</td></tr>
+            <tr><td><strong>Available RAM</strong></td><td>8 GB minimum</td><td>16 GB recommended when running multiple test runners</td></tr>
+            <tr><td><strong>Available Disk</strong></td><td>20 GB</td><td>For images, artifacts, and PostgreSQL data</td></tr>
+            <tr><td><strong>Internet Access</strong></td><td>&mdash;</td><td>Required at first build to pull images; offline after that</td></tr>
+            <tr><td><strong>LLM API Key</strong></td><td>&mdash;</td><td>OpenRouter key (recommended) or direct Anthropic API key</td></tr>
+            <tr><td><strong>Git</strong></td><td>2.x</td><td>To clone the repository</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>No Node.js or Python required on the host.</strong> All runtime dependencies (Node.js, Playwright, Robot Framework, Python) live inside the Docker containers. You only need Docker and Git on your machine.</div>
+      </div>
+      <h3>Recommended Host Specs</h3>
+      <div class="cards">
+        <div class="card"><div class="card-icon">&#128187;</div><div class="card-title">Development / Trial</div><div class="card-desc">4-core CPU, 8 GB RAM, SSD. Single runner.</div></div>
+        <div class="card"><div class="card-icon">&#128421;&#65039;</div><div class="card-title">Team Deployment</div><div class="card-desc">8-core CPU, 16 GB RAM, 50 GB SSD. Full stack.</div></div>
+        <div class="card"><div class="card-icon">&#127970;</div><div class="card-title">Production</div><div class="card-desc">16-core CPU, 32 GB RAM, 100 GB NVMe. HA setup with reverse proxy.</div></div>
+      </div>
+    </section>
+
+    <!-- COPY PACKAGES -->
+    <section class="section" id="copy-packages">
+      <h2><span class="h2-icon">&#128230;</span> Get the Code</h2>
+      <p>QA Infinity is distributed as a Git repository. Clone it directly onto any machine that has Docker and Git installed &mdash; no ZIP archives or manual file transfers required.</p>
+
+      <h3>Clone from GitHub</h3>
+      <pre><code><span class="cmd">git clone</span> https://github.com/albinbenny-dev/qa-infinity.git
+<span class="cmd">cd</span> qa-infinity</code><span class="pre-label">bash</span></pre>
+
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Internet access is all you need.</strong> The repo contains only source code and config files &mdash; no pre-built images or large binaries. Docker builds the images locally on first run, pulling base layers from Docker Hub.</div>
+      </div>
+
+      <h3>Repository Structure</h3>
+      <pre><code>qa-infinity/
+&#9500;&#9472;&#9472; <span class="key">packages/</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="key">api/</span>            <span class="cm"># Express API + Prisma ORM</span>
+&#9474;   &#9500;&#9472;&#9472; <span class="key">frontend/</span>       <span class="cm"># React + Vite SPA</span>
+&#9474;   &#9492;&#9472;&#9472; <span class="key">runner/</span>         <span class="cm"># Playwright + Robot Framework executor</span>
+&#9500;&#9472;&#9472; <span class="key">nginx/</span>              <span class="cm"># nginx reverse-proxy config</span>
+&#9500;&#9472;&#9472; <span class="key">docker-compose.yml</span>  <span class="cm"># production-safe base compose file</span>
+&#9500;&#9472;&#9472; <span class="key">.env.example</span>        <span class="cm"># copy to .env and fill in your secrets</span>
+&#9500;&#9472;&#9472; <span class="key">start.sh</span>            <span class="cm"># Linux / remote server startup script</span>
+&#9492;&#9472;&#9472; <span class="key">start.ps1</span>           <span class="cm"># Windows (local dev) startup script</span></code><span class="pre-label">tree</span></pre>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>The <code>scripts/</code> folder is created automatically by Docker</strong> as a bind-mount when the stack first starts. Robot Framework <code>.robot</code> files are written there in real time &mdash; no rebuild needed to pick up new scripts.</div>
+      </div>
+    </section>
+
+    <!-- CONFIGURE -->
+    <section class="section" id="configure">
+      <h2><span class="h2-icon">&#9881;&#65039;</span> Configure</h2>
+      <p>All configuration is done through a single <code>.env</code> file in the project root.</p>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Copy the example file</div>
+            <pre><code><span class="cmd">cp</span> .env.example .env</code><span class="pre-label">bash</span></pre>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Edit with your values</div>
+            <pre><code><span class="cm"># Use any text editor</span>
+<span class="cmd">nano</span> .env        <span class="cm"># Linux / Mac</span>
+<span class="cmd">notepad</span> .env     <span class="cm"># Windows</span></code><span class="pre-label">bash</span></pre>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Never commit <code>.env</code> to git</div>
+            <div class="step-desc">The file is already listed in <code>.gitignore</code>. Keep it out of version control &mdash; it contains secrets.</div>
+          </div>
+        </li>
+      </ul>
+
+      <h3 id="env-vars">Environment Variables Reference</h3>
+      <div class="table-wrap">
+        <table class="env-row">
+          <thead><tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>POSTGRES_PASSWORD</td><td><span class="req">REQUIRED</span></td><td>&mdash;</td><td>PostgreSQL password. Use a strong random string.</td></tr>
+            <tr><td>JWT_SECRET</td><td><span class="req">REQUIRED</span></td><td>&mdash;</td><td>Secret for signing JWT tokens. Paste 2&ndash;3 UUIDs joined together.</td></tr>
+            <tr><td>LLM_PROVIDER</td><td><span class="req">REQUIRED</span></td><td><code>openrouter</code></td><td><code>openrouter</code> or <code>anthropic</code></td></tr>
+            <tr><td>OPENROUTER_API_KEY</td><td><span class="req">REQUIRED*</span></td><td>&mdash;</td><td>Required when <code>LLM_PROVIDER=openrouter</code>. Get from openrouter.ai/keys</td></tr>
+            <tr><td>OPENROUTER_MODEL</td><td><span class="opt">optional</span></td><td><code>anthropic/claude-sonnet-4-5</code></td><td>Model slug from openrouter.ai/models</td></tr>
+            <tr><td>ANTHROPIC_API_KEY</td><td><span class="req">REQUIRED*</span></td><td>&mdash;</td><td>Required when <code>LLM_PROVIDER=anthropic</code>. Get from console.anthropic.com</td></tr>
+            <tr><td>POSTGRES_DB</td><td><span class="opt">optional</span></td><td><code>qa_infinity</code></td><td>PostgreSQL database name</td></tr>
+            <tr><td>POSTGRES_USER</td><td><span class="opt">optional</span></td><td><code>qauser</code></td><td>PostgreSQL user</td></tr>
+            <tr><td>REDIS_PASSWORD</td><td><span class="opt">optional</span></td><td>&mdash;</td><td>Leave blank for no auth (internal network only)</td></tr>
+            <tr><td>JIRA_HOST</td><td><span class="opt">optional</span></td><td>&mdash;</td><td>e.g. <code>https://yourcompany.atlassian.net</code></td></tr>
+            <tr><td>JIRA_EMAIL</td><td><span class="opt">optional</span></td><td>&mdash;</td><td>Jira account email for API token auth</td></tr>
+            <tr><td>JIRA_API_TOKEN</td><td><span class="opt">optional</span></td><td>&mdash;</td><td>Generate at id.atlassian.com/manage-profile/security</td></tr>
+            <tr><td>SMTP_HOST</td><td><span class="opt">optional</span></td><td><code>smtp.gmail.com</code></td><td>SMTP server for email reports</td></tr>
+            <tr><td>SMTP_USER</td><td><span class="opt">optional</span></td><td>&mdash;</td><td>SMTP username / email</td></tr>
+            <tr><td>SMTP_PASS</td><td><span class="opt">optional</span></td><td>&mdash;</td><td>SMTP password or app password</td></tr>
+            <tr><td>MAX_UPLOAD_BYTES</td><td><span class="opt">optional</span></td><td><code>52428800</code></td><td>Max file upload size (bytes). Default = 50 MB.</td></tr>
+            <tr><td>PLAYWRIGHT_WORKERS</td><td><span class="opt">optional</span></td><td><code>2</code></td><td>Parallel Playwright workers per runner container</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="llm-provider">Choosing an LLM Provider</h3>
+      <div class="callout info">
+        <span class="callout-icon">&#129302;</span>
+        <div class="callout-body"><strong>OpenRouter is recommended for most deployments.</strong> It lets you switch models without code changes and handles billing in one place. Anthropic direct is useful when you need guaranteed data residency or have an enterprise agreement.</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Provider</th><th>Config</th><th>Best For</th></tr></thead>
+          <tbody>
+            <tr><td><strong>OpenRouter</strong> <span class="tag tag-green">recommended</span></td><td><code>LLM_PROVIDER=openrouter</code><br><code>OPENROUTER_API_KEY=sk-or-...</code></td><td>Most teams &mdash; access any Claude model, pay-per-token</td></tr>
+            <tr><td><strong>Anthropic Direct</strong></td><td><code>LLM_PROVIDER=anthropic</code><br><code>ANTHROPIC_API_KEY=sk-ant-...</code></td><td>Enterprise agreements, data residency requirements</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Minimal Working .env</h3>
+      <pre><code><span class="cm"># Minimum required to boot the stack</span>
+<span class="key">POSTGRES_PASSWORD</span>=<span class="str">your-strong-password-here</span>
+<span class="key">JWT_SECRET</span>=<span class="str">paste-three-uuids-together-here-no-spaces</span>
+<span class="key">LLM_PROVIDER</span>=<span class="str">openrouter</span>
+<span class="key">OPENROUTER_API_KEY</span>=<span class="str">sk-or-v1-xxxxxxxxxxxx</span></code><span class="pre-label">.env</span></pre>
+    </section>
+
+    <!-- DEPLOY -->
+    <section class="section" id="deploy">
+      <h2><span class="h2-icon">&#128640;</span> Deploy</h2>
+
+      <h3 id="startup-script">Startup Script</h3>
+      <p>QA Infinity ships with platform-specific startup scripts that handle building images on first run, validating your <code>.env</code>, and health-checking the stack.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Platform</th><th>Script</th><th>Use when</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Linux / Remote Server</strong></td><td><code>./start.sh</code></td><td>Remote VMs, cloud servers, CI environments</td></tr>
+            <tr><td><strong>Windows (local dev)</strong></td><td><code>.\start.ps1</code></td><td>Local development on Windows</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Both scripts accept the same flags:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>--build</code></td><td>Force a full image rebuild before starting (use after code updates or <code>git pull</code>)</td></tr>
+            <tr><td><code>--stop</code></td><td>Stop all running containers</td></tr>
+            <tr><td><code>--logs</code></td><td>Tail live logs from all services</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>The script auto-detects Docker permissions on Linux.</strong> If your user is not in the <code>docker</code> group it transparently falls back to <code>sudo docker</code> — no manual configuration needed.</div>
+      </div>
+
+      <h3 id="first-run">First Run</h3>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Clone the repository</div>
+            <pre><code><span class="cmd">git clone</span> https://github.com/albinbenny-dev/qa-infinity.git
+<span class="cmd">cd</span> qa-infinity</code><span class="pre-label">bash</span></pre>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Create your <code>.env</code> file</div>
+            <pre><code><span class="cmd">cp</span> .env.example .env</code><span class="pre-label">bash</span></pre>
+            <div class="step-desc">Then open <code>.env</code> in your editor and fill in the required values: <code>LLM_PROVIDER</code>, API keys, and any custom ports.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Start the stack (Linux)</div>
+            <pre><code><span class="cmd">chmod +x</span> start.sh
+<span class="cmd">./start.sh</span></code><span class="pre-label">bash</span></pre>
+            <div class="step-desc">The script builds all images on first run (5&ndash;10 minutes), then starts all services and polls until the API health check passes.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Start the stack (Windows)</div>
+            <pre><code><span class="cmd">.\start.ps1</span></code><span class="pre-label">powershell</span></pre>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Open the UI</div>
+            <div class="step-desc">Navigate to <code>http://localhost:3100</code> in your browser. Create your first account.</div>
+          </div>
+        </li>
+      </ul>
+
+      <h3 id="updating">Updating</h3>
+      <p>Pull the latest code and rebuild in one command:</p>
+      <pre><code><span class="cm"># Linux / remote server</span>
+<span class="cmd">git pull</span> origin main
+<span class="cmd">./start.sh</span> --build</code><span class="pre-label">bash</span></pre>
+      <pre><code><span class="cm"># Windows</span>
+<span class="cmd">git pull</span> origin main
+<span class="cmd">.\start.ps1</span> --build</code><span class="pre-label">powershell</span></pre>
+      <p>The <code>--build</code> flag forces Docker to rebuild images from the new source before restarting services. Your database volumes and uploaded files are preserved.</p>
+
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body"><strong>Running <code>docker compose down -v</code> will delete all volumes</strong>, including the PostgreSQL database and all uploaded files. Plain <code>docker compose down</code> (or <code>./start.sh --stop</code>) keeps your data.</div>
+      </div>
+
+      <h3 id="ports">Service Ports</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Service</th><th>Host Port</th><th>Container Port</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Frontend (Nginx)</strong></td><td class="port">3100</td><td>80</td><td>Main application UI</td></tr>
+            <tr><td><strong>API (Express)</strong></td><td class="port">4100</td><td>4000</td><td>REST API</td></tr>
+            <tr><td><strong>Prisma Studio</strong></td><td class="port">5655</td><td>5555</td><td>Database browser (dev only &mdash; do not expose publicly)</td></tr>
+            <tr><td><strong>noVNC (Runner)</strong></td><td class="port">6180</td><td>6080</td><td>Live browser viewer for watching test execution</td></tr>
+            <tr><td><strong>PostgreSQL</strong></td><td>&mdash;</td><td>5432</td><td>Internal only</td></tr>
+            <tr><td><strong>Redis</strong></td><td>&mdash;</td><td>6379</td><td>Internal only</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>View Logs</h3>
+      <pre><code><span class="cmd">./start.sh</span> --logs             <span class="cm"># all services (Linux)</span>
+<span class="cmd">docker compose logs -f</span> qa-api    <span class="cm"># API only</span>
+<span class="cmd">docker compose logs -f</span> qa-runner <span class="cm"># runner only</span></code><span class="pre-label">bash</span></pre>
+
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Advanced / Manual.</strong> You can still run raw <code>docker compose</code> commands directly if you need more control &mdash; e.g. <code>docker compose build qa-api &amp;&amp; docker compose up -d qa-api</code> to rebuild a single service.</div>
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- PROJECTS -->
+    <section class="section" id="projects">
+      <h2><span class="h2-icon">&#128193;</span> Projects</h2>
+      <p>Everything in QA Infinity is scoped to a <strong>Project</strong>. A project maps to one application under test &mdash; for example, &ldquo;Ventas Primary Sales&rdquo; or &ldquo;B2B Portal&rdquo;.</p>
+      <h3>Creating a Project</h3>
+      <ol>
+        <li>Click <strong>+ New Project</strong> on the dashboard.</li>
+        <li>Enter a name, optional description, and the <strong>Base URL</strong> of the application.</li>
+        <li>Optionally set environment configs (credentials for Dev / Staging / Production).</li>
+      </ol>
+      <h3>Environment Configs</h3>
+      <p>Each project stores multiple named environments (Dev, Staging, UAT, Production) with URL, username, and password. The Test Writer uses these to auto-inject credentials into live screen captures and generated scripts.</p>
+      <h3>Roles</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Role</th><th>Can Generate TCs</th><th>Can Run Scripts</th><th>Can Manage Project</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Admin</strong></td><td>&#10005;</td><td>&#10005;</td><td>&#10005;</td></tr>
+            <tr><td><strong>Super User</strong></td><td>&#10005;</td><td>&#10005;</td><td>&mdash;</td></tr>
+            <tr><td><strong>Standard User</strong></td><td>Read-only</td><td>&mdash;</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TEST WRITER -->
+    <section class="section" id="test-writer">
+      <h2><span class="h2-icon">&#9997;&#65039;</span> Test Writer</h2>
+      <p>The Test Writer is the primary interface for generating test cases. Add one or more input sources, configure test types, then click <strong>Generate</strong>.</p>
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>Combine multiple input sources for richer output.</strong> Add a screen URL + a Jira story + a reference TC together. The more context you give, the more accurate and complete the generated test cases.</div>
+      </div>
+
+      <h3 id="input-screen">Screen Input (Live Capture)</h3>
+      <p>Provide a URL and the platform authenticates with stored credentials, navigates to the correct page, and takes an annotated screenshot as visual context.</p>
+      <ul>
+        <li><strong>Page Name / Menu Context</strong> &mdash; tell the agent which page to land on (e.g. &ldquo;New Order form&rdquo;). It clicks matching nav items after login.</li>
+        <li><strong>Environment</strong> &mdash; select a named env config to use its credentials automatically.</li>
+        <li><strong>Upload Screenshot</strong> &mdash; paste (<kbd>Ctrl+V</kbd>) or drag a screenshot to skip live capture entirely.</li>
+        <li><strong>Agentic Trace</strong> &mdash; enables multi-step browser interaction for complex flows.</li>
+      </ul>
+
+      <h3 id="input-api">API Input</h3>
+      <p>Use the <strong>API</strong> tab to generate API test cases. Selecting this tab auto-sets Test Types to API + SIT.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Format</th><th>How to Add</th><th>What&rsquo;s Extracted</th></tr></thead>
+          <tbody>
+            <tr><td><strong>OpenAPI / Swagger</strong></td><td>Upload <code>.yaml</code> / <code>.json</code></td><td>Endpoints, parameters, request/response schemas</td></tr>
+            <tr><td><strong>Postman Collection</strong></td><td>Upload <code>.json</code> export</td><td>Requests, headers, body, test scripts</td></tr>
+            <tr><td><strong>cURL Command</strong></td><td>Paste raw cURL text</td><td>Method, URL, headers, body payload</td></tr>
+            <tr><td><strong>API Docs</strong></td><td>Upload PDF / Word / Excel</td><td>Parsed text content as context</td></tr>
+            <tr><td><strong>Seed TCs</strong></td><td>Upload Excel seed file</td><td>Existing TCs used as structural seeds</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="input-docs">Docs Input</h3>
+      <p>Upload requirement documents, HLDs, BRDs, or SIT docs. Supported: <strong>PDF, Word (.docx), Excel (.xlsx), plain text, Markdown</strong>. Multiple files supported in one go.</p>
+
+      <h3 id="input-ref">Style Ref (Reference TCs)</h3>
+      <p>Reference existing TCs to guide the AI&rsquo;s writing style and avoid duplication.</p>
+      <ul>
+        <li><strong>Individual TC</strong> &mdash; search by TC-ID (e.g. <code>TC-AIR-042</code>) or title.</li>
+        <li><strong>Feature Group</strong> &mdash; type a feature name (e.g. &ldquo;Primary Sales&rdquo;). All TCs in that group are added. The AI uses them to avoid duplication and maintain consistent phrasing.</li>
+      </ul>
+
+      <h3 id="input-jira">Jira Input</h3>
+      <p>Paste a Jira story URL. The agent fetches the title, description, and acceptance criteria to generate AC-aligned test cases. Requires <code>JIRA_HOST</code>, <code>JIRA_EMAIL</code>, and <code>JIRA_API_TOKEN</code> in <code>.env</code>.</p>
+
+      <h3 id="seed-tcs">Seed TCs</h3>
+      <p>Upload an Excel file with an existing test case outline. The AI enriches each seed with detailed steps, login sequences, and selector hints without changing the core logic.</p>
+
+      <h3>Test Types</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Coverage</th></tr></thead>
+          <tbody>
+            <tr><td><strong>UI</strong></td><td>End-to-end browser flows, form interactions, navigation, visual assertions</td></tr>
+            <tr><td><strong>API</strong></td><td>REST endpoint calls, status codes, response body validation, error handling</td></tr>
+            <tr><td><strong>SIT</strong></td><td>System Integration Tests &mdash; cross-system flows, end-to-end business processes</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TC LIBRARY -->
+    <section class="section" id="tc-library">
+      <h2><span class="h2-icon">&#128203;</span> TC Library</h2>
+      <p>All generated and approved test cases live in the TC Library, organized by use-case group (feature).</p>
+      <ul>
+        <li><strong>Approve</strong> &mdash; moves a DRAFT TC to APPROVED, making it eligible for script generation and test runs.</li>
+        <li><strong>Edit</strong> &mdash; inline editing of title, steps, expected results, priority, tags, and test data.</li>
+        <li><strong>Duplicate</strong> &mdash; clones a TC as a starting point for variations.</li>
+        <li><strong>Bulk Approve</strong> &mdash; select multiple TCs and approve in one click.</li>
+        <li><strong>Bulk Move</strong> &mdash; reassign TCs to a different use-case group.</li>
+        <li><strong>Search &amp; Filter</strong> &mdash; filter by type, status, use-case tag, or free-text search.</li>
+      </ul>
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>Use the TC-ID prefix system.</strong> TC IDs are auto-assigned (e.g. <code>TC-AIR-001</code>). Reference them in Jira, in chat, and in the Style Ref search to maintain traceability.</div>
+      </div>
+    </section>
+
+    <!-- SCRIPTS -->
+    <section class="section" id="scripts">
+      <h2><span class="h2-icon">&#128220;</span> Scripts</h2>
+      <p>The Scripts page shows all Robot Framework scripts generated from approved test cases. Scripts are automatically written when TCs are saved after generation.</p>
+      <h3>Script Structure</h3>
+      <pre><code>scripts/
+&#9492;&#9472;&#9472; <span class="key">&lt;project-slug&gt;/</span>
+    &#9492;&#9472;&#9472; <span class="key">&lt;use-case-tag&gt;/</span>
+        &#9500;&#9472;&#9472; TC-AIR-001_Login_to_dashboard.robot
+        &#9500;&#9472;&#9472; TC-AIR-002_Create_new_order.robot
+        &#9492;&#9472;&#9472; resources/common.resource</code><span class="pre-label">tree</span></pre>
+      <h3>Left Panel Tabs</h3>
+      <ul>
+        <li><strong>Use Cases</strong> &mdash; browse scripts organized by feature/use-case, mirroring the TC Library.</li>
+        <li><strong>All Scripts</strong> &mdash; flat list of all scripts with run status and pass/fail badge.</li>
+      </ul>
+      <h3>Script Editor</h3>
+      <p>Click any script to open it in the Monaco editor. Changes are saved to the bind-mounted <code>scripts/</code> folder and picked up immediately by the runner &mdash; no rebuild needed.</p>
+    </section>
+
+    <!-- TEST RUNS -->
+    <section class="section" id="test-runs">
+      <h2><span class="h2-icon">&#9654;&#65039;</span> Test Runs</h2>
+      <p>Execute your Robot Framework scripts against the target application.</p>
+      <h3>Running a Single Script</h3>
+      <ol>
+        <li>Open the Scripts page and find the script.</li>
+        <li>Click <strong>&#9654; Run</strong>.</li>
+        <li>Select the environment (Dev / Staging / UAT).</li>
+        <li>Click <strong>Execute</strong>.</li>
+      </ol>
+      <h3>Running a Suite</h3>
+      <ol>
+        <li>Go to <strong>Suites</strong> and create a suite by selecting scripts to include.</li>
+        <li>Click <strong>Run Suite</strong> and monitor via the <strong>Runs</strong> page.</li>
+      </ol>
+      <h3>Watching Tests Live</h3>
+      <p>Open <code>http://localhost:6180</code> to see the noVNC stream &mdash; a live view of Chromium inside the runner container as tests execute.</p>
+    </section>
+
+    <!-- HEALING -->
+    <section class="section" id="healing">
+      <h2><span class="h2-icon">&#129657;</span> Healing</h2>
+      <p>When scripts fail due to changed UI selectors, Healing automatically detects broken selectors and proposes AI-generated fixes.</p>
+      <h3>How It Works</h3>
+      <ol>
+        <li>A script run fails with &ldquo;Element not found&rdquo;.</li>
+        <li>QA Infinity captures failure context (page source, error, step).</li>
+        <li>The AI analyzes the DOM and proposes alternative locators.</li>
+        <li>You review the proposed fix &mdash; accept or reject.</li>
+        <li>Accepted fixes are applied to the script file immediately.</li>
+      </ol>
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>Run healing after each application release.</strong> Even a small UI change can break selectors. The healing workflow takes minutes and keeps your regression suite green.</div>
+      </div>
+    </section>
+
+    <!-- SKILLS -->
+    <section class="section" id="skills">
+      <h2><span class="h2-icon">&#127919;</span> Skills</h2>
+      <p>Skills teach the AI reusable knowledge about your application &mdash; login flows, navigation patterns, common form interactions. Once captured, every generated script benefits automatically.</p>
+      <h3>Skill Types</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Login</strong> <span class="tag tag-amber">mandatory</span></td><td>Teaches the AI your login flow. Required for live screen capture. Stores username/password field selectors.</td></tr>
+            <tr><td><strong>Navigation</strong></td><td>Records how to reach specific pages (menu paths, URL patterns)</td></tr>
+            <tr><td><strong>Form Fill</strong></td><td>Captures interactions with complex forms, dropdowns, date pickers</td></tr>
+            <tr><td><strong>API Auth</strong></td><td>Stores API authentication patterns (Bearer tokens, Basic auth)</td></tr>
+            <tr><td><strong>Custom</strong></td><td>Freeform instructions for any repeatable sequence</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Creating a Login Skill</h3>
+      <ol>
+        <li>Go to <strong>Skills</strong> and click <strong>+ New Skill</strong>.</li>
+        <li>Select type <strong>Login</strong>.</li>
+        <li>Enter your application URL and credentials.</li>
+        <li>Click <strong>Capture</strong> &mdash; the system opens a browser and records the login flow.</li>
+        <li>Review and save the captured selectors.</li>
+      </ol>
+      <div class="callout danger">
+        <span class="callout-icon">&#128308;</span>
+        <div class="callout-body"><strong>A Login skill is required before using Live Screen Capture.</strong> Without it, the automated browser will land on the login page and capture that instead of the target page.</div>
+      </div>
+    </section>
+
+    <!-- REPORTS -->
+    <section class="section" id="reports">
+      <h2><span class="h2-icon">&#128202;</span> Reports</h2>
+      <p>Reports aggregates run results into shareable HTML reports, generated automatically after each run.</p>
+      <ul>
+        <li><strong>Pass/Fail Summary</strong> &mdash; overall and per-use-case pass rate.</li>
+        <li><strong>Trend Charts</strong> &mdash; pass rate over time.</li>
+        <li><strong>Failure Details</strong> &mdash; step-level failure log with screenshots.</li>
+        <li><strong>Email Delivery</strong> &mdash; configure SMTP in <code>.env</code> to auto-send reports after each run.</li>
+      </ul>
+    </section>
+
+    <!-- CHAT -->
+    <section class="section" id="chat">
+      <h2><span class="h2-icon">&#128172;</span> AI Chat</h2>
+      <p>Project-aware chat for querying your test suite, generating ad-hoc TCs, understanding failures, and getting explanations.</p>
+      <ul>
+        <li><em>&ldquo;Why did TC-AIR-042 fail last night?&rdquo;</em></li>
+        <li><em>&ldquo;Generate a test case for the stock transfer flow.&rdquo;</em></li>
+        <li><em>&ldquo;What&rsquo;s the pass rate for Primary Sales this week?&rdquo;</em></li>
+        <li><em>&ldquo;List all test cases that cover the checkout page.&rdquo;</em></li>
+      </ul>
+      <p>The chat agent has access to your project&rsquo;s TCs, scripts, run history, and reports. It can write new TCs directly to the library from the conversation.</p>
+    </section>
+
+    <hr>
+
+    <!-- BEST PRACTICES -->
+    <section class="section" id="best-practices">
+      <h2><span class="h2-icon">&#11088;</span> Tips for Best Output</h2>
+
+      <h3>1. Always Set Up a Login Skill First</h3>
+      <p>Before generating any UI test cases, create a Login skill. This is the single biggest factor in getting accurate, runnable scripts on first generation.</p>
+
+      <h3>2. Use Multiple Input Sources Together</h3>
+      <p>Combine a live screen capture + a Jira story + reference TCs from the same feature. This triangulates the AI&rsquo;s understanding and produces the most precise, non-duplicated test cases.</p>
+
+      <h3>3. Name Pages Clearly in Menu Context</h3>
+      <p>Fill in the <strong>Page Name</strong> field with the exact menu label (e.g. &ldquo;New Order&rdquo; not &ldquo;order page&rdquo;). The agent clicks matching navigation elements to land on the right page.</p>
+
+      <h3>4. Use Feature Groups as Style Ref for New Features</h3>
+      <p>When generating TCs for a feature that already has some TCs, add the entire feature group as a Style Ref. The AI matches the existing step structure, avoids duplication, and maintains numbering conventions.</p>
+
+      <h3>5. Upload the API Spec for API Testing</h3>
+      <p>For API test generation, always upload the OpenAPI/Swagger YAML rather than pasting a cURL. The spec gives the AI request/response schema, error codes, and field validation rules a cURL snippet doesn&rsquo;t contain.</p>
+
+      <h3>6. Approve TCs Before Running</h3>
+      <p>Only <strong>APPROVED</strong> TCs are included in suites and group runs. Review and approve after each generation session before scheduling runs.</p>
+
+      <h3>7. Keep Seed TCs Minimal but Specific</h3>
+      <p>Write the essential scenario in 3&ndash;5 words per step. Overly detailed seeds constrain the AI unnecessarily; overly vague ones produce generic output.</p>
+
+      <h3>8. Run Healing After Every Release</h3>
+      <p>Schedule a post-release healing run immediately after deploying new application versions. Catching selector breakage early prevents cascading failures in the regression suite.</p>
+
+      <h3>9. Set Additional Context for Edge Cases</h3>
+      <p>Use the <strong>Additional Context</strong> field to specify edge cases, boundary conditions, or test data requirements (e.g. &ldquo;include negative scenarios for invalid phone numbers&rdquo;).</p>
+
+      <h3>10. Use Named Environments Consistently</h3>
+      <p>Store all environment credentials in named env configs (Dev/Staging/UAT) rather than typing them ad-hoc. This makes credential rotation easy and scripts shareable across the team.</p>
+    </section>
+
+    <!-- TROUBLESHOOTING -->
+    <section class="section" id="troubleshooting">
+      <h2><span class="h2-icon">&#128269;</span> Troubleshooting</h2>
+
+      <h3>Container won&rsquo;t start / stays &ldquo;unhealthy&rdquo;</h3>
+      <pre><code><span class="cmd">docker compose ps</span>
+<span class="cmd">docker compose logs</span> qa-api --tail 50</code><span class="pre-label">bash</span></pre>
+      <p>Common causes: missing <code>POSTGRES_PASSWORD</code> or <code>JWT_SECRET</code>, port already in use on the host, insufficient Docker memory allocation.</p>
+
+      <h3>API container exits with &ldquo;DATABASE_URL must be set&rdquo;</h3>
+      <p>Ensure your <code>.env</code> file is in the project root (same directory as <code>docker-compose.yml</code>) and that <code>POSTGRES_PASSWORD</code> is set.</p>
+
+      <h3>File upload shows error or 0 KB</h3>
+      <p>Check that the file is under <code>MAX_UPLOAD_BYTES</code> (default 50 MB). Files under 1 MB display their size in KB. If uploads fail silently, check the browser console for network errors.</p>
+
+      <h3>Live screen capture takes a screenshot of the login page</h3>
+      <p>You need a <strong>Login skill</strong>. Go to Skills &rarr; + New Skill &rarr; Login, capture your login flow, then retry.</p>
+
+      <h3>Generated test cases are too generic</h3>
+      <p>Add more context: include a live screenshot, reference TCs from the same feature, and fill in the Additional Context field with specific requirements.</p>
+
+      <h3>Robot Framework scripts fail with &ldquo;ElementNotFound&rdquo;</h3>
+      <p>Go to the <strong>Healing</strong> page. Accept the proposed fix to update the selector and re-run. If no heal is proposed, verify the runner can reach the application URL from inside the Docker network.</p>
+
+      <h3>Style Ref dropdown shows no results</h3>
+      <p>The search queries approved TCs. Make sure you have approved TCs in your library. Search by <code>TC-AIR-</code> prefix or partial title.</p>
+
+      <h3>Jira integration returns &ldquo;Unauthorized&rdquo;</h3>
+      <p>Verify <code>JIRA_EMAIL</code> and <code>JIRA_API_TOKEN</code> in <code>.env</code>. The token must be an API token (not your Jira password) generated at <code>id.atlassian.com</code>. Restart after updating:</p>
+      <pre><code><span class="cmd">docker compose restart</span> qa-api</code><span class="pre-label">bash</span></pre>
+
+      <h3>noVNC blank screen at localhost:6180</h3>
+      <p>The runner only starts its VNC server when a test is executing. A blank screen when idle is normal &mdash; trigger a test run then check the URL.</p>
+
+      <h3>Out of disk space</h3>
+      <pre><code><span class="cmd">docker system df</span>
+<span class="cmd">docker image prune -a</span>
+<span class="cmd">docker exec</span> qa-api <span class="cmd">find</span> /artifacts -mtime +30 -delete</code><span class="pre-label">bash</span></pre>
+
+      <h3>Reset the entire database (destructive)</h3>
+      <pre><code><span class="cm"># WARNING: deletes ALL data including TCs, scripts, and reports</span>
+<span class="cmd">docker compose down -v</span>
+<span class="cmd">docker compose up -d</span></code><span class="pre-label">bash</span></pre>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <h2><span class="h2-icon">&#10067;</span> Frequently Asked Questions</h2>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Can QA Infinity test mobile applications? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">The current version focuses on web-based applications. The runner uses Playwright&rsquo;s Chromium browser with responsive viewport support, so mobile web views can be tested by setting a mobile viewport in the generated scripts. Native mobile app testing (Android/iOS) is not supported.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">How are LLM costs managed? Is there a way to estimate cost per generation? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">A typical generation session (one screen + one doc + 10 TCs) uses approximately 15,000&ndash;40,000 tokens. At Claude Sonnet pricing via OpenRouter (~$3/M input, $15/M output), this is roughly $0.10&ndash;$0.40 per session. Monitor usage in your OpenRouter or Anthropic dashboard. To reduce costs, limit input sources per generation and avoid very large documentation uploads.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Can I use a local LLM (Ollama, LM Studio) instead of a cloud API? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">Yes. Set <code>LLM_PROVIDER=openrouter</code> and point <code>OPENROUTER_API_KEY</code> to your LiteLLM proxy URL. LiteLLM acts as an OpenRouter-compatible gateway in front of any local model. For best results, use at least a 70B parameter model &mdash; smaller models typically produce lower quality test cases.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Do generated scripts work out-of-the-box or do they need manual editing? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">Scripts generated from live screen captures (with a Login skill configured) typically run without modification on the first attempt. Scripts generated from docs-only inputs may need selector adjustments. The Healing module handles post-run breakage automatically.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">How do I back up my data? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">
+          Back up two things: the PostgreSQL volume and the scripts folder.
+          <pre style="margin-top:8px"><code><span class="cm"># Backup PostgreSQL</span>
+<span class="cmd">docker exec</span> qa-postgres pg_dump -U qauser qa_infinity &gt; backup.sql
+
+<span class="cm"># Backup scripts (already on host filesystem)</span>
+<span class="cmd">cp -r</span> ./scripts ./scripts-backup-$(date +%Y%m%d)</code><span class="pre-label">bash</span></pre>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Can multiple users collaborate on the same project simultaneously? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">Yes. Multiple users with different roles can work on the same project at the same time. For large teams, assign one &ldquo;Admin&rdquo; per project and use &ldquo;Super User&rdquo; for the rest to avoid accidental overwrites.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">What is the maximum file size I can upload? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">The default maximum is 50 MB per file (<code>MAX_UPLOAD_BYTES=52428800</code> in <code>.env</code>). For large specs, consider splitting into feature-level documents to reduce LLM token consumption.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Can I schedule test runs to run automatically at night? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">Yes. Go to the <strong>Scheduler</strong> page, create a new schedule, select a suite, and configure the cron expression (e.g. <code>0 2 * * *</code> for 2 AM daily).</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">How does the platform avoid generating duplicate test cases? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">At generation time, the API checks for semantic similarity against existing approved TCs and removes near-duplicates before returning results. For maximum deduplication, add the relevant feature group as a Style Ref.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Can QA Infinity be deployed behind a reverse proxy (nginx, Traefik)? <span class="faq-chevron">&#9654;</span></div>
+        <div class="faq-a">Yes. Update <code>CORS_ORIGIN</code> in <code>.env</code> to your public frontend URL. For WebSocket support (live run events), ensure your proxy passes the <code>Upgrade</code> and <code>Connection</code> headers.</div>
+      </div>
+    </section>
+
+    <div style="padding:40px 0 20px;border-top:1px solid var(--border);margin-top:20px;">
+      <div style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);">
+        QA Infinity User Guide &middot; 6D Technologies &middot; <span id="guide-year"></span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  function toggleFaq(el) { el.closest('.faq-item').classList.toggle('open'); }
+  function toggleTheme() {
+    const r = document.documentElement;
+    r.setAttribute('data-theme', r.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  }
+  const sections = document.querySelectorAll('.section');
+  const navLinks = document.querySelectorAll('.nav-link');
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        const a = document.querySelector('.nav-link[href="#' + e.target.id + '"]');
+        if (a) { a.classList.add('active'); a.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+      }
+    });
+  }, { rootMargin: '-56px 0px -60% 0px', threshold: 0 });
+  sections.forEach(s => obs.observe(s));
+  document.getElementById('guide-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
