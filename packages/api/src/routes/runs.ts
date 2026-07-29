@@ -317,7 +317,7 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
     }
 
     const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
-    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const scriptedIds = new Set([...resolved.map((r) => r.testCaseId), ...Object.values(mirrorMap).flat()]);
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, schedule.environment);
@@ -385,7 +385,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
 
     const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
-    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const scriptedIds = new Set([...resolved.map((r) => r.testCaseId), ...Object.values(mirrorMap).flat()]);
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, environment);
@@ -515,7 +515,7 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
 
     const testCaseIds = tcs.map((t) => t.id);
     const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
-    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const scriptedIds = new Set([...resolved.map((r) => r.testCaseId), ...Object.values(mirrorMap).flat()]);
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, environment);
@@ -619,7 +619,7 @@ router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunct
     }
 
     const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
-    const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
+    const scriptedIds = new Set([...resolved.map((r) => r.testCaseId), ...Object.values(mirrorMap).flat()]);
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
     const envConfig = await getEnvConfig(req.project.id, run.environment);

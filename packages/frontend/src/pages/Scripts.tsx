@@ -1916,7 +1916,7 @@ export default function Scripts() {
   }
 
   async function handleQuickRun() {
-    if (!projectId || !activeScript?.testCaseId) return;
+    if (!projectId || !activeScriptTcId) return;
     // No EnvConfig row is fine — many projects are self-contained (URLs baked
     // into the script/resource files), so fall back to a plain env name and
     // let the runner proceed without injecting a base URL/credentials.
@@ -1936,7 +1936,7 @@ export default function Scripts() {
     setQuickRunId(null);
     try {
       const run = await createIndividualRun.mutateAsync({
-        testCaseId: activeScript.testCaseId,
+        testCaseId: activeScriptTcId,
         environment: environmentName,
       });
       setQuickRunId(run.id);
@@ -1951,7 +1951,7 @@ export default function Scripts() {
   }
 
   async function handleHostBrowserRun() {
-    if (!projectId || !activeScript?.testCaseId) return;
+    if (!projectId || !activeScriptTcId) return;
     // No EnvConfig row is fine — see handleQuickRun.
     const defaultEnv = envConfigs.find((e) => e.isDefault) ?? envConfigs[0];
     const environmentName = defaultEnv?.name ?? 'Dev';
@@ -1974,7 +1974,7 @@ export default function Scripts() {
     setHostRunId(null);
     try {
       const run = await createIndividualRun.mutateAsync({
-        testCaseId: activeScript.testCaseId,
+        testCaseId: activeScriptTcId,
         environment: environmentName,
         hostBrowser: true,
       });
@@ -2233,7 +2233,10 @@ export default function Scripts() {
   const activeTab = openTabs.find((t) => t.id === activeTabId) ?? null;
   const activeScript = activeTab?.kind === 'script' ? activeTab.script : null;
   const activeContent = activeTabId ? (tabContents[activeTabId] ?? '') : '';
-  const activeTc = allTCs.find((tc) => tc.id === activeScript?.testCaseId) ?? undefined;
+  const activeTc = allTCs.find((tc) => tc.id === activeScript?.testCaseId)
+    ?? allTCs.find((tc) => tc.linkedScriptId === activeScript?.id)
+    ?? undefined;
+  const activeScriptTcId = activeTc?.id ?? activeScript?.testCaseId ?? undefined;
 
   // Clear run badges when the user switches to a different script tab
   useEffect(() => {
@@ -2555,7 +2558,7 @@ export default function Scripts() {
   // ── Regenerate active script ──────────────────────────────────────────────
 
   async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string; referenceTcIds?: string[] }) {
-    if (!projectId || !activeScript?.testCaseId) return;
+    if (!projectId || !activeScriptTcId) return;
     setShowRegenModal(false);
     setRegenFixContext(undefined);
 
@@ -2571,7 +2574,7 @@ export default function Scripts() {
       await api.post<GenerateApiResponse>(
         `/projects/${projectId}/scripts/generate`,
         {
-          testCaseIds: [activeScript.testCaseId],
+          testCaseIds: [activeScriptTcId],
           withHeal: opts.scriptMode === 'ROBOT' ? false : opts.withHeal,
           contextNote: opts.contextNote || undefined,
           domSnippet: opts.domSnippet || undefined,
@@ -3515,7 +3518,7 @@ export default function Scripts() {
                     </span>
                   );
                 })()}
-                {activeTab?.kind === 'script' && canWrite && activeScript?.testCaseId && (
+                {activeTab?.kind === 'script' && canWrite && activeScriptTcId && (
                   <button
                     onClick={() => setShowRegenModal(true)}
                     title="Regenerate this script — provide correction context to guide the agent"
@@ -3628,7 +3631,7 @@ export default function Scripts() {
                 )}
 
                 {/* ▶ Run button — triggers a quick run against the default env */}
-                {activeScript?.testCaseId && (
+                {activeScriptTcId && (
                   <>
                     <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.08)', margin: '0 2px' }} />
                     <button
@@ -3736,7 +3739,7 @@ export default function Scripts() {
                             ◫ Monitor
                           </button>
                         )}
-                        {quickRunStatus === 'FAILED' && activeScript?.testCaseId && (
+                        {quickRunStatus === 'FAILED' && activeScriptTcId && (
                           <button
                             onClick={() => {
                               setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
@@ -3796,7 +3799,7 @@ export default function Scripts() {
                         >
                           ◫ Monitor
                         </button>
-                        {hostRunStatus === 'FAILED' && activeScript?.testCaseId && (
+                        {hostRunStatus === 'FAILED' && activeScriptTcId && (
                           <button
                             onClick={() => {
                               setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
