@@ -652,13 +652,14 @@ export default function TCLibrary() {
         )}
       </div>
 
-      {/* Selection action bar — floats above content, pinned to the bottom of the page */}
+      {/* Selection action bar — floats above content, centered at the bottom of the page */}
       <div
         style={{
           position: 'absolute',
-          left: '20px',
-          right: '20px',
+          left: '50%',
           bottom: '16px',
+          transform: 'translateX(-50%)',
+          maxWidth: 'calc(100% - 40px)',
           zIndex: 40,
           filter: selectedIds.size > 0 ? 'drop-shadow(0 8px 24px rgba(0,0,0,0.35))' : 'none',
         }}
