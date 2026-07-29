@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Background -->
+  <rect width="32" height="32" rx="7" fill="#0f172a"/>
+  <!-- Infinity symbol in cyan -->
+  <path d="M7.5 16 C7.5 13.5 9.2 11.5 11.5 11.5 C13.0 11.5 14.2 12.4 16 14.4 C17.8 12.4 19.0 11.5 20.5 11.5 C22.8 11.5 24.5 13.5 24.5 16 C24.5 18.5 22.8 20.5 20.5 20.5 C19.0 20.5 17.8 19.6 16 17.6 C14.2 19.6 13.0 20.5 11.5 20.5 C9.2 20.5 7.5 18.5 7.5 16 Z" fill="none" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round"/>
+</svg>
