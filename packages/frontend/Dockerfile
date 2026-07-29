@@ -22,6 +22,12 @@ FROM nginx:alpine
 
 COPY --from=builder /app/packages/frontend/dist /usr/share/nginx/html
 
+# The COPY above can carry over restrictive permission bits from the build
+# host's checkout (e.g. some public/ files ending up owner/group-readable
+# only) — nginx's worker runs as a low-privileged user, so a non-world-
+# readable file 403s even though it exists. Normalize to world-readable.
+RUN chmod -R a+rX /usr/share/nginx/html
+
 # Nginx config is mounted via docker-compose (nginx/nginx.conf → /etc/nginx/conf.d/default.conf)
 
 EXPOSE 80
