@@ -8,6 +8,7 @@ import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
 import { useHealStats } from '../../hooks/useHeals';
 import { useSchedules } from '../../hooks/useRuns';
 import { useRBAC } from '../../hooks/useRBAC';
+import { useAppConfig } from '../../context/AppConfig';
 import type { NavSection } from '../../types';
 
 interface SidebarProps {
@@ -33,6 +34,8 @@ export default function Sidebar({ slug }: SidebarProps) {
   const { data: healStats } = useHealStats(projectId || undefined);
   const { data: schedules = [] } = useSchedules(projectId || undefined);
   const activeScheduleCount = schedules.filter((s) => s.isActive).length;
+  const { mode: appMode } = useAppConfig();
+  const isRunner = appMode === 'runner';
 
   const navSections: NavSection[] = slug
     ? [
@@ -41,24 +44,24 @@ export default function Sidebar({ slug }: SidebarProps) {
           items: [
             { label: 'Dashboard', path: `/projects/${slug}/dashboard`, icon: '▦' },
             { label: 'TC Library', path: `/projects/${slug}/tc-library`, icon: '📋', badge: activeProject?._count?.testCases ?? undefined, badgeVariant: 'green' },
-            { label: 'Product Skills', path: `/projects/${slug}/skills`, icon: '🧠' },
+            ...(!isRunner ? [{ label: 'Product Skills', path: `/projects/${slug}/skills`, icon: '🧠' }] : []),
           ],
         },
         {
-          label: 'Agents',
+          label: isRunner ? 'Testing' : 'Agents',
           items: [
-            { label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', aiLabel: true },
-            { label: 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨', aiLabel: true },
+            ...(!isRunner ? [{ label: 'Test Writer', path: `/projects/${slug}/writer`, icon: '✍', aiLabel: true }] : []),
+            { label: isRunner ? 'Scripts' : 'Script Agent', path: `/projects/${slug}/scripts`, icon: '⌨', ...(!isRunner && { aiLabel: true }) },
             { label: 'Execution', path: `/projects/${slug}/execution`, icon: '▶' },
             { label: 'Scheduler', path: `/projects/${slug}/scheduler`, icon: '⏰', badge: activeScheduleCount || undefined, badgeVariant: 'blue' },
-            ...(canAccessHealing ? [{ label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' as const, aiLabel: true }] : []),
+            ...(!isRunner && canAccessHealing ? [{ label: 'Healing Agent', path: `/projects/${slug}/healing`, icon: '⟳', badge: healStats?.pending || undefined, badgeVariant: 'red' as const, aiLabel: true }] : []),
           ],
         },
         {
           label: 'Analytics',
           items: [
             { label: 'Reports', path: `/projects/${slug}/reports`, icon: '📊' },
-            { label: 'Chat Agent', path: `/projects/${slug}/chat`, icon: '💬', aiLabel: true, onClick: () => toggleChat() },
+            ...(!isRunner ? [{ label: 'Chat Agent', path: `/projects/${slug}/chat`, icon: '💬', aiLabel: true, onClick: () => toggleChat() }] : []),
           ],
         },
         {
@@ -182,13 +185,15 @@ export default function Sidebar({ slug }: SidebarProps) {
             </span>
           )}
         </Link>
-        <Link
-          to="/usage"
-          className={`nav-item${location.pathname === '/usage' ? ' active' : ''}`}
-        >
-          <span className="nav-icon">💳</span>
-          AI Usage
-        </Link>
+        {!isRunner && (
+          <Link
+            to="/usage"
+            className={`nav-item${location.pathname === '/usage' ? ' active' : ''}`}
+          >
+            <span className="nav-icon">💳</span>
+            AI Usage
+          </Link>
+        )}
         {currentUser?.globalRole === 'SUPER_ADMIN' && (
           <Link
             to="/admin/users"

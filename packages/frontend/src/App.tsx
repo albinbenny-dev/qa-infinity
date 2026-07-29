@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -19,6 +19,7 @@ import UserManagement from './pages/UserManagement';
 import Skills from './pages/Skills';
 import { isAuthenticated } from './lib/auth';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { AppConfigProvider, useAppConfig } from './context/AppConfig';
 
 // ── Protected route ────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -26,6 +27,16 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;
+}
+
+// ── AI-only route — redirects to dashboard in runner mode ─────────────────
+function AiRoute({ element }: { element: React.ReactElement }) {
+  const { mode } = useAppConfig();
+  const { slug } = useParams<{ slug: string }>();
+  if (mode === 'runner') {
+    return <Navigate to={slug ? `/projects/${slug}/dashboard` : '/projects'} replace />;
+  }
+  return element;
 }
 
 // ── Placeholder for screens not yet implemented ────────────────────────────
@@ -61,44 +72,46 @@ function PlaceholderScreen({ title }: { title: string }) {
 // ── App ────────────────────────────────────────────────────────────────────
 export default function App() {
   return (
-    <Routes>
-      {/* Auth pages — no shell */}
-      <Route path="/login"    element={<Login />} />
-      <Route path="/register" element={<Register />} />
+    <AppConfigProvider>
+      <Routes>
+        {/* Auth pages — no shell */}
+        <Route path="/login"    element={<Login />} />
+        <Route path="/register" element={<Register />} />
 
-      {/* All protected pages — wrapped in AppShell + ErrorBoundary */}
-      <Route
-        element={
-          <ProtectedRoute>
-            <ErrorBoundary>
-              <AppShell />
-            </ErrorBoundary>
-          </ProtectedRoute>
-        }
-      >
-        {/* Global projects list */}
-        <Route path="/projects" element={<GlobalProjects />} />
+        {/* All protected pages — wrapped in AppShell + ErrorBoundary */}
+        <Route
+          element={
+            <ProtectedRoute>
+              <ErrorBoundary>
+                <AppShell />
+              </ErrorBoundary>
+            </ProtectedRoute>
+          }
+        >
+          {/* Global projects list */}
+          <Route path="/projects" element={<GlobalProjects />} />
 
-        {/* Per-project screens */}
-        <Route path="/projects/:slug/dashboard"    element={<Dashboard />} />
-        <Route path="/projects/:slug/writer"       element={<TestWriter />} />
-        <Route path="/projects/:slug/tc-library"   element={<TCLibrary />} />
-        <Route path="/projects/:slug/scripts"      element={<Scripts />} />
-        <Route path="/projects/:slug/execution"    element={<Execution />} />
-        <Route path="/projects/:slug/scheduler"    element={<Scheduler />} />
-        <Route path="/projects/:slug/healing"      element={<Healing />} />
-        <Route path="/projects/:slug/reports"      element={<Reports />} />
-        <Route path="/projects/:slug/chat"         element={<Chat />} />
-        <Route path="/projects/:slug/skills"        element={<Skills />} />
-        <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />
-        <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
-        <Route path="/usage"                       element={<Usage />} />
-        <Route path="/admin/users"                 element={<UserManagement />} />
-      </Route>
+          {/* Per-project screens */}
+          <Route path="/projects/:slug/dashboard"    element={<Dashboard />} />
+          <Route path="/projects/:slug/writer"       element={<AiRoute element={<TestWriter />} />} />
+          <Route path="/projects/:slug/tc-library"   element={<TCLibrary />} />
+          <Route path="/projects/:slug/scripts"      element={<Scripts />} />
+          <Route path="/projects/:slug/execution"    element={<Execution />} />
+          <Route path="/projects/:slug/scheduler"    element={<Scheduler />} />
+          <Route path="/projects/:slug/healing"      element={<AiRoute element={<Healing />} />} />
+          <Route path="/projects/:slug/reports"      element={<Reports />} />
+          <Route path="/projects/:slug/chat"         element={<AiRoute element={<Chat />} />} />
+          <Route path="/projects/:slug/skills"       element={<AiRoute element={<Skills />} />} />
+          <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />
+          <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
+          <Route path="/usage"                       element={<AiRoute element={<Usage />} />} />
+          <Route path="/admin/users"                 element={<UserManagement />} />
+        </Route>
 
-      {/* Root redirect */}
-      <Route path="/" element={<Navigate to="/projects" replace />} />
-      <Route path="*" element={<Navigate to="/projects" replace />} />
-    </Routes>
+        {/* Root redirect */}
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route path="*" element={<Navigate to="/projects" replace />} />
+      </Routes>
+    </AppConfigProvider>
   );
 }

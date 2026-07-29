@@ -170,6 +170,11 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// ── App config (public — no auth required) ────────────────────────────────
+app.get('/api/app-config', (_req, res) => {
+  res.json({ mode: process.env.APP_MODE === 'runner' ? 'runner' : 'full' });
+});
+
 // ── API routes ─────────────────────────────────────────────────────────────
 app.use('/api', apiRouter);
 
@@ -251,11 +256,13 @@ httpServer.listen(PORT, () => {
     if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {
       try {
         startRunWorker();
-        startHealWorker();
-        startScanWorker();
-        startScriptGenWorker();
-        startScriptVerifyWorker();
-        startAgentScanWorker();
+        if (process.env.APP_MODE !== 'runner') {
+          startHealWorker();
+          startScanWorker();
+          startScriptGenWorker();
+          startScriptVerifyWorker();
+          startAgentScanWorker();
+        }
       } catch (err) {
         console.warn('[qa-api] Workers failed to start (Redis may be unavailable):', (err as Error).message);
       }

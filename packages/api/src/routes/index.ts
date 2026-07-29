@@ -14,6 +14,7 @@ import adminRouter from './admin.js';
 import resourcesRouter from './resources.js';
 import skillsRouter from './skills.js';
 import { verifyToken } from '../middleware/auth.js';
+import { requireFullMode } from '../middleware/requireFullMode.js';
 
 const router = Router();
 
@@ -39,17 +40,17 @@ router.use('/projects/:projectId/scripts', scriptsRouter);
 // ── Runs (Stage 5) ────────────────────────────────────────────────────────
 router.use('/projects/:projectId/runs', runsRouter);
 
-// ── Healing (Stage 7) ─────────────────────────────────────────────────────
-router.use('/projects/:projectId/heals', healsRouter);
+// ── Healing (Stage 7) — AI only ───────────────────────────────────────────
+router.use('/projects/:projectId/heals', requireFullMode, healsRouter);
 
 // ── Reports (Stage 9) ─────────────────────────────────────────────────────
 router.use('/projects/:projectId/reports', reportsRouter);
 
-// ── Chat (Stage 10) ───────────────────────────────────────────────────────
-router.use('/projects/:projectId/chat', chatRouter);
+// ── Chat (Stage 10) — AI only ─────────────────────────────────────────────
+router.use('/projects/:projectId/chat', requireFullMode, chatRouter);
 
-// ── UI Scanner ────────────────────────────────────────────────────────────
-router.use('/projects/:projectId/scans', scansRouter);
+// ── UI Scanner — AI only ──────────────────────────────────────────────────
+router.use('/projects/:projectId/scans', requireFullMode, scansRouter);
 
 // ── Suites ────────────────────────────────────────────────────────────────
 router.use('/projects/:projectId/suites', suitesRouter);
@@ -60,8 +61,8 @@ router.use('/admin', adminRouter);
 // ── Robot Framework resources ─────────────────────────────────────────────
 router.use('/projects/:projectId/resources', resourcesRouter);
 
-// ── Product Skills ────────────────────────────────────────────────────────
-router.use('/projects/:projectId/skills', skillsRouter);
+// ── Product Skills — AI only ──────────────────────────────────────────────
+router.use('/projects/:projectId/skills', requireFullMode, skillsRouter);
 
 
 export default router;
