@@ -9,9 +9,10 @@ import {
   Legend,
 } from 'recharts';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
-import { useDashboard } from '../hooks/useReports';
+import { useDashboard, useReportRuns } from '../hooks/useReports';
 import { useCreateRun } from '../hooks/useRuns';
 import { useProjectStore } from '../stores/projectStore';
+import RunHistoryTable from '../components/reports/RunHistoryTable';
 import type { AgentStatus, TopSuiteEntry } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -617,6 +618,76 @@ function TopSuitesCard({
   );
 }
 
+// ── Suite & Scheduler Run History Card ──────────────────────────────────────
+
+function SuiteSchedulerHistoryCard({
+  projectId,
+  onViewAll,
+}: {
+  projectId: string;
+  onViewAll: () => void;
+}) {
+  const { data, isLoading } = useReportRuns(projectId, 1, {
+    triggerTypes: ['SUITE', 'SCHEDULED'],
+    limit: 8,
+  });
+  const runs = data?.runs ?? [];
+
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        boxShadow: 'var(--shadow-card)',
+      }}
+    >
+      <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))' }} />
+      <div
+        style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+          🗂️ Suite &amp; Scheduler Run History
+        </span>
+        <button
+          onClick={onViewAll}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--cyan)',
+            fontSize: 11,
+            fontWeight: 700,
+            cursor: 'pointer',
+          }}
+        >
+          View All →
+        </button>
+      </div>
+      {isLoading ? (
+        <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+          Loading…
+        </div>
+      ) : runs.length === 0 ? (
+        <div style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, lineHeight: 1.7 }}>
+          No suite or scheduled runs yet.<br />
+          <span style={{ color: 'var(--text-mid)' }}>Run a suite or a schedule to see its history here.</span>
+        </div>
+      ) : (
+        <div style={{ padding: '10px 12px' }}>
+          <RunHistoryTable projectId={projectId} runs={runs} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -827,6 +898,12 @@ export default function Dashboard() {
               suites={topSuites}
               onNavigate={() => navigate(`/projects/${slug}/reports`)}
               onRunSuite={handleRunSuite}
+            />
+
+            {/* ── Suite & Scheduler run history ─────────────────────────── */}
+            <SuiteSchedulerHistoryCard
+              projectId={projectId}
+              onViewAll={() => navigate(`/projects/${slug}/reports`)}
             />
 
             {/* ── Flaky tests (if any) ──────────────────────────────────── */}

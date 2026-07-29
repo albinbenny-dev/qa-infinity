@@ -54,15 +54,23 @@ export function useProjectStats(projectId: string | undefined) {
 
 // ── Run list (reports) ─────────────────────────────────────────────────────
 
-export function useReportRuns(projectId: string | undefined, page = 1) {
+export function useReportRuns(
+  projectId: string | undefined,
+  page = 1,
+  opts?: { triggerTypes?: string[]; limit?: number },
+) {
+  const limit = opts?.limit ?? 20;
+  const triggerTypes = opts?.triggerTypes;
   return useQuery({
-    queryKey: ['report-runs', projectId, page],
+    queryKey: ['report-runs', projectId, page, limit, triggerTypes?.join(',') ?? null],
     queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (triggerTypes && triggerTypes.length > 0) params.set('triggerType', triggerTypes.join(','));
       const res = await api.get<{
         runs: ReportRun[];
         total: number;
         pages: number;
-      }>(`/projects/${projectId}/reports/runs?page=${page}&limit=20`);
+      }>(`/projects/${projectId}/reports/runs?${params.toString()}`);
       return res.data;
     },
     enabled: !!projectId,

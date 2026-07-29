@@ -65,9 +65,19 @@ router.get('/runs', async (req: Request, res: Response, next: NextFunction) => {
     const limit = Math.min(50, parseInt(req.query['limit'] as string || '20', 10));
     const skip = (page - 1) * limit;
 
+    const triggerTypeParam = req.query['triggerType'] as string | undefined;
+    const triggerTypes = triggerTypeParam
+      ? triggerTypeParam.split(',').map((t) => t.trim()).filter(Boolean)
+      : undefined;
+
+    const where = {
+      projectId: req.project.id,
+      ...(triggerTypes && triggerTypes.length > 0 ? { triggerType: { in: triggerTypes } } : {}),
+    };
+
     const [runs, total] = await Promise.all([
       prisma.run.findMany({
-        where: { projectId: req.project.id },
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
@@ -77,7 +87,7 @@ router.get('/runs', async (req: Request, res: Response, next: NextFunction) => {
           report: { select: { id: true, summary: true, aiAnalysis: true } },
         },
       }),
-      prisma.run.count({ where: { projectId: req.project.id } }),
+      prisma.run.count({ where }),
     ]);
 
     res.json({ runs, total, page, limit, pages: Math.ceil(total / limit) });
