@@ -85,7 +85,8 @@ function buildGroups(allTCs: TestCase[], useCases: string[]) {
 // ── File Tree Component ─────────────────────────────────────────────────────
 
 function FileTreeView({
-  nodes, expandedDirs, onToggle, onSelect, onDownloadFile, onDownloadZip, onDelete, onUploadTo, onNewFolder, indent,
+  nodes, expandedDirs, onToggle, onSelect, onDownloadFile, onDownloadZip, onDelete, onUploadTo, onNewFolder,
+  selectedFolder, onSelectFolder, onMoveItem, indent,
 }: {
   nodes: FileTreeNode[];
   expandedDirs: Set<string>;
@@ -96,6 +97,9 @@ function FileTreeView({
   onDelete?: (p: string) => void;
   onUploadTo?: (folderPath: string) => void;
   onNewFolder?: (parentPath: string) => void;
+  selectedFolder?: string;
+  onSelectFolder?: (p: string) => void;
+  onMoveItem?: (fromPath: string, toFolder: string) => void;
   indent: number;
 }) {
   return (
@@ -103,14 +107,26 @@ function FileTreeView({
       {nodes.map(node => (
         <div key={node.path}>
           <div
+            draggable={!!onMoveItem}
+            onDragStart={onMoveItem ? (e) => { e.dataTransfer.setData('text/plain', node.path); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+            onDragOver={onMoveItem && node.type === 'dir' ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } : undefined}
+            onDrop={onMoveItem && node.type === 'dir' ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const fromPath = e.dataTransfer.getData('text/plain');
+              if (fromPath && fromPath !== node.path) onMoveItem(fromPath, node.path);
+            } : undefined}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               padding: '3px 12px', paddingLeft: 12 + indent * 16,
               cursor: 'pointer',
               fontSize: 13,
-              background: 'transparent',
+              background: node.type === 'dir' && node.path === selectedFolder ? 'rgba(37,99,171,0.1)' : 'transparent',
             }}
-            onClick={() => node.type === 'dir' ? onToggle(node.path) : onSelect?.(node.path)}
+            onClick={() => {
+              if (node.type === 'dir') { onToggle(node.path); onSelectFolder?.(node.path); }
+              else onSelect?.(node.path);
+            }}
           >
             <span style={{ color: node.type === 'dir' ? 'var(--amber)' : 'var(--text-muted)', fontSize: 14 }}>
               {node.type === 'dir' ? (expandedDirs.has(node.path) ? '▾' : '▸') : ''}
@@ -173,6 +189,9 @@ function FileTreeView({
               onDelete={onDelete}
               onUploadTo={onUploadTo}
               onNewFolder={onNewFolder}
+              selectedFolder={selectedFolder}
+              onSelectFolder={onSelectFolder}
+              onMoveItem={onMoveItem}
               indent={indent + 1}
             />
           )}
@@ -1986,6 +2005,8 @@ export default function Scripts() {
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
   const [fileTreeLoading, setFileTreeLoading] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  // '' means the project root — the last-clicked folder is where Upload/New Folder land
+  const [selectedFolder, setSelectedFolder] = useState('');
 
   async function loadFileTree() {
     setFileTreeLoading(true);
@@ -2160,6 +2181,18 @@ export default function Scripts() {
       loadFileTree();
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'Failed to create folder');
+    }
+  }
+
+  async function handleMoveItem(fromPath: string, toFolder: string) {
+    if (fromPath === toFolder) return;
+    try {
+      await api.post(`/projects/${projectId}/scripts/project-file/move`, { from: fromPath, to: toFolder });
+      toast.success(`Moved to ${toFolder || 'project root'}`);
+      loadFileTree();
+      qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Move failed');
     }
   }
 
@@ -3263,15 +3296,15 @@ export default function Scripts() {
                 )}
                 {canWrite && (
                   <button
-                    onClick={() => handleUploadToFolder('')}
-                    title="Upload one or more files to the project root"
+                    onClick={() => handleUploadToFolder(selectedFolder)}
+                    title={`Upload one or more files to ${selectedFolder || 'the project root'}`}
                     style={{ padding: '6px 10px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-mid)', fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}
                   >⬆ Upload</button>
                 )}
                 {canWrite && (
                   <button
-                    onClick={() => handleCreateFolder('')}
-                    title="Create a new folder at the project root"
+                    onClick={() => handleCreateFolder(selectedFolder)}
+                    title={`Create a new folder inside ${selectedFolder || 'the project root'}`}
                     style={{ padding: '5px 8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-mid)', fontSize: 13 }}
                   >📁+</button>
                 )}
@@ -3300,6 +3333,22 @@ export default function Scripts() {
                 >🔍</button>
               </div>
 
+              {/* Current upload/new-folder target */}
+              {!fileSearchOpen && (
+                <div style={{ padding: '4px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 10, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span>📌 Target:</span>
+                  <span style={{ color: 'var(--text-mid)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedFolder || 'project root'}
+                  </span>
+                  {selectedFolder && (
+                    <button
+                      onClick={() => setSelectedFolder('')}
+                      style={{ background: 'none', border: 'none', color: 'var(--cyan)', cursor: 'pointer', fontSize: 10, padding: 0, marginLeft: 2 }}
+                    >reset to root</button>
+                  )}
+                </div>
+              )}
+
               {/* Find-in-files search box */}
               {fileSearchOpen && (
                 <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -3315,7 +3364,15 @@ export default function Scripts() {
               )}
 
               {/* File tree OR search results */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+              <div
+                style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}
+                onDragOver={canWrite && !fileSearchOpen ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } : undefined}
+                onDrop={canWrite && !fileSearchOpen ? (e) => {
+                  e.preventDefault();
+                  const fromPath = e.dataTransfer.getData('text/plain');
+                  if (fromPath) handleMoveItem(fromPath, '');
+                } : undefined}
+              >
                 {fileSearchOpen && fileSearchQuery.trim().length >= 2 ? (
                   fileSearchLoading ? (
                     <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12, textAlign: 'center' }}>Searching…</div>
@@ -3387,6 +3444,9 @@ export default function Scripts() {
                     onDelete={canWrite ? deleteProjectEntry : undefined}
                     onUploadTo={canWrite ? handleUploadToFolder : undefined}
                     onNewFolder={canWrite ? handleCreateFolder : undefined}
+                    selectedFolder={selectedFolder}
+                    onSelectFolder={setSelectedFolder}
+                    onMoveItem={canWrite ? handleMoveItem : undefined}
                     indent={0}
                   />
                 )}

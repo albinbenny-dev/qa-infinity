@@ -1088,6 +1088,58 @@ router.post('/project-file/upload', projectFileUpload.single('file'), async (req
   }
 });
 
+// ── POST /project-file/move — move/rename a file or folder within the project ─
+// Used by drag-and-drop in the Project Files tree.
+
+function normalizeRelPath(p: string): string | null {
+  const segments = p.split('/').filter(Boolean);
+  if (segments.length === 0 || segments.some((s) => s === '..' || s === '.')) return null;
+  return segments.join('/');
+}
+
+router.post('/project-file/move', async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.body as { from?: string; to?: string };
+    const fromNorm = from ? normalizeRelPath(from) : null;
+    if (!fromNorm) { res.status(400).json({ error: 'Invalid "from" path' }); return; }
+    // "to" is the destination FOLDER (may be '' for project root)
+    const toFolder = to?.trim() ? normalizeRelPath(to.trim()) : '';
+    if (toFolder === null) { res.status(400).json({ error: 'Invalid "to" path' }); return; }
+
+    const root = projectRoot(req.project.slug);
+    const srcAbs = path.join(root, fromNorm);
+    const basename = path.basename(fromNorm);
+    const destRelPath = toFolder ? `${toFolder}/${basename}` : basename;
+    const destAbs = path.join(root, destRelPath);
+
+    if (!fs.existsSync(srcAbs)) { res.status(404).json({ error: 'Source not found' }); return; }
+    if (destAbs === srcAbs) { res.json({ ok: true, path: destRelPath }); return; }
+    // Guard against dropping a folder into itself or one of its own descendants
+    if (destAbs === srcAbs + path.sep || destAbs.startsWith(srcAbs + path.sep)) {
+      res.status(400).json({ error: 'Cannot move a folder into itself' });
+      return;
+    }
+    if (fs.existsSync(destAbs)) { res.status(409).json({ error: `"${basename}" already exists in the destination folder` }); return; }
+
+    fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+    fs.renameSync(srcAbs, destAbs);
+
+    // Best-effort: keep useCaseFolder in sync for any linked Script row so the
+    // rest of the app (run resolution, etc.) doesn't point at the stale folder.
+    if (fs.statSync(destAbs).isFile()) {
+      await prisma.script.updateMany({
+        where: { projectId: req.project.id, filename: basename },
+        data: { useCaseFolder: toFolder || null },
+      });
+    }
+
+    res.json({ ok: true, path: destRelPath });
+  } catch (err: any) {
+    console.error('[scripts] POST /project-file/move', err);
+    res.status(500).json({ error: err?.message ?? 'Move failed' });
+  }
+});
+
 // ── GET /project-file/download — download a single file by relative path ──────
 
 router.get('/project-file/download', async (req: Request, res: Response) => {
