@@ -67,7 +67,7 @@ export default function Sidebar({ slug }: SidebarProps) {
         {
           label: 'Project Tools',
           items: [
-            { label: 'Copy / Export', path: `/projects/${slug}/copy-export`, icon: '📤' },
+            { label: 'Export', path: `/projects/${slug}/copy-export`, icon: '📤' },
             { label: 'Settings', path: `/projects/${slug}/settings`, icon: '⚙' },
           ],
         },

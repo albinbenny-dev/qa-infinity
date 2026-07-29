@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -6,6 +6,7 @@ import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useProjects, useCreateProject } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import { formatRelativeTime, passRateBadgeClass, slugify, PROJECT_GRADIENTS } from '../lib/utils';
+import { getToken } from '../lib/auth';
 import type { Project } from '../types';
 
 // ── Stat tile ──────────────────────────────────────────────────────────────
@@ -440,9 +441,137 @@ function CreateProjectModal({
   );
 }
 
+// ── Import project modal ───────────────────────────────────────────────────
+function ImportProjectModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; slug?: string; name?: string; error?: string } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+
+  async function doImport(file: File) {
+    setImporting(true);
+    setResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/projects/import-project', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: form,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setResult({ success: false, error: body.error ?? `HTTP ${res.status}` });
+      } else {
+        setResult({ success: true, slug: body.project.slug, name: body.project.name });
+        toast.success(`Project "${body.project.name}" imported!`);
+      }
+    } catch (err: unknown) {
+      setResult({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) doImport(f);
+    e.target.value = '';
+  }
+
+  function onClose(v: boolean) {
+    if (!importing) {
+      setResult(null);
+      onOpenChange(v);
+    }
+  }
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, background: 'rgba(6,34,74,0.6)',
+    backdropFilter: 'blur(4px)', zIndex: 9998,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+  const contentStyle: React.CSSProperties = {
+    background: 'var(--surface)', border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg)', padding: '28px', width: '460px',
+    maxWidth: '96vw', boxShadow: '0 16px 48px rgba(6,34,74,0.2)',
+    position: 'relative', zIndex: 9999, fontFamily: 'var(--font-ui)',
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onClose}>
+      <Dialog.Portal>
+        <Dialog.Overlay style={overlayStyle}>
+          <Dialog.Content style={contentStyle}>
+            <Dialog.Title style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)', marginBottom: '4px' }}>
+              Import Project
+            </Dialog.Title>
+            <Dialog.Description style={{ fontSize: '12px', color: 'var(--text-mid)', marginBottom: '24px' }}>
+              Upload a <code style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface2)', padding: '1px 5px', borderRadius: '4px' }}>.qai.zip</code> exported from another QA Infinity instance. A new project will be created automatically.
+            </Dialog.Description>
+
+            {!result && (
+              <div
+                onClick={() => !importing && fileRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) doImport(f); }}
+                style={{
+                  border: `2px dashed ${dragOver ? 'var(--cyan)' : 'var(--border2)'}`,
+                  borderRadius: '10px', padding: '36px 24px', textAlign: 'center',
+                  cursor: importing ? 'not-allowed' : 'pointer',
+                  background: dragOver ? 'var(--cyan-dim)' : 'transparent',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ fontSize: '28px', marginBottom: '8px' }}>📂</div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)', marginBottom: '4px' }}>
+                  {importing ? 'Importing…' : 'Click or drag a .qai.zip file here'}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Max 500 MB</div>
+                <input ref={fileRef} type="file" accept=".zip,.qai.zip" style={{ display: 'none' }} onChange={onFileChange} disabled={importing} />
+              </div>
+            )}
+
+            {result && result.success && (
+              <div style={{ padding: '14px 16px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', fontSize: '13px', color: 'var(--pass)' }}>
+                <div style={{ fontWeight: 700, marginBottom: '6px' }}>Import successful</div>
+                <div style={{ color: 'var(--text-mid)' }}>Project <strong style={{ color: 'var(--text)' }}>{result.name}</strong> created.</div>
+                <button
+                  onClick={() => { onClose(false); navigate(`/projects/${result.slug}/dashboard`); }}
+                  style={{ marginTop: '12px', padding: '7px 16px', background: 'var(--cyan)', color: '#fff', border: 'none', borderRadius: '6px', fontFamily: 'var(--font-ui)', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Open Project →
+                </button>
+              </div>
+            )}
+
+            {result && !result.success && (
+              <div style={{ padding: '14px 16px', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '8px', fontSize: '12px', color: 'var(--fail)' }}>
+                <div style={{ fontWeight: 700, marginBottom: '4px' }}>Import failed</div>
+                {result.error}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <Dialog.Close asChild>
+                <button className="tb-btn tb-btn-ghost" type="button" disabled={importing}>
+                  {result?.success ? 'Close' : 'Cancel'}
+                </button>
+              </Dialog.Close>
+            </div>
+          </Dialog.Content>
+        </Dialog.Overlay>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function GlobalProjects() {
   const [modalOpen, setModalOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const { data: projects = [], isLoading } = useProjects();
   const { setActiveProject } = useProjectStore();
 
@@ -464,6 +593,9 @@ export default function GlobalProjects() {
         actions={
           <>
             <TbBtn variant="ghost">🔍 Search</TbBtn>
+            <TbBtn variant="ghost" onClick={() => setImportOpen(true)}>
+              ⬆ Import
+            </TbBtn>
             <TbBtn variant="primary" onClick={() => setModalOpen(true)}>
               + New Project
             </TbBtn>
@@ -606,6 +738,7 @@ export default function GlobalProjects() {
       </div>
 
       <CreateProjectModal open={modalOpen} onOpenChange={setModalOpen} />
+      <ImportProjectModal open={importOpen} onOpenChange={setImportOpen} />
     </div>
   );
 }
