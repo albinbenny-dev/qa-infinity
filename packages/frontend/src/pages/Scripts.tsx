@@ -1899,6 +1899,13 @@ export default function Scripts() {
 
   // ── Derived data ─────────────────────────────────────────────────────────
 
+  const { data: skillsDataForPromote } = useSkills(projectId);
+  const existingFeatureGroups = Array.from(new Set(
+    (skillsDataForPromote?.skills ?? [])
+      .map((s: ProjectSkill) => s.featureGroup)
+      .filter(Boolean) as string[]
+  ));
+
   const allTCs = tcData?.testCases ?? [];
 
   const tcIdToScript = useMemo(() => {
@@ -2940,7 +2947,7 @@ export default function Scripts() {
             useCaseTag: activeTc.useCaseTag,
           }}
           scriptBody={(activeTabId && tabContents[activeTabId]) ? tabContents[activeTabId] : ''}
-          existingFeatureGroups={Array.from(new Set(allSkills.map((s: ProjectSkill) => s.featureGroup).filter(Boolean) as string[]))}
+          existingFeatureGroups={existingFeatureGroups}
           onConfirm={handlePromoteToReferenceSkill}
           onClose={() => setShowPromoteModal(false)}
         />
