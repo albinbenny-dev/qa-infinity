@@ -29,6 +29,7 @@ const SKILL_TYPES = [
   'FUNCTIONAL_RULES',
   'LOCATOR_GUIDE',
   'TEST_CASE_DOC',
+  'REFERENCE_SCRIPT',
 ] as const;
 
 type SkillType = typeof SKILL_TYPES[number];
