@@ -1,0 +1,744 @@
+<title>QA Infinity — Laptop Setup Guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg:         #0F1117;
+    --surface:    #161B22;
+    --surface2:   #1C2128;
+    --border:     #30363D;
+    --text:       #E6EDF3;
+    --muted:      #8B949E;
+    --accent:     #00B4D8;
+    --accent-dim: #0A3D52;
+    --green:      #3FB950;
+    --green-dim:  #0D2B14;
+    --orange:     #E8B04B;
+    --orange-dim: #2B1D09;
+    --red:        #F85149;
+    --step-w:     2.2rem;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:         #F6F8FA;
+      --surface:    #FFFFFF;
+      --surface2:   #F0F2F4;
+      --border:     #D0D7DE;
+      --text:       #1F2328;
+      --muted:      #636C76;
+      --accent:     #0969DA;
+      --accent-dim: #DDF4FF;
+      --green:      #1A7F37;
+      --green-dim:  #DAFBE1;
+      --orange:     #9A6700;
+      --orange-dim: #FFF8C5;
+      --red:        #CF222E;
+    }
+  }
+  :root[data-theme="dark"]  { --bg:#0F1117;--surface:#161B22;--surface2:#1C2128;--border:#30363D;--text:#E6EDF3;--muted:#8B949E;--accent:#00B4D8;--accent-dim:#0A3D52;--green:#3FB950;--green-dim:#0D2B14;--orange:#E8B04B;--orange-dim:#2B1D09;--red:#F85149; }
+  :root[data-theme="light"] { --bg:#F6F8FA;--surface:#FFFFFF;--surface2:#F0F2F4;--border:#D0D7DE;--text:#1F2328;--muted:#636C76;--accent:#0969DA;--accent-dim:#DDF4FF;--green:#1A7F37;--green-dim:#DAFBE1;--orange:#9A6700;--orange-dim:#FFF8C5;--red:#CF222E; }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 2rem 1rem 5rem;
+  }
+
+  .page { max-width: 780px; margin: 0 auto; }
+
+  /* ── Top bar ── */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.6rem 1.25rem;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+  }
+  .topbar-brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.9rem; }
+  .topbar-logo { width:26px;height:26px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1rem;color:#fff;flex-shrink:0; }
+  .topbar-actions { display: flex; gap: 0.5rem; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text);
+    font-size: 0.78rem; font-weight: 600; cursor: pointer;
+    font-family: inherit; text-decoration: none;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover { opacity: 0.88; color: #fff; background: var(--accent); }
+
+  body { padding-top: 4.5rem; }
+
+  /* ── Header ── */
+  .header { padding: 1.5rem 0 2rem; border-bottom: 1px solid var(--border); margin-bottom: 2.5rem; }
+  .header h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 0.4rem; }
+  .header .sub { color: var(--muted); font-size: 0.88rem; margin-bottom: 0.8rem; }
+  .tag-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    background: var(--accent-dim); color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 999px;
+    padding: 0.15rem 0.65rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em;
+  }
+
+  /* ── Section labels ── */
+  .section-label {
+    font-size: 0.65rem; font-weight: 800; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent);
+    margin: 2.5rem 0 1rem;
+  }
+
+  /* ── Prereq grid ── */
+  .prereq-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 0.5rem;
+  }
+  .prereq-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+  }
+  .prereq-card .pc-label {
+    font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted); margin-bottom: 0.35rem;
+  }
+  .prereq-card .pc-val { font-size: 0.85rem; line-height: 1.5; }
+  code {
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+    font-size: 0.85em;
+    background: var(--surface2);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Steps timeline ── */
+  .steps { display: flex; flex-direction: column; }
+  .step {
+    display: grid;
+    grid-template-columns: var(--step-w) 1fr;
+    gap: 0 1.25rem;
+    position: relative;
+  }
+  .step:not(:last-child) .step-line {
+    position: absolute;
+    left: calc(var(--step-w) / 2 - 1px);
+    top: calc(var(--step-w) + 0.3rem);
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .step-num {
+    width: var(--step-w); height: var(--step-w);
+    border-radius: 50%;
+    background: var(--accent-dim);
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.78rem; font-weight: 800;
+    flex-shrink: 0; z-index: 1;
+  }
+  .step-body { padding-bottom: 2.25rem; }
+  .step-title {
+    font-size: 1rem; font-weight: 700;
+    line-height: var(--step-w);
+    margin-bottom: 0.4rem;
+  }
+  .step-desc { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.9rem; line-height: 1.65; }
+
+  /* ── Code blocks ── */
+  .code-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 0.8rem;
+  }
+  .cb-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.35rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.7rem; color: var(--muted);
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+  }
+  .cb-copy {
+    cursor: pointer; color: var(--muted); font-family: inherit;
+    background: none; border: none; font-size: 0.7rem;
+    padding: 0.1rem 0.4rem; border-radius: 4px;
+    transition: color 0.15s;
+  }
+  .cb-copy:hover { color: var(--accent); }
+  .code-block pre {
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+    font-size: 0.82rem;
+    line-height: 1.7;
+    white-space: pre;
+  }
+  .c  { color: var(--muted); }
+  .hl { color: var(--accent); }
+  .ok { color: var(--green); }
+
+  /* ── Callouts ── */
+  .callout {
+    display: flex; gap: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--orange);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    font-size: 0.83rem;
+    margin-bottom: 0.8rem;
+    line-height: 1.6;
+  }
+  .callout.info  { border-left-color: var(--accent); }
+  .callout.ok    { border-left-color: var(--green); background: var(--green-dim); border-color: var(--green); }
+  .callout .icon { flex-shrink: 0; font-size: 1rem; line-height: 1.5; }
+  .callout p { color: var(--muted); }
+  .callout p strong { color: var(--text); }
+
+  /* ── OS tabs ── */
+  .os-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 1rem; }
+  .os-tab {
+    padding: 0.45rem 1rem;
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 0.82rem; font-weight: 600;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .os-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .os-panel { display: none; }
+  .os-panel.active { display: block; }
+
+  /* ── Verify grid ── */
+  .verify-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 0.8rem;
+  }
+  .verify-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+  }
+  .verify-card .vc-label { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.3rem; }
+  .verify-card .vc-url  { font-family: "SF Mono","Fira Code","Consolas",monospace; font-size: 0.78rem; color: var(--accent); margin-bottom: 0.2rem; word-break: break-all; }
+  .verify-card .vc-desc { font-size: 0.75rem; color: var(--muted); }
+
+  /* ── Cheat sheet ── */
+  .cmd-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+  }
+  .cmd-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+  }
+  .cmd-card .cc-label { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.3rem; }
+  .cmd-card code { font-size: 0.78rem; display: block; word-break: break-all; }
+
+  /* ── Env table ── */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { background: var(--surface2); color: var(--muted); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--border); }
+  td { padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.55; }
+  tr:last-child td { border-bottom: none; }
+  .req  { color: var(--red);    font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+  .opt  { color: var(--muted);  font-size: 0.7rem; white-space: nowrap; }
+
+  /* ── Troubleshoot list ── */
+  .trouble-list { list-style: none; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 0.75rem; }
+  .trouble-list li {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.75rem 1rem; font-size: 0.83rem;
+  }
+  .trouble-list li strong { color: var(--text); display: block; margin-bottom: 0.2rem; }
+  .trouble-list li span { color: var(--muted); line-height: 1.6; }
+
+  @media (max-width: 520px) {
+    .prereq-grid, .verify-grid, .cmd-grid { grid-template-columns: 1fr; }
+    .os-tab { padding: 0.4rem 0.6rem; font-size: 0.75rem; }
+  }
+</style>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-brand">
+    <div class="topbar-logo">∞</div>
+    QA Infinity
+  </div>
+  <div class="topbar-actions">
+    <button class="btn" id="theme-btn" onclick="toggleTheme()">☀ Light</button>
+    <a class="btn btn-primary" id="dl-link" href="#" title="Opens in new tab — then use Ctrl+S / Cmd+S to save">⬇ Save as HTML</a>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div style="font-size:0.7rem;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.4rem">Setup Guide</div>
+    <h1>QA Infinity — Laptop Install</h1>
+    <div class="sub">Get the full platform running on your Windows, Mac, or Linux machine in under 10 minutes.</div>
+    <div class="tag-row">
+      <span class="tag">🐋 Docker Desktop</span>
+      <span class="tag">🪟 Windows</span>
+      <span class="tag">🍎 macOS</span>
+      <span class="tag">🐧 Linux</span>
+    </div>
+  </div>
+
+  <!-- Prerequisites -->
+  <div class="section-label">Prerequisites</div>
+
+  <div class="prereq-grid">
+    <div class="prereq-card">
+      <div class="pc-label">Software Required</div>
+      <div class="pc-val">
+        <a href="https://www.docker.com/products/docker-desktop/" target="_blank">Docker Desktop</a> (Windows / Mac)<br>
+        Docker Engine (Linux)<br>
+        <a href="https://git-scm.com/downloads" target="_blank">Git</a>
+      </div>
+    </div>
+    <div class="prereq-card">
+      <div class="pc-label">Minimum Hardware</div>
+      <div class="pc-val">4 GB RAM · 4 CPU cores<br>10 GB free disk</div>
+    </div>
+    <div class="prereq-card">
+      <div class="pc-label">Network</div>
+      <div class="pc-val">Internet access for first build<br>(GitHub + Docker Hub)</div>
+    </div>
+    <div class="prereq-card">
+      <div class="pc-label">LLM API Key</div>
+      <div class="pc-val">Anthropic key (<code>sk-ant-…</code>)<br>or OpenRouter key</div>
+    </div>
+    <div class="prereq-card">
+      <div class="pc-label">GitHub Access</div>
+      <div class="pc-val">Repo: <code>albinbenny-dev/<br>qa-infinity</code> (private — request access first)</div>
+    </div>
+    <div class="prereq-card">
+      <div class="pc-label">Ports Used</div>
+      <div class="pc-val">
+        <code>3100</code> UI &nbsp;·&nbsp; <code>4100</code> API<br>
+        <code>6180</code> noVNC live runner
+      </div>
+    </div>
+  </div>
+
+  <div class="callout info" style="margin-bottom:2rem">
+    <div class="icon">ℹ</div>
+    <p><strong>Windows users</strong> — Docker Desktop requires WSL 2. When you install Docker Desktop it will guide you through enabling it. You'll also need <strong>Git Bash</strong> (installed with Git for Windows) to run the <code>start.sh</code> script in Step 5.</p>
+  </div>
+
+  <!-- Steps -->
+  <div class="section-label">Installation Steps</div>
+
+  <div class="steps">
+
+    <!-- Step 1 -->
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Install Docker Desktop</div>
+        <div class="step-desc">Download and install Docker Desktop for your OS. Start it after install — the whale icon in the system tray means it's running.</div>
+
+        <div class="os-tabs" id="tabs-docker">
+          <button class="os-tab active" onclick="switchTab('docker','win')">🪟 Windows</button>
+          <button class="os-tab" onclick="switchTab('docker','mac')">🍎 macOS</button>
+          <button class="os-tab" onclick="switchTab('docker','lin')">🐧 Linux</button>
+        </div>
+
+        <div id="docker-win" class="os-panel active">
+          <div class="callout" style="margin-bottom:0.6rem">
+            <div class="icon">📥</div>
+            <p>Download from <a href="https://www.docker.com/products/docker-desktop/" target="_blank">docker.com/products/docker-desktop</a> and run the installer. Enable <strong>WSL 2</strong> when prompted.</p>
+          </div>
+          <div class="code-block">
+            <div class="cb-header"><span>PowerShell — verify after install</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre><span class="c"># Check Docker is running</span>
+docker --version
+docker compose version</pre>
+          </div>
+        </div>
+
+        <div id="docker-mac" class="os-panel">
+          <div class="callout" style="margin-bottom:0.6rem">
+            <div class="icon">📥</div>
+            <p>Download from <a href="https://www.docker.com/products/docker-desktop/" target="_blank">docker.com/products/docker-desktop</a>. Choose the right chip — <strong>Apple Silicon (M1/M2/M3)</strong> or <strong>Intel</strong>.</p>
+          </div>
+          <div class="code-block">
+            <div class="cb-header"><span>Terminal — verify after install</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre>docker --version
+docker compose version</pre>
+          </div>
+        </div>
+
+        <div id="docker-lin" class="os-panel">
+          <div class="code-block">
+            <div class="cb-header"><span>bash — Ubuntu/Debian</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre>curl -fsSL https://get.docker.com | sh
+sudo systemctl enable --now docker
+<span class="c"># Run docker without sudo (re-login after)</span>
+sudo usermod -aG docker $USER</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Install Git</div>
+        <div class="step-desc">Git is needed to clone the repo. Windows users: the Git for Windows installer also installs <strong>Git Bash</strong>, which you need in Step 5.</div>
+
+        <div class="os-tabs" id="tabs-git">
+          <button class="os-tab active" onclick="switchTab('git','win')">🪟 Windows</button>
+          <button class="os-tab" onclick="switchTab('git','mac')">🍎 macOS</button>
+          <button class="os-tab" onclick="switchTab('git','lin')">🐧 Linux</button>
+        </div>
+
+        <div id="git-win" class="os-panel active">
+          <div class="callout" style="margin-bottom:0.6rem">
+            <div class="icon">📥</div>
+            <p>Download from <a href="https://git-scm.com/download/win" target="_blank">git-scm.com/download/win</a>. During install, accept the defaults — this installs Git Bash automatically.</p>
+          </div>
+        </div>
+        <div id="git-mac" class="os-panel">
+          <div class="code-block">
+            <div class="cb-header"><span>Terminal</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre><span class="c"># Usually pre-installed. If not:</span>
+xcode-select --install</pre>
+          </div>
+        </div>
+        <div id="git-lin" class="os-panel">
+          <div class="code-block">
+            <div class="cb-header"><span>bash</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre><span class="c"># Ubuntu / Debian</span>
+sudo apt-get install -y git
+<span class="c"># RHEL / CentOS</span>
+sudo yum install -y git</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Clone the Repository</div>
+        <div class="step-desc">Clone into any folder. On Windows, open <strong>Git Bash</strong> (right-click on Desktop → "Git Bash Here") and run these commands.</div>
+        <div class="code-block">
+          <div class="cb-header"><span>Git Bash / Terminal / bash</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+          <pre>git clone https://github.com/albinbenny-dev/qa-infinity.git
+cd qa-infinity
+chmod +x start.sh   <span class="c"># Linux/Mac/Git Bash only</span></pre>
+        </div>
+        <div class="callout info">
+          <div class="icon">🔒</div>
+          <p><strong>Private repo</strong> — you need to be added as a collaborator on GitHub first. Ask the team lead to grant access.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Create and Configure <code>.env</code></div>
+        <div class="step-desc">Copy the template and fill in the required values. Open the file in any text editor — Notepad, VS Code, nano, whatever you prefer.</div>
+
+        <div class="os-tabs" id="tabs-env">
+          <button class="os-tab active" onclick="switchTab('env','win')">🪟 Windows</button>
+          <button class="os-tab" onclick="switchTab('env','mac')">🍎 macOS / Linux</button>
+        </div>
+
+        <div id="env-win" class="os-panel active">
+          <div class="code-block">
+            <div class="cb-header"><span>PowerShell — in the qa-infinity folder</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre>Copy-Item .env.example .env
+code .env   <span class="c"># opens in VS Code — or use notepad .env</span></pre>
+          </div>
+        </div>
+        <div id="env-mac" class="os-panel">
+          <div class="code-block">
+            <div class="cb-header"><span>Terminal</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre>cp .env.example .env
+code .env   <span class="c"># VS Code, or: nano .env</span></pre>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Variable</th><th>What to set</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>POSTGRES_PASSWORD</code></td>
+                <td>Any strong password. Pick once — can't easily change it later without resetting the DB volume.</td>
+                <td><span class="req">REQUIRED</span></td>
+              </tr>
+              <tr>
+                <td><code>JWT_SECRET</code></td>
+                <td>A long random string. Paste 2–3 UUIDs together from <a href="https://www.uuidgenerator.net" target="_blank">uuidgenerator.net</a>.</td>
+                <td><span class="req">REQUIRED</span></td>
+              </tr>
+              <tr>
+                <td><code>LLM_PROVIDER</code></td>
+                <td>Set to <code>anthropic</code> (default) or <code>openrouter</code>.</td>
+                <td><span class="req">REQUIRED</span></td>
+              </tr>
+              <tr>
+                <td><code>ANTHROPIC_API_KEY</code></td>
+                <td>Your Anthropic API key if using <code>LLM_PROVIDER=anthropic</code>.</td>
+                <td><span class="req">REQUIRED*</span></td>
+              </tr>
+              <tr>
+                <td><code>OPENROUTER_API_KEY</code></td>
+                <td>Your OpenRouter key if using <code>LLM_PROVIDER=openrouter</code>.</td>
+                <td><span class="req">REQUIRED*</span></td>
+              </tr>
+              <tr>
+                <td><code>CORS_ORIGIN</code></td>
+                <td>Leave as <code>http://localhost:3100</code> for local access.</td>
+                <td><span class="opt">keep default</span></td>
+              </tr>
+              <tr>
+                <td><code>ALLOWED_DOMAINS</code></td>
+                <td>Email domain restriction for registration (e.g. <code>6dtech.co.in</code>). Leave blank to allow any email.</td>
+                <td><span class="opt">optional</span></td>
+              </tr>
+              <tr>
+                <td><code>APP_MODE</code></td>
+                <td>Keep <code>full</code> for a dev laptop (includes AI agents). Set <code>runner</code> only for air-gapped client deployments.</td>
+                <td><span class="opt">keep default</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-line"></div>
+      <div class="step-body">
+        <div class="step-title">Start QA Infinity</div>
+        <div class="step-desc">This builds all Docker images on the first run (~3–5 min). Subsequent starts are fast — images are cached.</div>
+
+        <div class="os-tabs" id="tabs-start">
+          <button class="os-tab active" onclick="switchTab('start','win')">🪟 Windows (Git Bash)</button>
+          <button class="os-tab" onclick="switchTab('start','mac')">🍎 macOS / Linux</button>
+        </div>
+
+        <div id="start-win" class="os-panel active">
+          <div class="callout" style="margin-bottom:0.6rem">
+            <div class="icon">⚠</div>
+            <p><strong>Use Git Bash, not PowerShell or CMD</strong> — <code>start.sh</code> is a bash script. Right-click the <code>qa-infinity</code> folder and choose "Git Bash Here".</p>
+          </div>
+          <div class="code-block">
+            <div class="cb-header"><span>Git Bash — inside the qa-infinity folder</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre>./start.sh</pre>
+          </div>
+        </div>
+
+        <div id="start-mac" class="os-panel">
+          <div class="code-block">
+            <div class="cb-header"><span>Terminal — inside the qa-infinity folder</span><button class="cb-copy" onclick="copyCode(this)">copy</button></div>
+            <pre>./start.sh</pre>
+          </div>
+        </div>
+
+        <div class="callout">
+          <div class="icon">⏳</div>
+          <p><strong>First build takes 3–5 minutes.</strong> Docker is compiling the API, building the frontend, and pulling base images. You'll see build output scroll by. Once you see <em>"All services are healthy"</em>, you're ready.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 6 -->
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <div class="step-title">Open the App &amp; Register</div>
+        <div class="step-desc">Once the stack is running, open your browser. The first account you register gets the Super Admin role automatically.</div>
+
+        <div class="verify-grid">
+          <div class="verify-card">
+            <div class="vc-label">Main App</div>
+            <div class="vc-url">http://localhost:3100</div>
+            <div class="vc-desc">UI — login / register here</div>
+          </div>
+          <div class="verify-card">
+            <div class="vc-label">API Health</div>
+            <div class="vc-url">http://localhost:4100/health</div>
+            <div class="vc-desc">Should return <code>{"status":"ok"}</code></div>
+          </div>
+          <div class="verify-card">
+            <div class="vc-label">Live Runner</div>
+            <div class="vc-url">http://localhost:6180</div>
+            <div class="vc-desc">noVNC — watch tests run in real time</div>
+          </div>
+        </div>
+
+        <div class="callout ok">
+          <div class="icon">✓</div>
+          <p><strong>Go to <code>http://localhost:3100/register</code></strong> to create your account. The first account is automatically Super Admin. Subsequent accounts need an invite or can self-register if <code>ALLOWED_DOMAINS</code> matches their email.</p>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /steps -->
+
+  <!-- Cheat Sheet -->
+  <div class="section-label">Day-to-Day Commands</div>
+
+  <div class="cmd-grid">
+    <div class="cmd-card">
+      <div class="cc-label">Start the stack</div>
+      <code>./start.sh</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">Stop the stack</div>
+      <code>./start.sh --stop</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">View live logs</div>
+      <code>./start.sh --logs</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">Pull latest &amp; rebuild</div>
+      <code>git pull &amp;&amp; ./start.sh --build</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">API logs only</div>
+      <code>docker logs qa-api --tail 50 -f</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">Container status</div>
+      <code>docker ps --filter name=qa-</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">Full reset (⚠ data loss)</div>
+      <code>docker compose down -v</code>
+    </div>
+    <div class="cmd-card">
+      <div class="cc-label">Free up disk</div>
+      <code>docker system prune -f</code>
+    </div>
+  </div>
+
+  <!-- Troubleshooting -->
+  <div class="section-label">Troubleshooting</div>
+
+  <ul class="trouble-list">
+    <li>
+      <strong>Docker Desktop not starting on Windows</strong>
+      <span>Make sure WSL 2 is enabled: open PowerShell as Administrator and run <code>wsl --install</code>, then restart.</span>
+    </li>
+    <li>
+      <strong>Port 3100 or 4100 already in use</strong>
+      <span>Another app is using the port. Find it on Windows: <code>netstat -ano | findstr :3100</code>. Kill it, or edit the port mapping in <code>docker-compose.yml</code> (e.g. change <code>3100:80</code> to <code>3200:80</code>) and update <code>CORS_ORIGIN</code> in <code>.env</code> to match.</span>
+    </li>
+    <li>
+      <strong>UI loads but API calls fail (CORS error)</strong>
+      <span>Check that <code>CORS_ORIGIN</code> in <code>.env</code> matches the URL in your browser exactly, including the port.</span>
+    </li>
+    <li>
+      <strong>Login fails immediately after registering</strong>
+      <span><code>JWT_SECRET</code> is likely empty or too short. Set it to a long random string and restart: <code>./start.sh --build</code>.</span>
+    </li>
+    <li>
+      <strong>API container keeps restarting</strong>
+      <span>Run <code>docker logs qa-api</code> to see the error. Usually a missing required variable in <code>.env</code>.</span>
+    </li>
+    <li>
+      <strong>"permission denied" running <code>./start.sh</code> on Mac/Linux</strong>
+      <span>Run <code>chmod +x start.sh</code> first.</span>
+    </li>
+    <li>
+      <strong>Build fails with "no space left on device"</strong>
+      <span>Docker has run out of disk space. Free it with <code>docker system prune -f</code> (safe — only removes unused images and stopped containers).</span>
+    </li>
+    <li>
+      <strong>Registration page says "domain not allowed"</strong>
+      <span>Your email domain is blocked by <code>ALLOWED_DOMAINS</code>. Either use an email with the allowed domain, or clear <code>ALLOWED_DOMAINS</code> in <code>.env</code> and restart.</span>
+    </li>
+  </ul>
+
+</div><!-- /page -->
+
+<script>
+// ── OS tab switching ──────────────────────────────────────────────────────
+function switchTab(group, id) {
+  var tabs = document.querySelectorAll('#tabs-' + group + ' .os-tab');
+  tabs.forEach(function(t, i) { t.classList.remove('active'); });
+  document.querySelectorAll('[id^="' + group + '-"]').forEach(function(p) { p.classList.remove('active'); });
+  var el = document.getElementById(group + '-' + id);
+  if (el) { el.classList.add('active'); }
+  event.target.classList.add('active');
+}
+
+// ── Copy code blocks ──────────────────────────────────────────────────────
+function copyCode(btn) {
+  var pre = btn.closest('.code-block').querySelector('pre');
+  var text = pre.innerText || pre.textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    btn.textContent = 'copied!';
+    setTimeout(function() { btn.textContent = 'copy'; }, 1500);
+  });
+}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+var theme = 'dark';
+function toggleTheme() {
+  theme = theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('theme-btn').textContent = theme === 'dark' ? '☀ Light' : '🌙 Dark';
+}
+
+// ── Open in new tab (user can then Ctrl+S / Save Page As) ────────────────
+document.getElementById('dl-link').addEventListener('click', function(e) {
+  e.preventDefault();
+  var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+    + document.head.innerHTML
+    + '\n</head>\n<body>\n'
+    + document.body.innerHTML
+    + '\n</body>\n</html>';
+  var w = window.open('', '_blank');
+  if (w) {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  } else {
+    alert('Pop-up blocked. Allow pop-ups for this site, then click Save again.');
+  }
+});
+</script>
