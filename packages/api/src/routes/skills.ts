@@ -453,13 +453,18 @@ router.post('/start-recording', async (req: Request, res: Response, next: NextFu
     });
 
     if (!runnerRes.ok) {
+      if (runnerRes.status === 503) {
+        const errJson = await runnerRes.json().catch(() => ({})) as { message?: string };
+        res.status(503).json({ error: errJson.message ?? 'All VNC sessions are in use' });
+        return;
+      }
       const errText = await runnerRes.text();
       res.status(502).json({ error: `Runner failed to start recording: ${errText}` });
       return;
     }
 
-    await runnerRes.json();
-    res.json({ sessionId, name, targetUrl, scope: scope ?? null, novncPort: 6180 });
+    const runnerData = await runnerRes.json() as { vncToken?: string };
+    res.json({ sessionId, name, targetUrl, scope: scope ?? null, novncPort: 6180, vncToken: runnerData.vncToken ?? null });
   } catch (err) {
     next(err);
   }

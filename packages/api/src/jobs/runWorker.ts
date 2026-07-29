@@ -124,15 +124,27 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   await prisma.runResult.deleteMany({ where: { runId } });
 
   // Fetch scripts up-front so RunResults are linked — healService requires scriptId
-  const scriptRecords = await prisma.script.findMany({
-    where: { testCaseId: { in: testCaseIds }, projectId },
-    select: { id: true, testCaseId: true },
-    orderBy: { updatedAt: 'desc' },
-  });
+  // Primary lookup: TC.linkedScriptId (the TC Library link, N TCs → 1 script)
   const tcIdToScriptId = new Map<string, string>();
-  for (const s of scriptRecords) {
-    if (s.testCaseId && !tcIdToScriptId.has(s.testCaseId)) {
-      tcIdToScriptId.set(s.testCaseId, s.id);
+  const linkedTcRecords = await prisma.testCase.findMany({
+    where: { id: { in: testCaseIds }, linkedScriptId: { not: null } },
+    select: { id: true, linkedScriptId: true },
+  });
+  for (const tc of linkedTcRecords) {
+    if (tc.linkedScriptId) tcIdToScriptId.set(tc.id, tc.linkedScriptId);
+  }
+  // Fallback: Script.testCaseId ownership for TCs not covered above
+  const unresolved = testCaseIds.filter(id => !tcIdToScriptId.has(id));
+  if (unresolved.length > 0) {
+    const scriptRecords = await prisma.script.findMany({
+      where: { testCaseId: { in: unresolved }, projectId },
+      select: { id: true, testCaseId: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    for (const s of scriptRecords) {
+      if (s.testCaseId && !tcIdToScriptId.has(s.testCaseId)) {
+        tcIdToScriptId.set(s.testCaseId, s.id);
+      }
     }
   }
 
@@ -231,6 +243,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       { parallelWorkers, headless, browser, hostBrowser, envBaseUrl, envUsername, envPassword, environment, projectSlug },
       (line) => emitLog(runId, 'run', line),
       runAbortController.signal,
+      hostBrowser ? (vncData) => emitToRun(runId, 'run:vnc', vncData) : undefined,
     );
 
     // If the run was cancelled mid-script, mark result and stop
@@ -477,6 +490,7 @@ async function spawnPlaywright(
   opts: { parallelWorkers: number; headless: boolean; browser: string; hostBrowser?: boolean; envBaseUrl: string; envUsername: string; envPassword: string; environment: string; projectSlug?: string },
   onLine: (line: string) => void,
   externalSignal?: AbortSignal,
+  onVnc?: (data: { token?: string; busy?: boolean }) => void,
 ): Promise<SpawnResult> {
   const start = Date.now();
   // hostBrowser tests must land on the primary runner (the one with VNC exposed on
@@ -540,6 +554,10 @@ async function spawnPlaywright(
         return; // keepalive — prevents TCP idle timeout on long-running tests
       } else if (msg.type === 'log' && msg.text) {
         onLine(msg.text);
+      } else if (msg.type === 'vnc-session') {
+        onVnc?.({ token: msg.token as string });
+      } else if (msg.type === 'vnc-busy') {
+        onVnc?.({ busy: true });
       } else if (msg.type === 'done') {
         exitCode = msg.exitCode ?? 1;
         reportData = msg.reportData ?? undefined;

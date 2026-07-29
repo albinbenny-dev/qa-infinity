@@ -28,6 +28,7 @@ import { useChatSidebarStore } from '../stores/chatSidebarStore';
 import { useAppConfig } from '../context/AppConfig';
 import { api } from '../lib/api';
 import { getToken } from '../lib/auth';
+import { io } from 'socket.io-client';
 import type { Script, TestCase, ScriptJob, ScriptJobPhase } from '../types';
 
 interface FileTreeNode {
@@ -1984,12 +1985,6 @@ export default function Scripts() {
         return;
       }
     }
-    // Open noVNC viewer in a new tab.
-    // reconnect=true + reconnect_delay_ms=2000 means noVNC will keep retrying
-    // every 2 seconds until the VNC stack inside the runner is fully ready —
-    // this avoids the one-shot "Failed to connect" error on first open.
-    const vncUrl = `http://${window.location.hostname}:6180/vnc.html?autoconnect=true&reconnect=true&reconnect_delay_ms=2000&resize=scale`;
-    window.open(vncUrl, 'qa-vnc-viewer');
     setHostRunning(true);
     setHostRunId(null);
     try {
@@ -2002,6 +1997,24 @@ export default function Scripts() {
       setMonitorRunId(run.id);
       setMonitorScript(activeScript?.filename ?? 'script');
       setShowMonitor(true);
+
+      // Wait for the runner to allocate a VNC session slot (or report all busy)
+      const sock = io(`${window.location.protocol}//${window.location.host}/runs`, {
+        auth: { token: getToken() },
+        transports: ['websocket', 'polling'],
+      });
+      sock.emit('joinRun', { runId: run.id });
+      const vncTimeout = setTimeout(() => { sock.disconnect(); }, 20_000);
+      sock.once('run:vnc', (data: { token?: string; busy?: boolean }) => {
+        clearTimeout(vncTimeout);
+        sock.disconnect();
+        if (data.token) {
+          const vncUrl = `http://${window.location.hostname}:6180/vnc.html?path=websockify%3Ftoken%3D${data.token}&autoconnect=1&resize=scale`;
+          window.open(vncUrl, 'qa-vnc-viewer');
+        } else {
+          toast('VNC viewer unavailable — all 2 sessions in use. Run executing without visual monitoring.', { icon: '⚠️' });
+        }
+      });
     } catch (err) {
       toast.error((err as Error)?.message ?? 'Failed to start host-browser run');
       setHostRunning(false);

@@ -633,6 +633,7 @@ function CreateSkillModal({
   const [activeRecording, setActiveRecording] = useState<{
     sessionId: string;
     novncPort: number;
+    vncToken: string | null;
   } | null>(null);
   // Annotation state — shown after recording stops
   const [annotationStep, setAnnotationStep] = useState<{
@@ -706,10 +707,15 @@ function CreateSkillModal({
         targetUrl,
         scope: scope || undefined,
       });
-      setActiveRecording({ sessionId: result.sessionId, novncPort: result.novncPort });
-      const novncUrl = `http://${window.location.hostname}:${result.novncPort}/vnc.html?autoconnect=1&resize=scale`;
-      window.open(novncUrl, '_blank');
-      toast.success('Recording started — interact with the browser tab that opened');
+      setActiveRecording({ sessionId: result.sessionId, novncPort: result.novncPort, vncToken: result.vncToken ?? null });
+      if (result.vncToken) {
+        const novncUrl = `http://${window.location.hostname}:${result.novncPort}/vnc.html?path=websockify%3Ftoken%3D${result.vncToken}&autoconnect=1&resize=scale`;
+        window.open(novncUrl, '_blank');
+        toast.success('Recording started — interact with the browser tab that opened');
+      } else {
+        toast.error('VNC sessions are all in use — recording cannot start. Stop another active session first.');
+        return;
+      }
     } catch (err) {
       toast.error((err as Error).message ?? 'Failed to start recording');
     }
@@ -1394,7 +1400,9 @@ function CreateSkillModal({
                     </div>
                     <button
                       onClick={() => {
-                        const novncUrl = `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?autoconnect=1&resize=scale`;
+                        const novncUrl = activeRecording.vncToken
+                          ? `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?path=websockify%3Ftoken%3D${activeRecording.vncToken}&autoconnect=1&resize=scale`
+                          : `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?autoconnect=1&resize=scale`;
                         window.open(novncUrl, '_blank');
                       }}
                       style={{

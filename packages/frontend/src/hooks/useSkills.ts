@@ -125,6 +125,7 @@ export function useStartRecording(projectId: string) {
         targetUrl: string;
         scope: string | null;
         novncPort: number;
+        vncToken: string | null;
       }>(`/projects/${projectId}/skills/start-recording`, payload, { timeout: 15_000 });
       return res.data;
     },

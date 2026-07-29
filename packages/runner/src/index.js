@@ -12,14 +12,47 @@ const CONFIG_FILE = 'qa-infinity.playwright.config.js';
 const CONFIG_PATH = path.join(SCRIPTS_DIR, CONFIG_FILE);
 
 // ── noVNC / live-browser-view constants ────────────────────────────────────
-// A dedicated Xvfb display is started at boot and kept alive. x11vnc mirrors
-// it, websockify exposes it as a WebSocket, and noVNC serves the web client.
-// When a "Run in Host Browser" job arrives the browser is launched on this
-// display so the user can watch at http://<server>:6080/vnc.html
-const VNC_DISPLAY    = ':99';
-const VNC_PORT       = 5900;      // x11vnc listens here (container-internal)
-const NOVNC_PORT     = 6080;      // websockify + noVNC web client
+// Two VNC slots are started at boot. Each slot has its own Xvfb display and
+// x11vnc instance. A single websockify with TokenFile routing multiplexes both
+// onto port 6080. Each host-browser or recording session claims one slot and
+// gets a short-lived token; the noVNC client connects with that token so
+// sessions are isolated (max 2 concurrent viewers).
+const VNC_SLOTS = [
+  { display: ':99',  vncPort: 5900 },
+  { display: ':100', vncPort: 5901 },
+];
+const VNC_DISPLAY    = VNC_SLOTS[0].display; // legacy alias
+const NOVNC_PORT     = 6080;
 const NOVNC_WEB_DIR  = '/usr/share/novnc';
+const VNC_TOKEN_FILE = '/tmp/vnc-tokens.cfg';
+
+// Active VNC sessions: Map<token, slotIndex>
+const vncSessions = new Map();
+
+function writeVncTokenFile() {
+  const lines = [];
+  for (const [token, slotIdx] of vncSessions) {
+    lines.push(`${token}: localhost:${VNC_SLOTS[slotIdx].vncPort}`);
+  }
+  try { fs.writeFileSync(VNC_TOKEN_FILE, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8'); } catch {}
+}
+
+function claimVncSlot() {
+  const usedSlots = new Set(vncSessions.values());
+  for (let i = 0; i < VNC_SLOTS.length; i++) {
+    if (!usedSlots.has(i)) {
+      const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      vncSessions.set(token, i);
+      writeVncTokenFile();
+      return { token, slotIndex: i, display: VNC_SLOTS[i].display };
+    }
+  }
+  return null;
+}
+
+function releaseVncSlot(token) {
+  if (vncSessions.delete(token)) writeVncTokenFile();
+}
 
 // Poll a TCP port until something is listening, then call onReady.
 // Uses only Node's built-in 'net' module — no external binaries needed.
@@ -108,108 +141,96 @@ function waitForXvfb(display, onReady) {
 }
 
 // Idempotent VNC stack startup — safe to call on every server boot.
-// Checks whether each component is already running before spawning a new one
-// so container-internal node restarts don't create duplicate conflicting processes.
+// Starts both VNC slots (Xvfb + x11vnc each) and one websockify with
+// TokenFile routing so sessions are isolated by token.
 async function startVncStack() {
-  console.log('[qa-runner] Checking VNC stack on display ' + VNC_DISPLAY);
+  console.log(`[qa-runner] Starting VNC stack — ${VNC_SLOTS.length} slots`);
 
-  // 1. Xvfb — start only if no live X server is found on the display socket.
-  //    fs.existsSync alone is not enough: after `docker restart` the socket
-  //    file persists from the previous run but Xvfb is dead.  We probe the
-  //    socket with a real TCP connect to distinguish live vs stale.
-  const xvfbSocket = `/tmp/.X11-unix/X${VNC_DISPLAY.replace(':', '')}`;
-  const xvfbLive = await isXvfbSocketAlive(VNC_DISPLAY);
-  if (xvfbLive) {
-    console.log(`[qa-runner] Xvfb already running on ${VNC_DISPLAY} — skipping start`);
-  } else {
-    if (fs.existsSync(xvfbSocket)) {
-      console.log(`[qa-runner] Stale Xvfb socket detected — removing ${xvfbSocket}`);
-      try { fs.unlinkSync(xvfbSocket); } catch {}
+  for (const slot of VNC_SLOTS) {
+    const { display, vncPort } = slot;
+    const displayNum = display.replace(':', '');
+    const xvfbSocket = `/tmp/.X11-unix/X${displayNum}`;
+    const xvfbLock   = `/tmp/.X${displayNum}-lock`;
+
+    const xvfbLive = await isXvfbSocketAlive(display);
+    if (xvfbLive) {
+      console.log(`[qa-runner] Xvfb already running on ${display} — skipping`);
+    } else {
+      if (fs.existsSync(xvfbSocket)) {
+        try { fs.unlinkSync(xvfbSocket); } catch {}
+      }
+      if (fs.existsSync(xvfbLock)) {
+        try { fs.unlinkSync(xvfbLock); } catch {}
+      }
+      console.log(`[qa-runner] Starting Xvfb on ${display}`);
+      spawnLogged('Xvfb', [display, '-screen', '0', '1600x900x24', '-ac']);
+      await new Promise((resolve) => waitForXvfb(display, resolve));
     }
-    // Also remove the Xvfb lock file (/tmp/.X99-lock) so a fresh Xvfb can claim
-    // the display number.  Both files are left behind after `docker restart`.
-    const xvfbLock = `/tmp/.X${VNC_DISPLAY.replace(':', '')}-lock`;
-    if (fs.existsSync(xvfbLock)) {
-      console.log(`[qa-runner] Removing stale Xvfb lock ${xvfbLock}`);
-      try { fs.unlinkSync(xvfbLock); } catch {}
+
+    const vncAlive = await checkPort(vncPort);
+    if (vncAlive) {
+      console.log(`[qa-runner] x11vnc already on :${vncPort} — skipping`);
+    } else {
+      console.log(`[qa-runner] Starting x11vnc on :${vncPort} for ${display}`);
+      spawnLogged('x11vnc', [
+        '-display', display,
+        '-nopw',
+        '-listen', 'localhost',
+        '-rfbport', String(vncPort),
+        '-forever',
+        '-shared',
+        '-noxdamage',
+        '-noshm',
+      ]);
+      await new Promise((resolve) => waitForPort(vncPort, resolve));
+      console.log(`[qa-runner] x11vnc up on :${vncPort}`);
     }
-    console.log('[qa-runner] Starting Xvfb on display ' + VNC_DISPLAY);
-    spawnLogged('Xvfb', [VNC_DISPLAY, '-screen', '0', '1600x900x24', '-ac']);
-    await new Promise((resolve) => waitForXvfb(VNC_DISPLAY, resolve));
   }
 
-  // 2. x11vnc — start only if nothing is listening on VNC_PORT yet
-  //    -shared   : allow multiple browser tabs to connect simultaneously without kicking each other
-  //    -forever  : keep running after client disconnects
-  //    -noxdamage: skip MIT-SHM damage extension — avoids crashes inside Docker
-  //    -noshm    : disable MIT-SHM for framebuffer reads — required in Docker where
-  //                shared memory is restricted; without this VNC shows a black screen
-  //                even though Xvfb is rendering correctly
-  const vncAlive = await checkPort(VNC_PORT);
-  if (vncAlive) {
-    console.log(`[qa-runner] x11vnc already listening on :${VNC_PORT} — skipping`);
-  } else {
-    console.log('[qa-runner] Starting x11vnc');
-    spawnLogged('x11vnc', [
-      '-display', VNC_DISPLAY,
-      '-nopw',
-      '-listen', 'localhost',
-      '-rfbport', String(VNC_PORT),
-      '-forever',
-      '-shared',
-      '-noxdamage',
-      '-noshm',
-    ]);
-    await new Promise((resolve) => waitForPort(VNC_PORT, resolve));
-    console.log(`[qa-runner] x11vnc up on :${VNC_PORT}`);
-  }
-
-  // 3. websockify — start only if nothing is already on NOVNC_PORT
-  //    /usr/bin/python3 is explicit because /opt/rfbrowser/bin/python3 (the
-  //    Robot Framework venv) is earlier in PATH and lacks websockify.
-  //    --heartbeat=30: send WebSocket ping every 30 s to prevent idle connection drops
+  // Single websockify with TokenFile routing — routes by ?token= query param
   const wsAlive = await checkPort(NOVNC_PORT);
   if (wsAlive) {
-    console.log(`[qa-runner] websockify already listening on :${NOVNC_PORT} — skipping`);
+    console.log(`[qa-runner] websockify already on :${NOVNC_PORT} — skipping`);
   } else {
     if (!fs.existsSync(NOVNC_WEB_DIR)) {
       console.error(`[qa-runner] noVNC web dir not found at ${NOVNC_WEB_DIR}`);
       return;
     }
-    console.log('[qa-runner] Starting websockify');
+    writeVncTokenFile(); // create empty token file before websockify starts
+    console.log('[qa-runner] Starting websockify with TokenFile routing');
     spawnLogged('/usr/bin/python3', [
       '-m', 'websockify',
       '--web', NOVNC_WEB_DIR,
       '--heartbeat=30',
+      '--token-plugin=TokenFile',
+      `--token-source=${VNC_TOKEN_FILE}`,
       `0.0.0.0:${NOVNC_PORT}`,
-      `localhost:${VNC_PORT}`,
     ]);
   }
 
-  console.log(`[qa-runner] noVNC ready — http://<server>:${NOVNC_PORT}/vnc.html`);
+  console.log(`[qa-runner] VNC ready — ${VNC_SLOTS.length} isolated sessions available on :${NOVNC_PORT}`);
 
-  // Watchdog: every 20 s check that x11vnc and websockify are still alive.
-  // x11vnc crashes when Chromium generates X11 errors during start/stop — this
-  // restarts it automatically so noVNC reconnects without a full container restart.
+  // Watchdog: restart any dead x11vnc or websockify every 20 s
   setInterval(async () => {
     try {
-      const vncOk = await checkPort(VNC_PORT);
-      if (!vncOk) {
-        console.log('[qa-runner] [watchdog] x11vnc down — restarting');
-        spawnLogged('x11vnc', [
-          '-display', VNC_DISPLAY,
-          '-nopw',
-          '-listen', 'localhost',
-          '-rfbport', String(VNC_PORT),
-          '-forever',
-          '-shared',
-          '-noxdamage',
-          '-noshm',
-        ]);
-        await new Promise((resolve) => waitForPort(VNC_PORT, resolve));
-        console.log('[qa-runner] [watchdog] x11vnc restarted');
+      for (const slot of VNC_SLOTS) {
+        const vncOk = await checkPort(slot.vncPort);
+        if (!vncOk) {
+          console.log(`[qa-runner] [watchdog] x11vnc down on :${slot.vncPort} — restarting`);
+          spawnLogged('x11vnc', [
+            '-display', slot.display,
+            '-nopw',
+            '-listen', 'localhost',
+            '-rfbport', String(slot.vncPort),
+            '-forever',
+            '-shared',
+            '-noxdamage',
+            '-noshm',
+          ]);
+          await new Promise((resolve) => waitForPort(slot.vncPort, resolve));
+          console.log(`[qa-runner] [watchdog] x11vnc restarted on :${slot.vncPort}`);
+        }
       }
-
       const wsOk = await checkPort(NOVNC_PORT);
       if (!wsOk) {
         console.log('[qa-runner] [watchdog] websockify down — restarting');
@@ -217,10 +238,10 @@ async function startVncStack() {
           '-m', 'websockify',
           '--web', NOVNC_WEB_DIR,
           '--heartbeat=30',
+          '--token-plugin=TokenFile',
+          `--token-source=${VNC_TOKEN_FILE}`,
           `0.0.0.0:${NOVNC_PORT}`,
-          `localhost:${VNC_PORT}`,
         ]);
-        console.log('[qa-runner] [watchdog] websockify restarted');
       }
     } catch (err) {
       console.error('[qa-runner] [watchdog] error:', err.message);
@@ -505,6 +526,36 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /vnc/claim — allocate a VNC session slot; returns { token, display } or 409
+  if (req.method === 'POST' && req.url === '/vnc/claim') {
+    const slot = claimVncSlot();
+    if (!slot) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'All VNC sessions in use', busy: true }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ token: slot.token, display: slot.display }));
+    return;
+  }
+
+  // POST /vnc/release — free a VNC session slot
+  if (req.method === 'POST' && req.url === '/vnc/release') {
+    let body;
+    try {
+      const raw = await collectBody(req);
+      body = JSON.parse(raw);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON' }));
+      return;
+    }
+    releaseVncSlot(body.token ?? '');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // POST /run
   if (req.method === 'POST' && req.url === '/run') {
     let body;
@@ -557,6 +608,17 @@ const server = http.createServer(async (req, res) => {
         }
       }
     };
+
+    // Claim a VNC slot for host-browser runs; notify frontend immediately
+    let vncClaim = null;
+    let vncReleased = false;
+    const releaseVnc = () => {
+      if (vncClaim && !vncReleased) { vncReleased = true; releaseVncSlot(vncClaim.token); }
+    };
+    if (hostBrowser) {
+      vncClaim = claimVncSlot();
+      sendLine(vncClaim ? { type: 'vnc-session', token: vncClaim.token } : { type: 'vnc-busy' });
+    }
 
     const HARD_KILL_MS = 900_000;
     let proc;
@@ -743,26 +805,28 @@ const server = http.createServer(async (req, res) => {
           fs.chmodSync(launcherPath, 0o755);
         } catch { /* non-fatal — fall through to direct robot */ }
 
-        if (hostBrowser) {
-          sendLine({ type: 'log', text: `[runner] 🌐 Launching RF Browser on VNC display ${VNC_DISPLAY} (node port ${rfBrowserPort})` });
+        if (hostBrowser && vncClaim) {
+          sendLine({ type: 'log', text: `[runner] 🌐 Launching RF Browser on VNC display ${vncClaim.display} (node port ${rfBrowserPort})` });
           sendLine({ type: 'log', text: `[runner]    Watch live → noVNC tab should already be open` });
-          robotEnv.DISPLAY = VNC_DISPLAY;
+          robotEnv.DISPLAY = vncClaim.display;
           spawnCmd  = 'bash';
           spawnArgs = [launcherPath, ...robotArgs];
         } else {
-          sendLine({ type: 'log', text: `[runner] 🤖 Launching RF Browser headless (node port ${rfBrowserPort})` });
+          if (hostBrowser) sendLine({ type: 'log', text: '[runner] ⚠ All VNC sessions in use — running without visual display' });
+          else sendLine({ type: 'log', text: `[runner] 🤖 Launching RF Browser headless (node port ${rfBrowserPort})` });
           spawnCmd  = 'xvfb-run';
           spawnArgs = ['--auto-servernum', '--server-args=-screen 0 1920x1080x24', 'bash', launcherPath, ...robotArgs];
         }
       } else {
         // Fallback: RF Browser not found — run robot directly (old behaviour)
-        if (hostBrowser) {
-          sendLine({ type: 'log', text: `[runner] 🌐 Launching RF Browser on VNC display ${VNC_DISPLAY}` });
+        if (hostBrowser && vncClaim) {
+          sendLine({ type: 'log', text: `[runner] 🌐 Launching RF Browser on VNC display ${vncClaim.display}` });
           sendLine({ type: 'log', text: `[runner]    Watch live → noVNC tab should already be open` });
-          robotEnv.DISPLAY = VNC_DISPLAY;
+          robotEnv.DISPLAY = vncClaim.display;
           spawnCmd  = ROBOT_BIN;
           spawnArgs = robotArgs;
         } else {
+          if (hostBrowser) sendLine({ type: 'log', text: '[runner] ⚠ All VNC sessions in use — running without visual display' });
           spawnCmd  = 'xvfb-run';
           spawnArgs = ['--auto-servernum', '--server-args=-screen 0 1920x1080x24', ROBOT_BIN, ...robotArgs];
         }
@@ -968,21 +1032,32 @@ const server = http.createServer(async (req, res) => {
     let spawnCmd, spawnArgs, spawnEnv;
 
     if (hostBrowser) {
-      // Write the host-browser config (slowMo=600, no retries, no video)
-      try { writeHostBrowserConfig(); } catch (err) {
-        sendLine({ type: 'done', exitCode: 1, reportData: null, error: 'Failed to write host-browser config: ' + err.message });
-        res.end(); return;
+      if (vncClaim) {
+        try { writeHostBrowserConfig(); } catch (err) {
+          releaseVnc();
+          sendLine({ type: 'done', exitCode: 1, reportData: null, error: 'Failed to write host-browser config: ' + err.message });
+          res.end(); return;
+        }
+        const hbArgs = args.map((a) =>
+          a.startsWith('--config=') ? `--config=${HOST_BROWSER_CONFIG_FILE}` : a
+        );
+        sendLine({ type: 'log', text: `[runner] 🌐 Launching browser on VNC display ${vncClaim.display}` });
+        sendLine({ type: 'log', text: `[runner]    DISPLAY=${vncClaim.display}  config=${HOST_BROWSER_CONFIG_FILE}` });
+        sendLine({ type: 'log', text: `[runner]    slowMo=600ms — each step visible for 0.6 s` });
+        spawnCmd  = playwrightBin;
+        spawnArgs = hbArgs;
+        spawnEnv  = Object.assign({}, env, { DISPLAY: vncClaim.display, CHROMIUM_FLAGS: '--disable-gpu' });
+      } else {
+        // VNC busy — continue in an isolated xvfb-run display so the run still executes
+        sendLine({ type: 'log', text: '[runner] ⚠ All VNC sessions in use — running without visual display' });
+        try { writeHostBrowserConfig(); } catch { /* non-fatal */ }
+        const hbArgs = args.map((a) =>
+          a.startsWith('--config=') ? `--config=${HOST_BROWSER_CONFIG_FILE}` : a
+        );
+        spawnCmd  = 'xvfb-run';
+        spawnArgs = ['--auto-servernum', '--server-args=-screen 0 1920x1080x24', playwrightBin, ...hbArgs];
+        spawnEnv  = env;
       }
-      // Swap the --config arg to use the host-browser config
-      const hbArgs = args.map((a) =>
-        a.startsWith('--config=') ? `--config=${HOST_BROWSER_CONFIG_FILE}` : a
-      );
-      sendLine({ type: 'log', text: `[runner] 🌐 Launching browser on VNC display ${VNC_DISPLAY}` });
-      sendLine({ type: 'log', text: `[runner]    DISPLAY=${VNC_DISPLAY}  config=${HOST_BROWSER_CONFIG_FILE}` });
-      sendLine({ type: 'log', text: `[runner]    slowMo=600ms — each step visible for 0.6 s` });
-      spawnCmd  = playwrightBin;
-      spawnArgs = hbArgs;
-      spawnEnv  = Object.assign({}, env, { DISPLAY: VNC_DISPLAY, CHROMIUM_FLAGS: '--disable-gpu' });
     } else {
       // Normal headless run — allocate a fresh virtual display with xvfb-run
       spawnCmd  = 'xvfb-run';
@@ -1004,6 +1079,7 @@ const server = http.createServer(async (req, res) => {
     // Kill the Playwright process immediately when the API worker disconnects
     // (e.g. user clicked Stop Run, which aborts the fetch on the worker side)
     req.on('close', () => {
+      releaseVnc();
       if (!procDone && !proc.killed) {
         proc.kill('SIGTERM');
         setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 3000);
@@ -1024,6 +1100,7 @@ const server = http.createServer(async (req, res) => {
 
     proc.on('close', (exitCode) => {
       procDone = true;
+      releaseVnc();
       clearTimeout(killTimer);
       let reportData = null;
       try {
@@ -1092,6 +1169,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const vncSlot = claimVncSlot();
+    if (!vncSlot) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'VNC_BUSY', message: 'All VNC sessions are in use. Wait for an active session to end.' }));
+      return;
+    }
+
     const outputPath = `/tmp/recording-${sessionId}.js`;
     // Clean up any previous recording file
     try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
@@ -1103,7 +1187,7 @@ const server = http.createServer(async (req, res) => {
       // (parent playwright codegen + its Chromium child) with a single negative-PID signal
       detached: true,
       env: Object.assign({}, process.env, {
-        DISPLAY: VNC_DISPLAY,
+        DISPLAY: vncSlot.display,
         PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/ms-playwright',
         // Required for headed Chromium on Xvfb inside Docker — without these flags
         // Chromium attempts GPU acceleration via EGL which fails and renders black.
@@ -1111,17 +1195,18 @@ const server = http.createServer(async (req, res) => {
       }),
     });
 
-    activeRecordings.set(sessionId, { proc: codegenProc, outputPath, pid: codegenProc.pid });
+    activeRecordings.set(sessionId, { proc: codegenProc, outputPath, pid: codegenProc.pid, vncToken: vncSlot.token });
     codegenProc.stdout.on('data', (d) => process.stdout.write(`[codegen:${sessionId}] ${d}`));
     codegenProc.stderr.on('data', (d) => process.stdout.write(`[codegen:${sessionId}] ${d}`));
     codegenProc.on('exit', (code) => {
-      // Auto-cleanup so a naturally-closed browser doesn't block future recordings
       console.log(`[codegen:${sessionId}] process exited with code ${code}`);
+      const rec = activeRecordings.get(sessionId);
+      if (rec?.vncToken) releaseVncSlot(rec.vncToken);
       activeRecordings.delete(sessionId);
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, sessionId, pid: codegenProc.pid }));
+    res.end(JSON.stringify({ ok: true, sessionId, pid: codegenProc.pid, vncToken: vncSlot.token }));
     return;
   }
 
@@ -1152,6 +1237,7 @@ const server = http.createServer(async (req, res) => {
     // Give Playwright 1 s to flush the --output file, then hard-kill the group
     await new Promise((r) => setTimeout(r, 1000));
     try { process.kill(-recording.pid, 'SIGKILL'); } catch { /* already dead */ }
+    if (recording.vncToken) releaseVncSlot(recording.vncToken);
     activeRecordings.delete(sessionId);
 
     // Give Playwright up to 3 s to flush the output file
@@ -1191,6 +1277,7 @@ const server = http.createServer(async (req, res) => {
       try { process.kill(-recording.pid, 'SIGTERM'); } catch { /* already exited */ }
       await new Promise((r) => setTimeout(r, 500));
       try { process.kill(-recording.pid, 'SIGKILL'); } catch { /* already dead */ }
+      if (recording.vncToken) releaseVncSlot(recording.vncToken);
       activeRecordings.delete(sessionId);
       try { fs.unlinkSync(recording.outputPath); } catch { /* ignore */ }
     }
