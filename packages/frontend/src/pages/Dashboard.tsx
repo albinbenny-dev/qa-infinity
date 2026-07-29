@@ -369,17 +369,44 @@ function SuiteHistoryCard({
                         <div
                           key={run.id}
                           onClick={() => navigate(`/projects/${slug}/reports/runs/${run.id}`)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px 7px 36px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px 8px 36px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
                           onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
                           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                         >
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', width: 50, flexShrink: 0 }}>#{String(run.runSeq).padStart(4, '0')}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, minWidth: 110 }}>{fmtRunDate(run.createdAt)}</span>
-                          <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>{total} total</span>
-                          <span style={{ fontSize: 11, color: 'var(--pass)', flexShrink: 0 }}>✓ {pass}</span>
-                          <span style={{ fontSize: 11, color: 'var(--fail)', flexShrink: 0 }}>✗ {fail}</span>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 100, background: rb, color: rc, flexShrink: 0 }}>{rate}%</span>
-                          <span style={{ fontSize: 10, color: STATUS_DOT_COLOR[run.status] ?? 'var(--text-dim)', flexShrink: 0 }}>{run.status}</span>
+                          {/* ID + date */}
+                          <div style={{ flexShrink: 0, minWidth: 140 }}>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>#{String(run.runSeq).padStart(4, '0')}</div>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginTop: 1 }}>{fmtRunDate(run.createdAt)}</div>
+                          </div>
+
+                          {/* Pass / fail stat blocks */}
+                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'rgba(42,157,143,0.12)', border: '1px solid rgba(42,157,143,0.25)', borderRadius: 6, padding: '3px 10px', minWidth: 40 }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--pass)', lineHeight: 1 }}>{pass}</span>
+                              <span style={{ fontSize: 9, color: 'var(--pass)', opacity: 0.8, marginTop: 1 }}>PASS</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'rgba(220,38,38,0.10)', border: '1px solid rgba(220,38,38,0.25)', borderRadius: 6, padding: '3px 10px', minWidth: 40 }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--fail)', lineHeight: 1 }}>{fail}</span>
+                              <span style={{ fontSize: 9, color: 'var(--fail)', opacity: 0.8, marginTop: 1 }}>FAIL</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', minWidth: 40 }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-dim)', lineHeight: 1 }}>{total}</span>
+                              <span style={{ fontSize: 9, color: 'var(--text-dim)', opacity: 0.7, marginTop: 1 }}>TOTAL</span>
+                            </div>
+                          </div>
+
+                          {/* Mini progress bar */}
+                          <div style={{ flex: 1, minWidth: 60 }}>
+                            <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${rate}%`, background: rate >= 80 ? 'var(--pass)' : rate >= 50 ? 'var(--amber)' : 'var(--fail)', borderRadius: 3, transition: 'width 0.3s' }} />
+                            </div>
+                          </div>
+
+                          {/* Rate + status */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 100, background: rb, color: rc }}>{rate}%</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: STATUS_DOT_COLOR[run.status] ?? 'var(--text-dim)', minWidth: 56, textAlign: 'right' }}>{run.status}</span>
+                          </div>
                         </div>
                       );
                     })}
