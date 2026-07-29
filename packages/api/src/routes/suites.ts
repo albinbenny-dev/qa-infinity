@@ -41,7 +41,7 @@ const UpdateSuiteSchema = z.object({
 
 const RunSuiteSchema = z.object({
   environment:     z.string().optional(),
-  parallelWorkers: z.number().int().min(1).max(8).default(2),
+  parallelWorkers: z.number().int().min(1).max(16).default(2),
   headless:        z.boolean().default(true),
   browser:         z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
   name:            z.string().max(200).optional(),
@@ -70,13 +70,25 @@ async function resolveScriptPath(
   projectId: string,
   tcId: string,
 ): Promise<string | null> {
-  const script = await prisma.script.findFirst({
+  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
+
+  // 1. Try agent-generated link (Script.testCaseId)
+  let script = await prisma.script.findFirst({
     where: { projectId, testCaseId: tcId },
     select: { filename: true, content: true, useCaseFolder: true, testCase: { select: { useCaseTag: true } } },
   });
+
+  // 2. Fall back to manual link (TestCase.linkedScriptId)
+  if (!script) {
+    const tc = await prisma.testCase.findUnique({
+      where: { id: tcId },
+      select: { linkedScript: { select: { filename: true, content: true, useCaseFolder: true } } },
+    });
+    script = tc?.linkedScript ? { ...tc.linkedScript, testCase: null } : null;
+  }
+
   if (!script) return null;
 
-  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
   const found = findScriptPath(slug, script.filename);
   if (found) return found;
 

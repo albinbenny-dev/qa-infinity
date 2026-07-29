@@ -1689,11 +1689,18 @@ export default function Scripts() {
 
   const tcIdToScript = useMemo(() => {
     const m = new Map<string, Script>();
+    const scriptById = new Map<string, Script>(scripts.map((s) => [s.id, s]));
     for (const s of scripts) {
       if (s.testCaseId) m.set(s.testCaseId, s);
     }
+    for (const tc of allTCs) {
+      if (tc.linkedScriptId && !m.has(tc.id)) {
+        const s = scriptById.get(tc.linkedScriptId);
+        if (s) m.set(tc.id, s);
+      }
+    }
     return m;
-  }, [scripts]);
+  }, [scripts, allTCs]);
 
   const scriptedTcIds = useMemo(() => new Set(tcIdToScript.keys()), [tcIdToScript]);
   const pendingCount = allTCs.filter((tc) => !scriptedTcIds.has(tc.id)).length;

@@ -15,7 +15,7 @@ import { findScriptPath, saveScript } from '../services/scriptFileService.js';
 const CreateRunSchema = z.object({
   testCaseIds: z.array(z.string().cuid()).min(1),
   environment: z.string().min(1),
-  parallelWorkers: z.number().int().min(1).max(8).default(2),
+  parallelWorkers: z.number().int().min(1).max(16).default(2),
   headless: z.boolean().default(true),
   browser: z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
   name: z.string().max(200).optional(),
@@ -24,7 +24,7 @@ const CreateRunSchema = z.object({
 const CreateGroupRunSchema = z.object({
   useCaseTag: z.string().min(1),
   environment: z.string().min(1),
-  parallelWorkers: z.number().int().min(1).max(8).default(2),
+  parallelWorkers: z.number().int().min(1).max(16).default(2),
   headless: z.boolean().default(true),
   browser: z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
 });
@@ -488,7 +488,10 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
         projectId: req.project.id,
         useCaseTag,
         status: { in: ['APPROVED', 'DRAFT'] },
-        scripts: { some: {} },
+        OR: [
+          { scripts: { some: {} } },
+          { linkedScriptId: { not: null } },
+        ],
       },
       select: { id: true },
     });

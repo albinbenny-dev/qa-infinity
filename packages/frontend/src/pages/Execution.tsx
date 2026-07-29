@@ -321,8 +321,9 @@ export default function Execution() {
   const scriptedTcIds = useMemo(() => {
     const s = new Set<string>();
     for (const sc of scripts) { if (sc.testCaseId) s.add(sc.testCaseId); }
+    for (const tc of allTCs) { if (tc.linkedScriptId) s.add(tc.id); }
     return s;
-  }, [scripts]);
+  }, [scripts, allTCs]);
 
   const envBaseUrl = useMemo(() => {
     const cfg = envConfigs.find((e) => e.name === environment);
