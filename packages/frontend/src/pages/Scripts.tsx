@@ -1827,6 +1827,8 @@ export default function Scripts() {
 
   // ── Quick-run state (▶ Run from editor toolbar) ───────────────────────────
 
+  const [scanningTags, setScanningTags] = useState(false);
+
   const [quickRunId, setQuickRunId] = useState<string | null>(null);
   const [quickRunning, setQuickRunning] = useState(false);
   const { data: quickRunData } = useRun(projectId, quickRunId);
@@ -1913,6 +1915,24 @@ export default function Scripts() {
     setRecordedScript('');
     setShowRecordModal(false);
     toast.success('Recorded script loaded into editor — save when ready');
+  }
+
+  async function handleScanTags() {
+    if (!projectId) return;
+    setScanningTags(true);
+    try {
+      const { data } = await api.post<{ linked: number }>(`/projects/${projectId}/scripts/scan-tags`);
+      if (data.linked > 0) {
+        toast.success(`Linked ${data.linked} TC${data.linked !== 1 ? 's' : ''} via [Tags]`);
+        void qc.invalidateQueries({ queryKey: ['testCases', projectId] });
+      } else {
+        toast('No new TC links found via [Tags]', { icon: 'ℹ️' });
+      }
+    } catch {
+      toast.error('Tag scan failed');
+    } finally {
+      setScanningTags(false);
+    }
   }
 
   async function handleQuickRun() {
@@ -3518,6 +3538,35 @@ export default function Scripts() {
                     </span>
                   );
                 })()}
+                {activeTab?.kind === 'script' && canWrite && (
+                  <button
+                    onClick={handleScanTags}
+                    disabled={scanningTags}
+                    title="Scan all scripts for [Tags] and auto-link matching test cases"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '3px 11px', borderRadius: 5, cursor: scanningTags ? 'not-allowed' : 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: '1px solid rgba(6,182,212,0.35)',
+                      background: 'rgba(6,182,212,0.07)',
+                      color: 'var(--cyan)',
+                      opacity: scanningTags ? 0.55 : 1,
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!scanningTags) {
+                        (e.currentTarget as HTMLButtonElement).style.background = 'rgba(6,182,212,0.15)';
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(6,182,212,0.6)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(6,182,212,0.07)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(6,182,212,0.35)';
+                    }}
+                  >
+                    {scanningTags ? '⏳ Scanning…' : '⟳ Sync Tags'}
+                  </button>
+                )}
                 {activeTab?.kind === 'script' && canWrite && activeScriptTcId && (
                   <button
                     onClick={() => setShowRegenModal(true)}

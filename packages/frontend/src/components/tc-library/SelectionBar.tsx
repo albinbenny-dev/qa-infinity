@@ -10,6 +10,8 @@ interface SelectionBarProps {
   onSendToExecution: () => void;
   onDelete: () => void;
   onLinkScript?: () => void;
+  onUnlinkScript?: () => void;
+  onRun?: () => void;
   visible: boolean;
 }
 
@@ -22,6 +24,8 @@ export default function SelectionBar({
   onSendToExecution,
   onDelete,
   onLinkScript,
+  onUnlinkScript,
+  onRun,
   visible,
 }: SelectionBarProps) {
   const [moveTarget, setMoveTarget] = useState('');
@@ -230,6 +234,58 @@ export default function SelectionBar({
               }}
             >
               🔗 Link Script
+            </button>
+          </>
+        )}
+
+        {/* Unlink Script */}
+        {onUnlinkScript && (
+          <>
+            <Divider />
+            <button
+              onClick={onUnlinkScript}
+              style={{
+                padding: '5px 12px',
+                background: 'rgba(148,163,184,0.1)',
+                border: '1px solid var(--border2)',
+                borderRadius: '5px',
+                color: 'var(--text-mid)',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              ⛓️‍💥 Unlink
+            </button>
+          </>
+        )}
+
+        {/* Run selected */}
+        {onRun && (
+          <>
+            <Divider />
+            <button
+              onClick={onRun}
+              style={{
+                padding: '5px 12px',
+                background: 'var(--emerald-dim)',
+                border: '1px solid rgba(42,157,143,0.35)',
+                borderRadius: '5px',
+                color: 'var(--emerald)',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              ▶ Run {selectedCount}
             </button>
           </>
         )}

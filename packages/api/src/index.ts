@@ -18,6 +18,7 @@ import { startScriptVerifyWorker } from './jobs/scriptVerifyWorker.js';
 import { startAgentScanWorker } from './jobs/agentScanWorker.js';
 import { startRetentionSchedule } from './jobs/retentionWorker.js';
 import { saveSkillFile, deleteSkillFile } from './services/scriptFileService.js';
+import { scanAllScriptTags } from './routes/scripts.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -251,6 +252,18 @@ httpServer.listen(PORT, () => {
 
     // Sync skill files to disk before workers start (they read skills from files)
     await syncSkillFiles();
+
+    // Auto-link TCs to scripts via [Tags] for any project not yet linked
+    void (async () => {
+      try {
+        const projects = await prisma.project.findMany({ select: { id: true } });
+        let total = 0;
+        for (const p of projects) total += await scanAllScriptTags(p.id);
+        if (total > 0) console.log(`[qa-api] Tag auto-link: ${total} TC(s) linked via [Tags] on startup`);
+      } catch (err) {
+        console.warn('[qa-api] Tag auto-link failed (non-fatal):', (err as Error).message);
+      }
+    })();
 
     // Start BullMQ workers only after cleanup so they see the cancelled state
     if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {

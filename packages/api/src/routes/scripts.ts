@@ -29,6 +29,7 @@ import {
   searchProjectFiles,
   BINARY_EXTS,
   projectRoot,
+  extractRobotTags,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
@@ -520,6 +521,9 @@ router.put('/:id/content', async (req: Request, res: Response) => {
     });
     saveScript(req.project.slug, script.filename, content, (script as any).useCaseFolder);
 
+    // Auto-link TCs whose tcId matches [Tags] in this script (non-blocking)
+    void autoLinkScriptByTags(req.project.id, script.id, content);
+
     res.json({ ok: true });
   } catch (err) {
     console.error('[scripts] PUT /:id/content', err);
@@ -690,6 +694,9 @@ router.post(
           isCustomUpload: true,
         },
       });
+
+      // Auto-link TCs whose tcId matches [Tags] in this script (non-blocking)
+      void autoLinkScriptByTags(projectId, script.id, rawContent);
 
       res.status(201).json({
         id: script.id,
@@ -1564,6 +1571,66 @@ router.post('/record/convert', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] codegen conversion failed', err);
     res.status(500).json({ error: 'Conversion failed' });
+  }
+});
+
+// ── Tag-based auto-link helpers ───────────────────────────────────────────────
+
+/**
+ * Reads [Tags] from a Robot Framework script and sets TC.linkedScriptId for any
+ * matching test case (matched by tcId). Only fills null slots — never overwrites
+ * an existing link. First script wins when multiple scripts claim the same tag.
+ */
+export async function autoLinkScriptByTags(
+  projectId: string,
+  scriptId: string,
+  content: string,
+): Promise<number> {
+  const tags = extractRobotTags(content);
+  if (tags.length === 0) return 0;
+
+  let linked = 0;
+  for (const tag of tags) {
+    const tc = await prisma.testCase.findFirst({
+      where: { projectId, tcId: tag, linkedScriptId: null },
+    });
+    if (!tc) continue;
+    await prisma.testCase.update({
+      where: { id: tc.id },
+      data: { linkedScriptId: scriptId },
+    });
+    linked++;
+  }
+  return linked;
+}
+
+/**
+ * Scans every script in a project and auto-links TCs by [Tags].
+ * Processes scripts in createdAt ASC order so first-created script wins on conflicts.
+ */
+export async function scanAllScriptTags(projectId: string): Promise<number> {
+  const scripts = await prisma.script.findMany({
+    where: { projectId },
+    select: { id: true, content: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  let total = 0;
+  for (const s of scripts) {
+    if (!s.content) continue;
+    total += await autoLinkScriptByTags(projectId, s.id, s.content);
+  }
+  return total;
+}
+
+// ── POST /scan-tags — project-wide tag scan ───────────────────────────────────
+
+router.post('/scan-tags', async (req: Request, res: Response) => {
+  try {
+    const linked = await scanAllScriptTags(req.project.id);
+    res.json({ ok: true, linked });
+  } catch (err) {
+    console.error('[scripts] POST /scan-tags', err);
+    res.status(500).json({ error: 'Tag scan failed' });
   }
 });
 

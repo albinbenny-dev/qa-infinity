@@ -568,6 +568,26 @@ export function readSkillFile(slug: string, filename: string): SkillFileData {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as SkillFileData;
 }
 
+// ── Robot Framework tag extraction ────────────────────────────────────────────
+
+/**
+ * Extracts all [Tags] values from a Robot Framework script.
+ * Handles multi-tag lines:  [Tags]  TC_001  TC_002  SMOKE
+ * Returns unique, non-empty values.
+ */
+export function extractRobotTags(content: string): string[] {
+  const tags = new Set<string>();
+  for (const line of content.split('\n')) {
+    const m = line.match(/\[Tags\]\s+(.+)/i);
+    if (!m) continue;
+    for (const tag of m[1].split(/\s{2,}|\t/)) {
+      const t = tag.trim();
+      if (t) tags.add(t);
+    }
+  }
+  return Array.from(tags);
+}
+
 // ── Legacy disk import (kept for backward compat) ─────────────────────────────
 
 export interface DiskScriptMeta {
