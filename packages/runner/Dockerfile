@@ -8,23 +8,34 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
        openbox x11-apps \
   && corepack enable && corepack prepare pnpm@9.15.9 --activate
 
-# Google Chrome for legacy SeleniumLibrary-based scripts (RF Browser/Playwright
-# scripts don't need this — only suites that still import SeleniumLibrary do).
-# Selenium 4.6+'s bundled Selenium Manager auto-downloads a matching chromedriver
-# at runtime, so no separate driver package/version pinning is needed here.
-RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/chrome.deb \
-  && rm -f /tmp/chrome.deb
+# Google Chrome + ChromeDriver for SeleniumLibrary-based scripts.
+# Pinned to Chrome for Testing v131 to avoid CDP breakage introduced in
+# Chrome 147+ (Runtime.evaluate removed) that makes older ChromeDriver crash.
+# Both binaries come from the same CfT build so version compatibility is
+# guaranteed; Selenium Manager auto-download is disabled so it can't override.
+ARG CHROME_VERSION=131.0.6778.85
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y unzip \
+  && curl -fsSL "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" \
+       -o /tmp/chrome.zip \
+  && curl -fsSL "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" \
+       -o /tmp/chromedriver.zip \
+  && unzip -q /tmp/chrome.zip -d /opt/ \
+  && unzip -q /tmp/chromedriver.zip -d /opt/ \
+  && rm -f /tmp/chrome.zip /tmp/chromedriver.zip \
+  && ln -sf /opt/chrome-linux64/chrome /usr/bin/google-chrome \
+  && ln -sf /opt/chrome-linux64/chrome /usr/bin/google-chrome-stable \
+  && ln -sf /opt/chromedriver-linux64/chromedriver /usr/bin/chromedriver
 
-# This container runs as root, and Chrome refuses to start as root without
-# --no-sandbox (crashes instantly with "session not created: Chrome instance
-# exited" — the exact error ChromeDriver gives no further detail on). Test
-# scripts calling `Open Browser` don't pass that flag themselves, so intercept
-# it transparently by wrapping the real binary every chrome alias resolves to.
-RUN real=$(readlink -f /usr/bin/google-chrome) \
+# Container runs as root; Chrome refuses to start as root without --no-sandbox.
+# Wrap the real CfT binary so every Open Browser call gets the flag automatically.
+RUN real=/opt/chrome-linux64/chrome \
   && mv "$real" "${real}-orig" \
   && printf '#!/bin/sh\nexec "%s-orig" --no-sandbox --disable-dev-shm-usage --disable-gpu "$@"\n' "$real" > "$real" \
   && chmod +x "$real"
+
+# Disable Selenium Manager so it won't try to download a different chromedriver
+# at runtime and accidentally override the pinned version above.
+ENV SE_MANAGER_ENABLED=false
 
 # Install Robot Framework + RF Browser into a venv so it never conflicts with system pip
 RUN python3 -m venv /opt/rfbrowser \
