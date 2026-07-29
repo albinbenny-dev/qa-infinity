@@ -573,6 +573,7 @@ const SKILL_TYPE_SHORT: Record<string, string> = {
   FUNCTIONAL_RULES: 'Rules',
   LOCATOR_GUIDE: 'Locators',
   TEST_CASE_DOC: 'TC Doc',
+  REFERENCE_SCRIPT: 'Ref Script',
 };
 
 const SKILL_TYPE_COLOR: Record<string, string> = {
@@ -587,6 +588,7 @@ const SKILL_TYPE_COLOR: Record<string, string> = {
   FUNCTIONAL_RULES: 'var(--6d-orange)',
   LOCATOR_GUIDE: 'var(--emerald)',
   TEST_CASE_DOC: 'var(--cyan)',
+  REFERENCE_SCRIPT: 'var(--emerald)',
 };
 
 interface GenerateContextModalProps {
@@ -910,14 +912,21 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
 interface PromoteReferenceSkillModalProps {
   tc: { tcId: string; title: string; steps: string[]; expectedResult?: string; useCaseTag?: string | null };
   scriptBody: string;
+  existingFeatureGroups: string[];
   onConfirm: (opts: { name: string; featureGroup: string }) => Promise<void>;
   onClose: () => void;
 }
 
-function PromoteReferenceSkillModal({ tc, scriptBody, onConfirm, onClose }: PromoteReferenceSkillModalProps) {
+function PromoteReferenceSkillModal({ tc, scriptBody, existingFeatureGroups, onConfirm, onClose }: PromoteReferenceSkillModalProps) {
   const [name, setName] = useState(`${tc.tcId} — ${tc.title}`.slice(0, 80));
   const [featureGroup, setFeatureGroup] = useState(tc.useCaseTag ?? '');
+  const [fgOpen, setFgOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const fgOptions = Array.from(new Set([
+    ...(tc.useCaseTag ? [tc.useCaseTag] : []),
+    ...existingFeatureGroups,
+  ])).filter(Boolean);
 
   async function handleSubmit() {
     if (!name.trim()) return;
@@ -956,19 +965,66 @@ function PromoteReferenceSkillModal({ tc, scriptBody, onConfirm, onClose }: Prom
             />
           </div>
 
-          <div>
+          <div style={{ position: 'relative' }}>
             <span style={LABEL_STYLE}>Feature group <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(scope for auto-detection)</span></span>
-            <input
-              value={featureGroup}
-              onChange={(e) => setFeatureGroup(e.target.value)}
-              placeholder="e.g. primary-sales, stock-in, login"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
-                color: 'var(--text)', fontSize: 11, padding: '7px 10px',
-                fontFamily: 'var(--font-ui)', outline: 'none',
-              }}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                value={featureGroup}
+                onChange={(e) => { setFeatureGroup(e.target.value); setFgOpen(true); }}
+                onFocus={() => setFgOpen(true)}
+                onBlur={() => setTimeout(() => setFgOpen(false), 150)}
+                placeholder="Select or type a feature group…"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
+                  color: 'var(--text)', fontSize: 11, padding: '7px 32px 7px 10px',
+                  fontFamily: 'var(--font-ui)', outline: 'none',
+                }}
+              />
+              <span
+                onClick={() => setFgOpen((v) => !v)}
+                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 10 }}
+              >
+                ▾
+              </span>
+            </div>
+            {fgOpen && fgOptions.length > 0 && (
+              <div style={{
+                position: 'absolute', zIndex: 99, left: 0, right: 0,
+                background: 'var(--surface)', border: '1px solid var(--border2)',
+                borderRadius: 6, marginTop: 2,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)', overflow: 'hidden',
+              }}>
+                {fgOptions
+                  .filter((g) => !featureGroup || g.toLowerCase().includes(featureGroup.toLowerCase()))
+                  .map((g) => (
+                    <div
+                      key={g}
+                      onMouseDown={() => { setFeatureGroup(g); setFgOpen(false); }}
+                      style={{
+                        padding: '7px 12px', fontSize: 11, cursor: 'pointer',
+                        color: g === featureGroup ? 'var(--cyan)' : 'var(--text)',
+                        background: g === featureGroup ? 'rgba(37,99,171,0.08)' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.05)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = g === featureGroup ? 'rgba(37,99,171,0.08)' : 'transparent'; }}
+                    >
+                      {g}
+                    </div>
+                  ))}
+                {featureGroup && !fgOptions.includes(featureGroup) && (
+                  <div
+                    onMouseDown={() => setFgOpen(false)}
+                    style={{
+                      padding: '7px 12px', fontSize: 11, cursor: 'pointer',
+                      color: 'var(--cyan)', borderTop: '1px solid var(--border)',
+                    }}
+                  >
+                    + Add &ldquo;{featureGroup}&rdquo;
+                  </div>
+                )}
+              </div>
+            )}
             <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '4px 0 0' }}>
               Scripts in this feature group will auto-detect this reference skill in the Generate modal.
             </p>
@@ -2884,6 +2940,7 @@ export default function Scripts() {
             useCaseTag: activeTc.useCaseTag,
           }}
           scriptBody={(activeTabId && tabContents[activeTabId]) ? tabContents[activeTabId] : ''}
+          existingFeatureGroups={Array.from(new Set(allSkills.map((s: ProjectSkill) => s.featureGroup).filter(Boolean) as string[]))}
           onConfirm={handlePromoteToReferenceSkill}
           onClose={() => setShowPromoteModal(false)}
         />
