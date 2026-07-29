@@ -724,7 +724,7 @@ export default function Dashboard() {
       <Topbar
         breadcrumbs={[
           { label: 'All Projects', href: '/projects' },
-          { label: 'Airtel Ventas' },
+          { label: activeProject?.name ?? slug ?? '' },
           { label: '📊 Dashboard' },
         ]}
         actions={

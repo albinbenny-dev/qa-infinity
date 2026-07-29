@@ -167,8 +167,8 @@ export async function getProjectStats(projectId: string): Promise<ProjectStats> 
       prisma.schedule.count({ where: { projectId, isActive: true } }),
       prisma.heal.count({ where: { projectId, status: 'PENDING' } }),
       prisma.run.findFirst({
-        where: { projectId, status: { in: ['PASSED', 'FAILED'] } },
-        orderBy: { completedAt: 'desc' },
+        where: { projectId, status: { in: ['PASSED', 'FAILED', 'RUNNING', 'CANCELLED'] } },
+        orderBy: { createdAt: 'desc' },
         include: { results: { select: { status: true } } },
       }),
       // All results in last 30 runs, grouped by testCaseId for flakiness
@@ -193,8 +193,8 @@ export async function getProjectStats(projectId: string): Promise<ProjectStats> 
 
   // Avg pass rate across all runs (last 30)
   const recentRuns = await prisma.run.findMany({
-    where: { projectId, status: { in: ['PASSED', 'FAILED'] } },
-    orderBy: { completedAt: 'desc' },
+    where: { projectId, status: { in: ['PASSED', 'FAILED', 'RUNNING', 'CANCELLED'] } },
+    orderBy: { createdAt: 'desc' },
     take: 30,
     include: { results: { select: { status: true } } },
   });
