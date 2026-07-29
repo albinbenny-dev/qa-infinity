@@ -538,7 +538,8 @@ export type SkillType =
   | 'HISTORICAL'
   | 'FUNCTIONAL_RULES'
   | 'LOCATOR_GUIDE'
-  | 'TEST_CASE_DOC';
+  | 'TEST_CASE_DOC'
+  | 'REFERENCE_SCRIPT';
 
 export type SkillTier = 'GLOBAL' | 'FEATURE' | 'HISTORICAL';
 

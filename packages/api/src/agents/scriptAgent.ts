@@ -110,6 +110,16 @@ export interface ScriptAgentInput {
     captureFrom: string;
     description?: string;
   }> | null;
+  /**
+   * Explicitly pinned skills selected by the engineer in the Generate modal.
+   * Injected regardless of tier/featureGroup — always included before the auto-detected set.
+   */
+  pinnedSkills?: Array<{
+    skillType: string; name: string; scope: string | null;
+    featureGroup?: string | null; tier?: string | null;
+    humanContext?: string | null; content: string;
+    confidence: number; captureMethod: string;
+  }>;
 }
 
 export interface ScriptAgentResult {
@@ -1274,6 +1284,34 @@ function buildSkillsSection(skills: ScriptAgentInput['skills'], isRobot: boolean
           }
           break;
         }
+        case 'REFERENCE_SCRIPT': {
+          const tc = content.tcSnapshot as { tcId?: string; title?: string; steps?: string[]; expectedResult?: string } | undefined;
+          const scriptBody = typeof content.scriptBody === 'string' ? content.scriptBody : '';
+          lines.push('');
+          lines.push('╔══════════════════════════════════════════════════════════════╗');
+          lines.push('║  REFERENCE SCRIPT — VERIFIED PASSING EXAMPLE                ║');
+          lines.push('║  Mirror its locators, navigation, and RF syntax EXACTLY.    ║');
+          lines.push('║  Only modify test data and assertions as needed.             ║');
+          lines.push('╚══════════════════════════════════════════════════════════════╝');
+          if (tc?.title) lines.push(`  TC: ${tc.tcId ? `[${tc.tcId}] ` : ''}${tc.title}`);
+          if (Array.isArray(tc?.steps) && tc.steps.length > 0) {
+            lines.push('  Steps:');
+            for (let i = 0; i < Math.min(tc.steps.length, 10); i++) {
+              lines.push(`    ${i + 1}. ${(tc.steps as string[])[i]}`);
+            }
+          }
+          if (tc?.expectedResult) lines.push(`  Expected: ${String(tc.expectedResult).slice(0, 200)}`);
+          if (scriptBody) {
+            const cap = scriptBody.slice(0, 3500);
+            const truncated = scriptBody.length > 3500;
+            lines.push('  Verified Robot Framework script:');
+            lines.push('  ```robot');
+            for (const l of cap.split('\n')) lines.push(`  ${l}`);
+            if (truncated) lines.push('  … (truncated — mirror the patterns shown above)');
+            lines.push('  ```');
+          }
+          break;
+        }
         default:
           break;
       }
@@ -1510,8 +1548,13 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     return true;
   });
 
+  // Merge pinned skills (always included) with featureGroup-filtered skills, deduping by name
+  const pinnedNames = new Set((input.pinnedSkills ?? []).map((s) => s.name.toLowerCase()));
+  const deduped = filteredSkills.filter((s) => !pinnedNames.has(s.name.toLowerCase()));
+  const mergedSkills = [...(input.pinnedSkills ?? []), ...deduped];
+
   // Login skills always first so they dominate the MANDATORY LOGIN banner
-  const sortedSkills = [...filteredSkills].sort((a, b) => {
+  const sortedSkills = [...mergedSkills].sort((a, b) => {
     const aLogin = a.skillType === 'UI_FLOW' &&
       (a.name.toLowerCase().includes('login') || (a.scope?.toLowerCase().includes('login') ?? false));
     const bLogin = b.skillType === 'UI_FLOW' &&

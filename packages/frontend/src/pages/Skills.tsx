@@ -187,9 +187,17 @@ const SKILL_META: Record<
     dim: 'var(--violet-dim)',
     description: 'High-level test case document — scenarios, acceptance criteria, edge cases',
   },
+  REFERENCE_SCRIPT: {
+    icon: '🔖',
+    label: 'Reference Script',
+    color: 'var(--emerald)',
+    dim: 'rgba(42,157,143,0.08)',
+    description: 'Verified TC + script pair — agent mirrors its locators and navigation exactly',
+  },
 };
 
-const SKILL_TYPES = Object.keys(SKILL_META) as SkillType[];
+// REFERENCE_SCRIPT is created only via "Promote to Reference Skill" on a passing script, not manually
+const SKILL_TYPES = (Object.keys(SKILL_META) as SkillType[]).filter((t) => t !== 'REFERENCE_SCRIPT');
 
 const SKILL_TEMPLATES: Record<SkillType, string> = {
   UI_FLOW: JSON.stringify(
@@ -326,6 +334,7 @@ const SKILL_TEMPLATES: Record<SkillType, string> = {
     null,
     2,
   ),
+  REFERENCE_SCRIPT: JSON.stringify({ note: 'Created automatically via "Promote to Reference Skill" on a verified script.' }, null, 2),
 };
 
 const PLAIN_TEXT_PLACEHOLDERS: Record<SkillType, string> = {
@@ -340,6 +349,7 @@ const PLAIN_TEXT_PLACEHOLDERS: Record<SkillType, string> = {
   HISTORICAL: '',
   LOCATOR_GUIDE: 'Describe the element ID / locator conventions used in this app.\n\nExample:\n"Sidebar links use the pattern sixdee-sidemenu-sub-menu-link-{item.id}. Form inputs use sixdee_field_input_{fieldName}. Action buttons use data-testid=\"btn-{action}-{entity}\". Table rows use data-row-key=\"{rowId}\"."',
   TEST_CASE_DOC: 'Describe the test scenarios for this feature in plain English.\n\nExample:\n"Happy path: navigate to the create screen, fill all required fields with valid data, submit, verify success message and record appears in the list. Negative: leave a required field empty, verify inline error. Edge case: submit with minimum allowed values (quantity=1), verify accepted. Permission: log in as read-only user, verify create button is absent."',
+  REFERENCE_SCRIPT: '',
 };
 
 // ── ConfidenceBar ─────────────────────────────────────────────────────────

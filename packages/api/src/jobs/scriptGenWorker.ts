@@ -106,7 +106,7 @@ async function emitJobUpdate(scriptJobId: string): Promise<void> {
 }
 
 async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
-  const { scriptJobId, projectId, testCaseId, withHeal, contextNote, qaFeedback, domSnippet, domRecording, failedStep, failedStepError, scriptMode = 'ROBOT', referenceTcIds } = job.data;
+  const { scriptJobId, projectId, testCaseId, withHeal, contextNote, qaFeedback, domSnippet, domRecording, failedStep, failedStepError, scriptMode = 'ROBOT', referenceTcIds, skillIds } = job.data;
 
   try {
     await prisma.scriptJob.update({
@@ -273,6 +273,24 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       if (refs.length > 0) referenceScripts = refs;
     }
 
+    // Fetch explicitly pinned skills by ID — injected regardless of tier/featureGroup
+    let pinnedSkills: Array<{
+      skillType: string; name: string; scope: string | null;
+      featureGroup?: string | null; tier?: string | null;
+      humanContext?: string | null; content: string;
+      confidence: number; captureMethod: string;
+    }> | undefined;
+    if (skillIds && skillIds.length > 0) {
+      const rows = await prisma.projectSkill.findMany({
+        where: { id: { in: skillIds }, projectId, isActive: true },
+        select: {
+          skillType: true, name: true, scope: true, featureGroup: true,
+          tier: true, humanContext: true, content: true, confidence: true, captureMethod: true,
+        },
+      });
+      if (rows.length > 0) pinnedSkills = rows;
+    }
+
     const result = await runScriptAgent({
       testCase: {
         id: tc.id,
@@ -298,6 +316,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       recentHeals: recentHeals.length > 0 ? recentHeals : undefined,
       prerequisiteScript,
       referenceScripts,
+      pinnedSkills,
       patternMemory: project.patternMemory,
       runtimeVariables: tc.runtimeVariables
         ? (() => { try { return JSON.parse(tc.runtimeVariables as string); } catch { return null; } })()

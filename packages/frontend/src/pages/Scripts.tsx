@@ -23,13 +23,14 @@ import {
   useSaveResource,
 } from '../hooks/useResources';
 import { useScriptJobs } from '../hooks/useScriptJobs';
+import { useSkills } from '../hooks/useSkills';
 import { useExecutionStore } from '../stores/executionStore';
 import { useChatSidebarStore } from '../stores/chatSidebarStore';
 import { useAppConfig } from '../context/AppConfig';
 import { api } from '../lib/api';
 import { getToken } from '../lib/auth';
 import { io } from 'socket.io-client';
-import type { Script, TestCase, ScriptJob, ScriptJobPhase } from '../types';
+import type { Script, TestCase, ScriptJob, ScriptJobPhase, ProjectSkill } from '../types';
 
 interface FileTreeNode {
   name: string;
@@ -560,68 +561,124 @@ const BTN_CANCEL: React.CSSProperties = {
 
 // ── GenerateContextModal ─────────────────────────────────────────────────────
 
+const SKILL_TYPE_SHORT: Record<string, string> = {
+  UI_FLOW: 'UI Flow',
+  BUSINESS_USE_CASE: 'Business',
+  TEST_DATA: 'Test Data',
+  HLD: 'HLD',
+  API_CONTRACT: 'API',
+  USER_ROLE: 'Role',
+  UX_DESIGN: 'UX',
+  HISTORICAL: 'Historical',
+  FUNCTIONAL_RULES: 'Rules',
+  LOCATOR_GUIDE: 'Locators',
+  TEST_CASE_DOC: 'TC Doc',
+};
+
+const SKILL_TYPE_COLOR: Record<string, string> = {
+  UI_FLOW: 'var(--emerald)',
+  BUSINESS_USE_CASE: 'var(--cyan)',
+  TEST_DATA: 'var(--violet)',
+  HLD: 'var(--6d-orange)',
+  API_CONTRACT: 'var(--cyan)',
+  USER_ROLE: 'var(--emerald)',
+  UX_DESIGN: 'var(--violet)',
+  HISTORICAL: 'var(--text-dim)',
+  FUNCTIONAL_RULES: 'var(--6d-orange)',
+  LOCATOR_GUIDE: 'var(--emerald)',
+  TEST_CASE_DOC: 'var(--cyan)',
+};
+
 interface GenerateContextModalProps {
   count: number;
-  withHeal: boolean;
-  initialNote: string; // pre-populated from stored hints when count === 1
-  singleTc?: { id: string; tcId: string; title: string; projectId: string; prerequisiteTcId?: string | null };
-  onConfirm: (opts: { withHeal: boolean; contextNote: string; domRecording: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; prerequisiteTcId?: string | null }) => void;
+  initialNote: string;
+  projectId?: string;
+  singleTc?: { id: string; tcId: string; title: string; projectId: string; useCaseTag?: string | null };
+  onConfirm: (opts: { contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; skillIds: string[] }) => void;
   onClose: () => void;
   onImportInstead?: () => void;
 }
 
-function GenerateContextModal({ count, withHeal: initHeal, initialNote, singleTc, onConfirm, onClose, onImportInstead }: GenerateContextModalProps) {
-  const [heal, setHeal] = useState(initHeal);
+function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfirm, onClose, onImportInstead }: GenerateContextModalProps) {
   const [note, setNote] = useState(initialNote);
-  const [domRecording, setDomRecording] = useState('');
   const [save, setSave] = useState(false);
   const [busy, setBusy] = useState(false);
   const [scriptMode, setScriptMode] = useState<'PLAYWRIGHT' | 'ROBOT'>('ROBOT');
-  const [prerequisiteTcId, setPrerequisiteTcId] = useState<string | null>(singleTc?.prerequisiteTcId ?? null);
-  const [automatedTcs, setAutomatedTcs] = useState<Array<{ id: string; tcId: string; title: string }>>([]);
-  const [prereqOpen, setPrereqOpen] = useState(false);
-  const [prereqSearch, setPrereqSearch] = useState('');
-  const prereqRef = React.useRef<HTMLDivElement>(null);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const [skillDropOpen, setSkillDropOpen] = useState(false);
+  const [skillSearch, setSkillSearch] = useState('');
+  const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const skillTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const skillDropRef = React.useRef<HTMLDivElement>(null);
+  const autoDetectedRef = React.useRef(false);
 
+  const pid = projectId ?? singleTc?.projectId;
+  const { data: skillsData } = useSkills(pid);
+  const allSkills = (skillsData?.skills ?? []).filter((s: ProjectSkill) => s.isActive);
+
+  // Auto-detect on first load: select skills matching TC's useCaseTag
   useEffect(() => {
-    if (!singleTc?.projectId) return;
-    fetch(`/api/projects/${singleTc.projectId}/scripts`, { headers: { Authorization: `Bearer ${localStorage.getItem('qai-token') ?? ''}` } })
-      .then((r) => r.json())
-      .then((data: { scripts: Script[] }) => {
-        const seen = new Set<string>();
-        const tcs = (data.scripts ?? [])
-          .filter((s: Script) => s.testCaseId && s.testCase && s.testCaseId !== singleTc.id)
-          .map((s: Script) => ({ id: s.testCaseId!, tcId: s.testCase!.tcId, title: s.testCase!.title }))
-          .filter((t: { id: string }) => { if (seen.has(t.id)) return false; seen.add(t.id); return true; });
-        setAutomatedTcs(tcs);
-      })
-      .catch(() => {});
-  }, [singleTc?.id, singleTc?.projectId]);
+    if (autoDetectedRef.current || allSkills.length === 0) return;
+    const tag = singleTc?.useCaseTag?.toLowerCase().trim();
+    const autoIds = allSkills
+      .filter((s: ProjectSkill) => tag && s.featureGroup?.toLowerCase().trim() === tag)
+      .map((s: ProjectSkill) => s.id);
+    if (autoIds.length > 0) {
+      setSelectedSkillIds(autoIds);
+      autoDetectedRef.current = true;
+    }
+  }, [allSkills, singleTc?.useCaseTag]);
 
+  // Close skill dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (prereqRef.current && !prereqRef.current.contains(e.target as Node)) setPrereqOpen(false);
+      if (
+        skillDropRef.current && !skillDropRef.current.contains(e.target as Node) &&
+        skillTriggerRef.current && !skillTriggerRef.current.contains(e.target as Node)
+      ) {
+        setSkillDropOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  async function handleSubmit() {
-    if (domRecording.length > 78000) {
-      alert('DOM Recording is too large (max ~78 000 chars). Export a shorter recording or remove some steps.');
-      return;
+  function openSkillDrop() {
+    if (skillTriggerRef.current) {
+      const r = skillTriggerRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 260) });
     }
+    setSkillDropOpen((o) => !o);
+  }
+
+  function toggleSkill(id: string) {
+    setSelectedSkillIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  async function handleSubmit() {
     setBusy(true);
-    await onConfirm({ withHeal: heal, contextNote: note, domRecording, saveHints: save, scriptMode, prerequisiteTcId: count === 1 ? prerequisiteTcId : undefined });
+    await onConfirm({ contextNote: note, saveHints: save, scriptMode, skillIds: selectedSkillIds });
     setBusy(false);
   }
+
+  const selectedSkills = allSkills.filter((s: ProjectSkill) => selectedSkillIds.includes(s.id));
+  const unselectedSkills = allSkills.filter((s: ProjectSkill) => !selectedSkillIds.includes(s.id));
+  const filteredUnselected = unselectedSkills.filter((s: ProjectSkill) =>
+    skillSearch === '' ||
+    s.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
+    (s.featureGroup ?? '').toLowerCase().includes(skillSearch.toLowerCase()),
+  );
+
+  const autoCount = singleTc?.useCaseTag
+    ? allSkills.filter((s: ProjectSkill) => s.featureGroup?.toLowerCase().trim() === singleTc.useCaseTag?.toLowerCase().trim()).length
+    : 0;
 
   return (
     <div style={MODAL_OVERLAY} onClick={onClose}>
       <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
         <div style={MODAL_HEADER}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-            {heal ? '🩹' : '⚡'} Generate {count} Script{count !== 1 ? 's' : ''}
+            ⚡ Generate {count} Script{count !== 1 ? 's' : ''}
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
@@ -659,149 +716,82 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, singleTc
             )}
           </div>
 
-          {/* Mode toggle */}
-          <div>
-            <span style={LABEL_STYLE}>Mode</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {([false, true] as const).map((v) => (
-                <button
-                  key={String(v)}
-                  onClick={() => setHeal(v)}
-                  disabled={v && scriptMode === 'ROBOT'}
-                  title={v && scriptMode === 'ROBOT' ? 'Heal is not available for Robot Framework scripts' : undefined}
-                  style={{
-                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: (v && scriptMode === 'ROBOT') ? 'not-allowed' : 'pointer', fontSize: 11,
-                    fontWeight: 700, fontFamily: 'var(--font-ui)',
-                    border: heal === v
-                      ? (v ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(37,99,171,0.6)')
-                      : '1px solid var(--border)',
-                    background: heal === v
-                      ? (v ? 'rgba(139,92,246,0.12)' : 'rgba(37,99,171,0.1)')
-                      : 'transparent',
-                    color: heal === v ? (v ? 'var(--violet)' : 'var(--cyan)') : 'var(--text-dim)',
-                    opacity: (v && scriptMode === 'ROBOT') ? 0.4 : 1,
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {v ? '🩹 Generate + Heal' : '⚡ Generate only'}
-                </button>
-              ))}
-            </div>
-            {heal && scriptMode !== 'ROBOT' && (
-              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
-                Each script is live-tested after generation and auto-healed up to 2 times.
-              </p>
-            )}
-          </div>
-
           {/* Context note */}
           <div>
-            <span style={LABEL_STYLE}>Additional context for the script agent <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span></span>
+            <span style={LABEL_STYLE}>Additional context <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional)</span></span>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder={'Hints about selectors, routes, login flow, or anything the agent should know...\n\nExamples:\n• The primary sales route is /sales/primary-orders\n• Submit button selector: #kc-login\n• After login wait for the project selector modal'}
+              placeholder={'Hints about selectors, routes, or anything the agent should know...\n\nExamples:\n• The primary sales route is /sales/primary-orders\n• Submit button selector: #kc-login\n• After login wait for the project selector modal'}
               style={TEXTAREA_STYLE}
               autoFocus
             />
           </div>
 
-          {/* DOM Recording paste */}
+          {/* Skills multi-select */}
           <div>
-            <span style={LABEL_STYLE}>
-              🎬 DOM Recording{' '}
-              <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — paste output from QA DOM Recorder)</span>
-            </span>
-            <textarea
-              value={domRecording}
-              onChange={(e) => setDomRecording(e.target.value)}
-              placeholder={'Paste the exported recording from the QA DOM Recorder tool here.\n\nThe agent will use the captured selectors and steps to generate accurate locators without guessing.'}
-              style={{ ...TEXTAREA_STYLE, minHeight: 90, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan)' }}
-            />
-            {domRecording.trim() && (
-              <p style={{ fontSize: 10, color: 'var(--emerald)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                ✓ Recording attached — agent will use captured selectors as locked locators.
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+              <span style={LABEL_STYLE}>Skills</span>
+              {autoCount > 0 && singleTc?.useCaseTag && (
+                <span style={{ fontSize: 9, color: 'var(--text-dim)', fontStyle: 'italic' }}>
+                  {autoCount} auto-detected from &ldquo;{singleTc.useCaseTag}&rdquo;
+                </span>
+              )}
+            </div>
+
+            {/* Selected skill chips */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 28 }}>
+              {selectedSkills.map((s: ProjectSkill) => (
+                <span
+                  key={s.id}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '3px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                    background: 'rgba(42,157,143,0.1)', border: '1px solid rgba(42,157,143,0.3)',
+                    color: SKILL_TYPE_COLOR[s.skillType] ?? 'var(--text)',
+                    fontFamily: 'var(--font-ui)',
+                  }}
+                >
+                  <span style={{ fontSize: 9, color: 'var(--text-dim)', fontWeight: 400 }}>
+                    {SKILL_TYPE_SHORT[s.skillType] ?? s.skillType}
+                  </span>
+                  <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                  <button
+                    onClick={() => toggleSkill(s.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: '0 0 0 2px', fontSize: 12, lineHeight: 1, display: 'flex', alignItems: 'center' }}
+                  >×</button>
+                </span>
+              ))}
+
+              {/* Add more button */}
+              {allSkills.length > 0 && (
+                <button
+                  ref={skillTriggerRef}
+                  onClick={openSkillDrop}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '3px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                    background: 'transparent', border: '1px dashed var(--border2)',
+                    color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-ui)',
+                  }}
+                >
+                  + Add skill ▾
+                </button>
+              )}
+            </div>
+
+            {allSkills.length === 0 && (
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+                No active skills — add skills in the Skills section to ground locators and navigation.
+              </p>
+            )}
+
+            {selectedSkillIds.length > 0 && (
+              <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                Selected skills will be injected as high-priority context for the script agent.
               </p>
             )}
           </div>
-
-          {/* Prerequisite TC (single-TC only) */}
-          {count === 1 && (
-            <div>
-              <span style={LABEL_STYLE}>
-                🔗 Link to prerequisite TC{' '}
-                <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(optional — reuse login/setup from another script)</span>
-              </span>
-              <div ref={prereqRef} style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  onClick={() => setPrereqOpen((o) => !o)}
-                  style={{
-                    width: '100%', background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
-                    color: prerequisiteTcId ? 'var(--text)' : 'var(--text-dim)',
-                    fontSize: 11, padding: '7px 10px', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none', textAlign: 'left',
-                  }}
-                >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {prerequisiteTcId
-                      ? (() => { const f = automatedTcs.find((t) => t.id === prerequisiteTcId); return f ? `${f.tcId} — ${f.title}` : '(loading…)'; })()
-                      : 'None — generate standalone script'}
-                  </span>
-                  <span style={{ fontSize: 10, flexShrink: 0, marginLeft: 8 }}>▾</span>
-                </button>
-                {prereqOpen && (
-                  <div style={{
-                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
-                    background: 'var(--surface2)', border: '1px solid var(--border2)', borderRadius: 6,
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.3)', maxHeight: 220, display: 'flex', flexDirection: 'column', marginTop: 2,
-                  }}>
-                    <input
-                      autoFocus
-                      value={prereqSearch}
-                      onChange={(e) => setPrereqSearch(e.target.value)}
-                      placeholder="Search TCs…"
-                      style={{ margin: 8, padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--surface3)', color: 'var(--text)', fontSize: 11, fontFamily: 'var(--font-ui)', outline: 'none' }}
-                    />
-                    <div style={{ overflowY: 'auto', flex: 1 }}>
-                      <div
-                        onClick={() => { setPrerequisiteTcId(null); setPrereqOpen(false); setPrereqSearch(''); }}
-                        style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', color: prerequisiteTcId === null ? 'var(--cyan)' : 'var(--text-dim)', background: prerequisiteTcId === null ? 'var(--cyan-dim)' : 'transparent' }}
-                      >
-                        {prerequisiteTcId === null && '✓ '}None — generate standalone script
-                      </div>
-                      {automatedTcs
-                        .filter((t) => prereqSearch === '' || t.tcId.toLowerCase().includes(prereqSearch.toLowerCase()) || t.title.toLowerCase().includes(prereqSearch.toLowerCase()))
-                        .map((t) => (
-                          <div
-                            key={t.id}
-                            onClick={() => { setPrerequisiteTcId(t.id); setPrereqOpen(false); setPrereqSearch(''); }}
-                            style={{ padding: '8px 12px', fontSize: 11, cursor: 'pointer', borderTop: '1px solid var(--border)', background: prerequisiteTcId === t.id ? 'var(--cyan-dim)' : 'transparent', color: prerequisiteTcId === t.id ? 'var(--cyan)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}
-                          >
-                            {prerequisiteTcId === t.id && <span>✓</span>}
-                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{t.tcId}</span>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
-                            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8, background: 'rgba(42,157,143,0.15)', color: 'var(--emerald)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(42,157,143,0.3)' }}>⚡ automated</span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {prerequisiteTcId && (() => {
-                const f = automatedTcs.find((t) => t.id === prerequisiteTcId);
-                if (!f) return null;
-                return (
-                  <div style={{ marginTop: 6, padding: '7px 10px', background: 'var(--cyan-dim)', border: '1px solid rgba(37,99,171,0.25)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 10, color: 'var(--cyan)' }}>🔗</span>
-                    <span style={{ fontSize: 10, color: 'var(--text-mid)', flex: 1 }}>
-                      Script will call the <strong>{f.tcId}</strong> setup before running its own steps.
-                    </span>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
 
           {/* Save hints checkbox */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
@@ -836,15 +826,182 @@ function GenerateContextModal({ count, withHeal: initHeal, initialNote, singleTc
               style={{
                 padding: '7px 18px', borderRadius: 6, border: 'none', cursor: busy ? 'wait' : 'pointer',
                 fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
-                background: heal
-                  ? 'linear-gradient(135deg, var(--violet), var(--cyan))'
-                  : 'linear-gradient(135deg, var(--violet), var(--6d-orange-deep))',
+                background: 'linear-gradient(135deg, var(--violet), var(--6d-orange-deep))',
                 opacity: busy ? 0.7 : 1,
               }}
             >
-              {busy ? 'Queuing…' : (heal ? '🩹 Generate + Heal' : '⚡ Generate')}
+              {busy ? 'Queuing…' : '⚡ Generate'}
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Skill dropdown — fixed position to avoid modal clipping */}
+      {skillDropOpen && dropPos && (
+        <div
+          ref={skillDropRef}
+          style={{
+            position: 'fixed',
+            top: dropPos.top,
+            left: dropPos.left,
+            width: dropPos.width,
+            zIndex: 9999,
+            background: 'var(--surface2)',
+            border: '1px solid var(--border2)',
+            borderRadius: 6,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+            maxHeight: 240,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            autoFocus
+            value={skillSearch}
+            onChange={(e) => setSkillSearch(e.target.value)}
+            placeholder="Search skills…"
+            style={{
+              margin: 8, padding: '5px 8px', borderRadius: 4,
+              border: '1px solid var(--border)', background: 'var(--surface3)',
+              color: 'var(--text)', fontSize: 11, fontFamily: 'var(--font-ui)', outline: 'none',
+            }}
+          />
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {filteredUnselected.length === 0 ? (
+              <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-dim)' }}>
+                {unselectedSkills.length === 0 ? 'All skills selected' : 'No matching skills'}
+              </div>
+            ) : filteredUnselected.map((s: ProjectSkill) => (
+              <div
+                key={s.id}
+                onClick={() => { toggleSkill(s.id); setSkillSearch(''); }}
+                style={{
+                  padding: '7px 12px', fontSize: 11, cursor: 'pointer',
+                  borderTop: '1px solid var(--border)',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  color: 'var(--text)',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--surface3)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+              >
+                <span style={{
+                  fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
+                  background: 'rgba(42,157,143,0.12)', color: SKILL_TYPE_COLOR[s.skillType] ?? 'var(--text-dim)',
+                  flexShrink: 0,
+                }}>
+                  {SKILL_TYPE_SHORT[s.skillType] ?? s.skillType}
+                </span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                {s.featureGroup && (
+                  <span style={{ fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{s.featureGroup}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PromoteReferenceSkillModal ────────────────────────────────────────────────
+
+interface PromoteReferenceSkillModalProps {
+  tc: { tcId: string; title: string; steps: string[]; expectedResult?: string; useCaseTag?: string | null };
+  scriptBody: string;
+  onConfirm: (opts: { name: string; featureGroup: string }) => Promise<void>;
+  onClose: () => void;
+}
+
+function PromoteReferenceSkillModal({ tc, scriptBody, onConfirm, onClose }: PromoteReferenceSkillModalProps) {
+  const [name, setName] = useState(`${tc.tcId} — ${tc.title}`.slice(0, 80));
+  const [featureGroup, setFeatureGroup] = useState(tc.useCaseTag ?? '');
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    if (!name.trim()) return;
+    setBusy(true);
+    await onConfirm({ name: name.trim(), featureGroup: featureGroup.trim() });
+    setBusy(false);
+  }
+
+  const previewLines = scriptBody.split('\n').slice(0, 8).join('\n');
+
+  return (
+    <div style={MODAL_OVERLAY} onClick={onClose}>
+      <div style={{ ...MODAL_BOX, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+        <div style={MODAL_HEADER}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>🔖 Promote to Reference Skill</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={MODAL_BODY}>
+          <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
+            Saves this TC + script pair as a verified reference. The agent will mirror its locators and navigation for all future scripts in the same feature group.
+          </p>
+
+          <div>
+            <span style={LABEL_STYLE}>Skill name</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
+                color: 'var(--text)', fontSize: 11, padding: '7px 10px',
+                fontFamily: 'var(--font-ui)', outline: 'none',
+              }}
+            />
+          </div>
+
+          <div>
+            <span style={LABEL_STYLE}>Feature group <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(scope for auto-detection)</span></span>
+            <input
+              value={featureGroup}
+              onChange={(e) => setFeatureGroup(e.target.value)}
+              placeholder="e.g. primary-sales, stock-in, login"
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 6,
+                color: 'var(--text)', fontSize: 11, padding: '7px 10px',
+                fontFamily: 'var(--font-ui)', outline: 'none',
+              }}
+            />
+            <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+              Scripts in this feature group will auto-detect this reference skill in the Generate modal.
+            </p>
+          </div>
+
+          <div>
+            <span style={LABEL_STYLE}>Script preview</span>
+            <pre style={{
+              margin: 0, padding: '8px 10px', borderRadius: 6,
+              background: 'var(--surface2)', border: '1px solid var(--border)',
+              fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)',
+              overflowX: 'auto', maxHeight: 110, whiteSpace: 'pre',
+            }}>
+              {previewLines}{scriptBody.split('\n').length > 8 ? '\n…' : ''}
+            </pre>
+          </div>
+        </div>
+
+        <div style={{ ...MODAL_FOOTER, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={busy || !name.trim()}
+            style={{
+              padding: '7px 18px', borderRadius: 6, border: 'none',
+              cursor: busy || !name.trim() ? 'not-allowed' : 'pointer',
+              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
+              background: 'linear-gradient(135deg, var(--emerald), var(--cyan))',
+              opacity: busy || !name.trim() ? 0.6 : 1,
+            }}
+          >
+            {busy ? 'Saving…' : '🔖 Save as Reference Skill'}
+          </button>
         </div>
       </div>
     </div>
@@ -1811,6 +1968,10 @@ export default function Scripts() {
   const [showGenModal, setShowGenModal] = useState(false);
   const [genModalInitNote, setGenModalInitNote] = useState('');
 
+  // ── Promote to Reference Skill modal state ────────────────────────────────
+
+  const [showPromoteModal, setShowPromoteModal] = useState(false);
+
   // ── Retry feedback modal state ────────────────────────────────────────────
 
   const [retryJob, setRetryJob] = useState<ScriptJob | null>(null);
@@ -2500,20 +2661,11 @@ export default function Scripts() {
     setShowGenModal(true);
   }
 
-  async function handleModalConfirmGenerate(opts: { withHeal: boolean; contextNote: string; domRecording: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; prerequisiteTcId?: string | null }) {
+  async function handleModalConfirmGenerate(opts: { contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; skillIds: string[] }) {
     if (!projectId || tcSelected.size === 0) return;
     const ids = Array.from(tcSelected);
     setShowGenModal(false);
     setTcSelected(new Set());
-
-    // Persist prerequisite change when generating a single TC
-    if (ids.length === 1 && opts.prerequisiteTcId !== undefined) {
-      const tc = allTCs.find((t) => t.id === ids[0]);
-      if (tc && opts.prerequisiteTcId !== (tc.prerequisiteTcId ?? null)) {
-        await api.patch(`/projects/${projectId}/test-cases/${tc.tcId}`, { prerequisiteTcId: opts.prerequisiteTcId }).catch(() => {});
-        void qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
-      }
-    }
 
     // Save hints to each selected TC if requested
     if (opts.saveHints && opts.contextNote.trim()) {
@@ -2531,14 +2683,14 @@ export default function Scripts() {
         `/projects/${projectId}/scripts/generate`,
         {
           testCaseIds: ids,
-          withHeal: opts.scriptMode === 'ROBOT' ? false : opts.withHeal,
+          withHeal: false,
           contextNote: opts.contextNote || undefined,
-          domRecording: opts.domRecording || undefined,
           scriptMode: opts.scriptMode,
+          skillIds: opts.skillIds.length > 0 ? opts.skillIds : undefined,
         },
         { timeout: 30_000 },
       );
-      const label = opts.scriptMode === 'ROBOT' ? '🤖 Robot' : (opts.withHeal ? '🩹 generate + heal' : '⚡ generate');
+      const label = opts.scriptMode === 'ROBOT' ? '🤖 Robot' : '⚡ generate';
       toast.success(`Queued ${ids.length} script${ids.length !== 1 ? 's' : ''} (${label})`);
     } catch (err) {
       const msg = (err as Error)?.message ?? 'Failed to enqueue';
@@ -2639,6 +2791,39 @@ export default function Scripts() {
     }
   }
 
+  async function handlePromoteToReferenceSkill(opts: { name: string; featureGroup: string }) {
+    if (!projectId || !activeScript || !activeTc) return;
+    const scriptBody = (activeTabId && tabContents[activeTabId]) ? tabContents[activeTabId] : '';
+    let steps: string[] = [];
+    try { steps = typeof activeTc.steps === 'string' ? JSON.parse(activeTc.steps) : activeTc.steps; } catch { steps = []; }
+    const content = JSON.stringify({
+      tcSnapshot: {
+        tcId: activeTc.tcId,
+        title: activeTc.title,
+        steps,
+        expectedResult: activeTc.expectedResult ?? '',
+      },
+      scriptBody,
+      passedAt: new Date().toISOString(),
+      sourceScriptId: activeScript.id,
+    });
+    try {
+      await api.post(`/projects/${projectId}/skills`, {
+        skillType: 'REFERENCE_SCRIPT',
+        name: opts.name,
+        featureGroup: opts.featureGroup || null,
+        scope: activeTc.tcId,
+        content,
+        captureMethod: 'MANUALLY_ENTERED',
+        confidence: 1.0,
+      });
+      setShowPromoteModal(false);
+      toast.success('Saved as Reference Skill — will be auto-detected for scripts in this feature group');
+    } catch {
+      toast.error('Failed to save reference skill');
+    }
+  }
+
   // ── Delete script ──────────────────────────────────────────────────────────
 
   async function handleDeleteScript(scriptId: string, label: string) {
@@ -2676,15 +2861,31 @@ export default function Scripts() {
       {showGenModal && (
         <GenerateContextModal
           count={tcSelected.size}
-          withHeal={withHeal}
           initialNote={genModalInitNote}
-          singleTc={tcSelected.size === 1 ? (() => { const tc = allTCs.find((t) => t.id === [...tcSelected][0]); return tc ? { id: tc.id, tcId: tc.tcId, title: tc.title, projectId: tc.projectId, prerequisiteTcId: tc.prerequisiteTcId } : undefined; })() : undefined}
+          projectId={projectId ?? undefined}
+          singleTc={tcSelected.size === 1 ? (() => { const tc = allTCs.find((t) => t.id === [...tcSelected][0]); return tc ? { id: tc.id, tcId: tc.tcId, title: tc.title, projectId: tc.projectId, useCaseTag: tc.useCaseTag } : undefined; })() : undefined}
           onConfirm={handleModalConfirmGenerate}
           onClose={() => setShowGenModal(false)}
           onImportInstead={tcSelected.size === 1
             ? () => handleOpenImport([...tcSelected][0])
             : () => handleOpenImport()
           }
+        />
+      )}
+
+      {/* Promote to Reference Skill modal */}
+      {showPromoteModal && activeTc && activeScript && (
+        <PromoteReferenceSkillModal
+          tc={{
+            tcId: activeTc.tcId,
+            title: activeTc.title,
+            steps: (() => { try { return typeof activeTc.steps === 'string' ? JSON.parse(activeTc.steps) : activeTc.steps; } catch { return []; } })(),
+            expectedResult: activeTc.expectedResult,
+            useCaseTag: activeTc.useCaseTag,
+          }}
+          scriptBody={(activeTabId && tabContents[activeTabId]) ? tabContents[activeTabId] : ''}
+          onConfirm={handlePromoteToReferenceSkill}
+          onClose={() => setShowPromoteModal(false)}
         />
       )}
 
@@ -3620,6 +3821,35 @@ export default function Scripts() {
                     }}
                   >
                     {activeScript.isGolden ? '★ Golden' : '☆ Golden'}
+                  </button>
+                )}
+
+                {/* 🔖 Promote to Reference Skill */}
+                {activeScript && activeTc && canWrite && (
+                  <button
+                    onClick={() => setShowPromoteModal(true)}
+                    title="Promote this verified TC + script to a Reference Skill — the agent will mirror its locators for future scripts in the same feature group"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '3px 9px', borderRadius: 5, cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: '1px solid rgba(42,157,143,0.25)',
+                      background: 'transparent',
+                      color: 'rgba(42,157,143,0.5)',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--emerald)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(42,157,143,0.6)';
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(42,157,143,0.08)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color = 'rgba(42,157,143,0.5)';
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(42,157,143,0.25)';
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                    }}
+                  >
+                    🔖 Ref Skill
                   </button>
                 )}
 

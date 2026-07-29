@@ -101,6 +101,7 @@ export interface ScriptGenJobPayload {
   failedStepError?: string; // error message from failed step
   scriptMode?: 'PLAYWRIGHT' | 'ROBOT';
   referenceTcIds?: string[]; // user-selected TCs whose scripts are passed as pattern references
+  skillIds?: string[];       // explicitly pinned skill IDs — injected regardless of tier/featureGroup
 }
 
 export interface ScriptVerifyJobPayload {

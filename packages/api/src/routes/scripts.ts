@@ -52,6 +52,7 @@ const GenerateSchema = z.object({
   failedStepError: z.string().max(2000).optional(),
   scriptMode: z.enum(['PLAYWRIGHT', 'ROBOT']).optional().default('ROBOT'),
   referenceTcIds: z.array(z.string()).max(5).optional(),
+  skillIds: z.array(z.string()).max(20).optional(),
 });
 
 const SaveContentSchema = z.object({
@@ -173,7 +174,7 @@ router.post('/generate', async (req: Request, res: Response) => {
       return;
     }
 
-    const { testCaseIds, withHeal, contextNote, domSnippet, domRecording, failedStep, failedStepError, scriptMode, referenceTcIds } = parsed.data;
+    const { testCaseIds, withHeal, contextNote, domSnippet, domRecording, failedStep, failedStepError, scriptMode, referenceTcIds, skillIds } = parsed.data;
     const projectId = req.project.id;
 
     const tcs = await prisma.testCase.findMany({
@@ -214,6 +215,7 @@ router.post('/generate', async (req: Request, res: Response) => {
         failedStep: failedStep || undefined,
         failedStepError: failedStepError || undefined,
         referenceTcIds: referenceTcIds?.length ? referenceTcIds : undefined,
+        skillIds: skillIds?.length ? skillIds : undefined,
         scriptMode,
       });
 
