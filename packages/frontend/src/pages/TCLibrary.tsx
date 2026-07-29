@@ -40,6 +40,7 @@ interface LibState {
   selectedIds: Set<string>;
   groupOpen: Record<string, boolean>;
   search: string;
+  linkFilter: 'all' | 'linked' | 'unlinked';
 }
 
 type LibAction =
@@ -50,6 +51,7 @@ type LibAction =
   | { type: 'TOGGLE_GROUP_OPEN'; name: string }
   | { type: 'SET_ALL_OPEN'; values: Record<string, boolean> }
   | { type: 'SET_SEARCH'; value: string }
+  | { type: 'SET_LINK_FILTER'; value: 'all' | 'linked' | 'unlinked' }
   | { type: 'DESELECT_MOVED'; ids: string[] };
 
 function libReducer(state: LibState, action: LibAction): LibState {
@@ -84,6 +86,8 @@ function libReducer(state: LibState, action: LibAction): LibState {
       return { ...state, groupOpen: action.values };
     case 'SET_SEARCH':
       return { ...state, search: action.value };
+    case 'SET_LINK_FILTER':
+      return { ...state, linkFilter: action.value };
     default:
       return state;
   }
@@ -93,6 +97,7 @@ const initialState: LibState = {
   selectedIds: new Set(),
   groupOpen: {},
   search: '',
+  linkFilter: 'all',
 };
 
 // ── Stat tile ───────────────────────────────────────────────────────────────
@@ -127,7 +132,7 @@ export default function TCLibrary() {
   const projectId = project?.id;
 
   const [state, dispatch] = useReducer(libReducer, initialState);
-  const { search, selectedIds } = state;
+  const { search, selectedIds, linkFilter } = state;
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: tcData, isLoading } = useTestCases(projectId, {
@@ -185,7 +190,20 @@ export default function TCLibrary() {
   // Track which single TC is being linked via per-row "+ Link" button
   const [linkScriptForTc, setLinkScriptForTc] = useState<TestCase | null>(null);
 
-  const filteredTCs = allTCs;
+  // A TC counts as "linked" if it has an agent-generated script OR a manually linked one
+  const isLinked = useCallback(
+    (tc: TestCase) => scriptedTcIds.has(tc.id) || !!tc.linkedScriptId,
+    [scriptedTcIds],
+  );
+
+  const linkedCount = useMemo(() => allTCs.filter(isLinked).length, [allTCs, isLinked]);
+  const unlinkedCount = allTCs.length - linkedCount;
+
+  const filteredTCs = useMemo(() => {
+    if (linkFilter === 'linked') return allTCs.filter(isLinked);
+    if (linkFilter === 'unlinked') return allTCs.filter((tc) => !isLinked(tc));
+    return allTCs;
+  }, [allTCs, linkFilter, isLinked]);
 
   // ── Group TCs by useCaseTag ───────────────────────────────────────────────
   const groups = useMemo(() => {
@@ -384,6 +402,23 @@ export default function TCLibrary() {
     }
   }
 
+  // ── Bulk unlink (from selection bar) ─────────────────────────────────────
+  async function handleUnlinkSelected() {
+    const tcIds = Array.from(selectedIds);
+    if (!tcIds.length || !projectId) return;
+    try {
+      await bulkLinkScriptMutation.mutateAsync({ tcIds, scriptId: null });
+      toast.success(`Unlinked ${tcIds.length} TC${tcIds.length !== 1 ? 's' : ''}`);
+    } catch {
+      toast.error('Unlink failed');
+    }
+  }
+
+  // ── Run selected (from selection bar) ────────────────────────────────────
+  function handleRunSelected() {
+    handleRunGroup(Array.from(selectedIds));
+  }
+
   const sendBtnEnabled = selectedIds.size > 0;
 
   const dropdownItemStyle: React.CSSProperties = {
@@ -531,6 +566,36 @@ export default function TCLibrary() {
                 style={{ width: '200px', padding: '6px 10px' }}
               />
 
+              {/* Linked / Unlinked filter chips */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {(
+                  [
+                    ['all', `All (${allTCs.length})`],
+                    ['linked', `⚡ Linked (${linkedCount})`],
+                    ['unlinked', `Unlinked (${unlinkedCount})`],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    onClick={() => dispatch({ type: 'SET_LINK_FILTER', value })}
+                    style={{
+                      padding: '5px 10px',
+                      borderRadius: '6px',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      border: linkFilter === value ? '1px solid var(--violet)' : '1px solid var(--border)',
+                      background: linkFilter === value ? 'var(--violet-dim)' : 'transparent',
+                      color: linkFilter === value ? 'var(--violet)' : 'var(--text-dim)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
               {/* Right: group info + expand/collapse + select all */}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
@@ -570,6 +635,8 @@ export default function TCLibrary() {
           onSendToExecution={handleSendToExecution}
           onDelete={handleDeleteSelected}
           onLinkScript={canWrite ? () => setLinkScriptOpen(true) : undefined}
+          onUnlinkScript={canWrite ? handleUnlinkSelected : undefined}
+          onRun={handleRunSelected}
         />
 
         {/* UseCase groups */}
