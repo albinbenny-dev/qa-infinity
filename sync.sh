@@ -27,6 +27,13 @@ else
   DC="docker-compose"
 fi
 
+# Use sudo only when it exists (Linux/Mac); skip on Git Bash / Windows
+if command -v sudo &>/dev/null; then
+  SUDO="sudo"
+else
+  SUDO=""
+fi
+
 echo "▶ Sync & deploy [$SERVICES]  (compose: $DC)"
 echo ""
 
@@ -41,16 +48,16 @@ echo ""
 
 # ── 2. Build updated images (layer-cached — only changed layers rebuild) ─────
 echo "⟳ Building images…"
-sudo $DC -p "$PROJECT_NAME" build --parallel $SERVICES
+$SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
 echo "✔ Build done"
 echo ""
 
 # ── 3. Restart containers ────────────────────────────────────────────────────
 echo "⟳ Restarting containers…"
-sudo $DC -p "$PROJECT_NAME" up -d --no-build $SERVICES
+$SUDO $DC -p "$PROJECT_NAME" up -d --no-build $SERVICES
 echo ""
 
 # ── 4. Status ────────────────────────────────────────────────────────────────
-sudo $DC -p "$PROJECT_NAME" ps $SERVICES
+$SUDO $DC -p "$PROJECT_NAME" ps $SERVICES
 echo ""
 echo "✅ Deploy complete"
