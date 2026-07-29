@@ -94,7 +94,7 @@ export default function RunDetail() {
     setExpandedGroups(next);
   }
 
-  const total = run?._count.results ?? 0;
+  const total = results.length;
   const passed = results.filter((r) => r.status === 'PASSED').length;
   const failed = results.filter((r) => r.status === 'FAILED').length;
   const skipped = results.filter((r) => r.status === 'SKIPPED').length;
