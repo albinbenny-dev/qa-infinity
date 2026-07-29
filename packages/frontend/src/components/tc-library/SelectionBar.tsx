@@ -1,11 +1,10 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 
 interface SelectionBarProps {
   selectedCount: number;
   useCaseOptions: string[];
   onMove: (targetUseCaseTag: string) => void;
-  onAddToSuite: (suiteName: string) => void;
   onClear: () => void;
   onSendToExecution: () => void;
   onDelete: () => void;
@@ -19,7 +18,6 @@ export default function SelectionBar({
   selectedCount,
   useCaseOptions,
   onMove,
-  onAddToSuite,
   onClear,
   onSendToExecution,
   onDelete,
@@ -29,7 +27,6 @@ export default function SelectionBar({
   visible,
 }: SelectionBarProps) {
   const [moveTarget, setMoveTarget] = useState('');
-  const [suiteInput, setSuiteInput] = useState('');
   const [newUCName, setNewUCName] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
@@ -41,13 +38,8 @@ export default function SelectionBar({
       setMoveTarget('');
     } else {
       setMoveTarget(val);
+      onMove(val);
     }
-  }
-
-  function handleMove() {
-    if (!moveTarget) return;
-    onMove(moveTarget);
-    setMoveTarget('');
   }
 
   function handleCreateAndMove() {
@@ -58,14 +50,23 @@ export default function SelectionBar({
     setCreateModalOpen(false);
   }
 
-  function handleAddToSuite() {
-    const trimmed = suiteInput.trim();
-    if (!trimmed) return;
-    onAddToSuite(trimmed);
-    setSuiteInput('');
-  }
-
   if (!visible) return null;
+
+  const actionBtnStyle = (color: string, borderColor: string, bg: string): CSSProperties => ({
+    padding: '4px 9px',
+    background: bg,
+    border: `1px solid ${borderColor}`,
+    borderRadius: '5px',
+    color,
+    fontSize: '11px',
+    fontWeight: 700,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexShrink: 0,
+  });
 
   return (
     <>
@@ -73,124 +74,66 @@ export default function SelectionBar({
         style={{
           display: 'flex',
           alignItems: 'center',
-          padding: '10px 16px',
-          background: 'var(--violet-dim)',
-          border: '1px solid rgba(244,123,32,0.35)',
+          padding: '7px 10px',
+          background: 'var(--surface2)',
+          border: '1px solid var(--border)',
+          borderLeft: '3px solid var(--violet)',
           borderRadius: 'var(--radius)',
-          gap: '10px',
+          gap: '7px',
           flexShrink: 0,
-          flexWrap: 'wrap',
+          flexWrap: 'nowrap',
+          overflowX: 'auto',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
         }}
       >
         {/* Selected count */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
           <div
             style={{
-              width: '18px',
-              height: '18px',
+              width: '16px',
+              height: '16px',
               borderRadius: '4px',
               background: 'var(--violet)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '10px',
+              fontSize: '9px',
               color: 'white',
               flexShrink: 0,
             }}
           >
             ✓
           </div>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--violet)' }}>
-            {selectedCount} selected
+          <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--violet)', whiteSpace: 'nowrap' }}>
+            {selectedCount}
           </span>
         </div>
 
         <Divider />
 
         {/* Move to UseCase */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-mid)', whiteSpace: 'nowrap' }}>
-            UseCase:
-          </span>
-          <select
-            value={moveTarget}
-            onChange={(e) => handleMoveTargetChange(e.target.value)}
-            className="input-field"
-            style={{
-              padding: '5px 10px',
-              fontSize: '11px',
-              fontWeight: 600,
-              color: 'var(--violet)',
-              background: 'var(--surface2)',
-              borderColor: 'rgba(244,123,32,0.3)',
-              minWidth: '150px',
-            }}
-          >
-            <option value="">— move to —</option>
-            {allOptions.map((uc) => (
-              <option key={uc} value={uc}>{uc}</option>
-            ))}
-            <option value="__new__">+ Create New…</option>
-          </select>
-          <button
-            onClick={handleMove}
-            disabled={!moveTarget}
-            style={{
-              padding: '5px 12px',
-              background: moveTarget
-                ? 'linear-gradient(135deg, var(--violet), var(--6d-orange-deep))'
-                : 'var(--surface3)',
-              border: 'none',
-              borderRadius: '5px',
-              color: moveTarget ? 'white' : 'var(--text-dim)',
-              fontSize: '11px',
-              fontWeight: 700,
-              cursor: moveTarget ? 'pointer' : 'default',
-              opacity: moveTarget ? 1 : 0.5,
-            }}
-          >
-            ↗ Move
-          </button>
-        </div>
-
-        <Divider />
-
-        {/* Suite tagging */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-mid)', whiteSpace: 'nowrap' }}>
-            ⚡ Suite:
-          </span>
-          <input
-            className="input-field"
-            value={suiteInput}
-            onChange={(e) => setSuiteInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddToSuite()}
-            placeholder="e.g. Smoke"
-            style={{
-              padding: '5px 10px',
-              fontSize: '11px',
-              width: '110px',
-              borderColor: 'rgba(245,158,11,0.3)',
-            }}
-          />
-          <button
-            onClick={handleAddToSuite}
-            disabled={!suiteInput.trim()}
-            style={{
-              padding: '5px 12px',
-              background: suiteInput.trim() ? 'rgba(245,158,11,0.15)' : 'var(--surface3)',
-              border: suiteInput.trim() ? '1px solid rgba(245,158,11,0.4)' : '1px solid var(--border)',
-              borderRadius: '5px',
-              color: suiteInput.trim() ? 'var(--amber)' : 'var(--text-dim)',
-              fontSize: '11px',
-              fontWeight: 700,
-              cursor: suiteInput.trim() ? 'pointer' : 'default',
-              opacity: suiteInput.trim() ? 1 : 0.5,
-            }}
-          >
-            + Tag
-          </button>
-        </div>
+        <select
+          value={moveTarget}
+          onChange={(e) => handleMoveTargetChange(e.target.value)}
+          className="input-field"
+          title="Move to use case"
+          style={{
+            padding: '4px 7px',
+            fontSize: '11px',
+            fontWeight: 600,
+            color: 'var(--violet)',
+            background: 'var(--surface3)',
+            borderColor: 'var(--border)',
+            maxWidth: '130px',
+            flexShrink: 0,
+          }}
+        >
+          <option value="">↗ Move to…</option>
+          {allOptions.map((uc) => (
+            <option key={uc} value={uc}>{uc}</option>
+          ))}
+          <option value="__new__">+ Create New…</option>
+        </select>
 
         <Divider />
 
@@ -205,6 +148,7 @@ export default function SelectionBar({
             cursor: 'pointer',
             textDecoration: 'underline',
             whiteSpace: 'nowrap',
+            flexShrink: 0,
           }}
         >
           Clear
@@ -212,104 +156,25 @@ export default function SelectionBar({
 
         <Divider />
 
-        {/* Link Script */}
         {onLinkScript && (
-          <>
-            <Divider />
-            <button
-              onClick={onLinkScript}
-              style={{
-                padding: '5px 12px',
-                background: 'rgba(99,102,241,0.1)',
-                border: '1px solid rgba(99,102,241,0.3)',
-                borderRadius: '5px',
-                color: 'var(--violet)',
-                fontSize: '11px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              🔗 Link Script
-            </button>
-          </>
+          <button onClick={onLinkScript} style={actionBtnStyle('var(--violet)', 'rgba(99,102,241,0.3)', 'rgba(99,102,241,0.1)')}>
+            🔗 Link
+          </button>
         )}
 
-        {/* Unlink Script */}
         {onUnlinkScript && (
-          <>
-            <Divider />
-            <button
-              onClick={onUnlinkScript}
-              style={{
-                padding: '5px 12px',
-                background: 'rgba(148,163,184,0.1)',
-                border: '1px solid var(--border2)',
-                borderRadius: '5px',
-                color: 'var(--text-mid)',
-                fontSize: '11px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              ⛓️‍💥 Unlink
-            </button>
-          </>
+          <button onClick={onUnlinkScript} style={actionBtnStyle('var(--text-mid)', 'var(--border2)', 'rgba(148,163,184,0.1)')}>
+            ⛓️‍💥 Unlink
+          </button>
         )}
 
-        {/* Run selected */}
         {onRun && (
-          <>
-            <Divider />
-            <button
-              onClick={onRun}
-              style={{
-                padding: '5px 12px',
-                background: 'var(--emerald-dim)',
-                border: '1px solid rgba(42,157,143,0.35)',
-                borderRadius: '5px',
-                color: 'var(--emerald)',
-                fontSize: '11px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              ▶ Run {selectedCount}
-            </button>
-          </>
+          <button onClick={onRun} style={actionBtnStyle('var(--emerald)', 'rgba(42,157,143,0.35)', 'var(--emerald-dim)')}>
+            ▶ Run {selectedCount}
+          </button>
         )}
 
-        <Divider />
-
-        {/* Bulk delete */}
-        <button
-          onClick={onDelete}
-          style={{
-            padding: '5px 12px',
-            background: 'rgba(220,38,38,0.08)',
-            border: '1px solid rgba(220,38,38,0.3)',
-            borderRadius: '5px',
-            color: 'var(--fail)',
-            fontSize: '11px',
-            fontWeight: 700,
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-          }}
-        >
+        <button onClick={onDelete} style={actionBtnStyle('var(--fail)', 'rgba(220,38,38,0.3)', 'rgba(220,38,38,0.08)')}>
           🗑 Delete {selectedCount}
         </button>
 
@@ -318,16 +183,17 @@ export default function SelectionBar({
           onClick={onSendToExecution}
           style={{
             marginLeft: 'auto',
-            padding: '7px 18px',
+            padding: '6px 14px',
             background: 'linear-gradient(135deg, var(--violet), var(--cyan))',
             border: 'none',
             borderRadius: '6px',
             color: 'white',
-            fontSize: '12px',
+            fontSize: '11px',
             fontWeight: 700,
             cursor: 'pointer',
             fontFamily: 'var(--font-ui)',
             whiteSpace: 'nowrap',
+            flexShrink: 0,
           }}
         >
           ▶ Send to Execution

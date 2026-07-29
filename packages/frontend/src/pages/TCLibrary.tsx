@@ -16,7 +16,6 @@ import {
   useDeleteTestCase,
   useUpdateTestCase,
   useBulkDelete,
-  useBulkAddTag,
   useReorderTestCases,
   useBulkLinkScript,
 } from '../hooks/useTestCases';
@@ -147,7 +146,6 @@ export default function TCLibrary() {
   const deleteTcMutation = useDeleteTestCase(projectId ?? '');
   const updateTcMutation = useUpdateTestCase(projectId ?? '');
   const bulkDeleteMutation = useBulkDelete(projectId ?? '');
-  const bulkAddTagMutation = useBulkAddTag(projectId ?? '');
   const reorderTcMutation = useReorderTestCases(projectId ?? '');
   const bulkLinkScriptMutation = useBulkLinkScript(projectId ?? '');
   const createRun = useCreateRun(projectId ?? '');
@@ -353,18 +351,6 @@ export default function TCLibrary() {
       toast.error('Delete failed');
     }
   }, [selectedIds, projectId, bulkDeleteMutation]);
-
-  // ── Suite tagging ─────────────────────────────────────────────────────────
-  async function handleAddToSuite(suiteName: string) {
-    const ids = Array.from(selectedIds);
-    if (!ids.length || !projectId) return;
-    try {
-      await bulkAddTagMutation.mutateAsync({ testCaseIds: ids, tag: `suite:${suiteName}` });
-      toast.success(`Tagged ${ids.length} TC${ids.length === 1 ? '' : 's'} as suite "${suiteName}"`);
-    } catch {
-      toast.error('Tagging failed');
-    }
-  }
 
   // ── Bulk link script (from selection bar) ────────────────────────────────
   async function handleLinkScript(scriptId: string) {
@@ -682,7 +668,6 @@ export default function TCLibrary() {
           selectedCount={selectedIds.size}
           useCaseOptions={useCases}
           onMove={handleMove}
-          onAddToSuite={handleAddToSuite}
           onClear={() => dispatch({ type: 'CLEAR_SELECTION' })}
           onSendToExecution={handleSendToExecution}
           onDelete={handleDeleteSelected}
