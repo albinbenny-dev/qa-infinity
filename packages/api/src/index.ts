@@ -235,16 +235,19 @@ httpServer.listen(PORT, () => {
     }
   }
 
-  // Cancel interrupted HEAL_RERUN runs BEFORE workers attach so stalled BullMQ
-  // jobs see a terminal status and exit instead of re-executing the healing loop.
+  // Cancel any run left in PENDING/RUNNING from before this boot, BEFORE workers
+  // attach. The BullMQ worker that was tracking it lived in the previous process —
+  // it's gone, so the run can never reach a terminal status on its own and would
+  // otherwise sit "RUNNING" in the UI forever (and stalled BullMQ jobs need to see
+  // a terminal status to exit instead of re-executing, e.g. the healing loop).
   void (async () => {
     try {
       const cleaned = await prisma.run.updateMany({
-        where: { triggerType: 'HEAL_RERUN', status: { in: ['PENDING', 'RUNNING'] } },
+        where: { status: { in: ['PENDING', 'RUNNING'] } },
         data: { status: 'CANCELLED', completedAt: new Date() },
       });
       if (cleaned.count > 0) {
-        console.log(`[qa-api] Startup cleanup: cancelled ${cleaned.count} interrupted HEAL_RERUN run(s)`);
+        console.log(`[qa-api] Startup cleanup: cancelled ${cleaned.count} interrupted run(s)`);
       }
     } catch (err) {
       console.warn('[qa-api] Startup cleanup failed (non-fatal):', (err as Error).message);

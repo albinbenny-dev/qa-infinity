@@ -6,6 +6,7 @@ import { useTriggerHeal } from '../../hooks/useHeals';
 import { useRetryRun, useCreateIndividualRun } from '../../hooks/useRuns';
 import { useRBAC } from '../../hooks/useRBAC';
 import { api } from '../../lib/api';
+import RFDashboardModal from './RFDashboardModal';
 
 interface RunHistoryTableProps {
   projectId: string | undefined;
@@ -549,6 +550,7 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
   const [expanded, setExpanded] = useState<Set<string>>(
     () => initialExpandedRunId ? new Set([initialExpandedRunId]) : new Set(),
   );
+  const [dashboardRun, setDashboardRun] = useState<ReportRun | null>(null);
 
   // Scroll the deep-linked run card into view once the list has rendered.
   useEffect(() => {
@@ -605,6 +607,7 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
   }
 
   return (
+    <>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       {runs.map((run) => {
         const isOpen = expanded.has(run.id);
@@ -706,6 +709,15 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
                     Export
                   </button>
                 )}
+                {(run.status === 'PASSED' || run.status === 'FAILED' || run.status === 'CANCELLED') && (
+                  <button
+                    onClick={() => setDashboardRun(run)}
+                    title="View RF run dashboard"
+                    style={{ padding: '3px 10px', borderRadius: 6, background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)', border: '1px solid rgba(52,211,153,0.25)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
+                  >
+                    Dashboard
+                  </button>
+                )}
               </div>
             </div>
 
@@ -724,5 +736,12 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
         );
       })}
     </div>
+    <RFDashboardModal
+      open={dashboardRun !== null}
+      onClose={() => setDashboardRun(null)}
+      projectId={projectId}
+      run={dashboardRun}
+    />
+    </>
   );
 }

@@ -113,6 +113,79 @@ export function useEmailConfig(projectId: string | undefined) {
   });
 }
 
+// ── RF run dashboard ───────────────────────────────────────────────────────
+
+export interface RfSummaryResult {
+  id: string;
+  tcId: string;
+  title: string;
+  useCaseTag?: string | null;
+  status: string;
+  duration?: number | null;
+  errorMessage?: string | null;
+  hasRfLog: boolean;
+}
+
+export interface RfSummaryGroup {
+  scriptFilename: string;
+  passed: number;
+  failed: number;
+  skipped: number;
+  results: RfSummaryResult[];
+}
+
+export interface RfSummary {
+  run: { id: string; runSeq: number; name: string; status: string; environment: string; createdAt: string; completedAt?: string | null };
+  stats: { total: number; passed: number; failed: number; skipped: number; durationMs: number };
+  groups: RfSummaryGroup[];
+}
+
+export interface RfKeyword {
+  name: string;
+  type?: string;
+  status: string;
+  durationMs: number;
+  errorMsg: string | null;
+}
+
+export interface RfStepsData {
+  tests: Array<{ name: string; status: string; durationMs: number; keywords: RfKeyword[] }>;
+}
+
+export function useRfSummary(projectId: string | undefined, runId: string | null) {
+  return useQuery({
+    queryKey: ['rfSummary', projectId, runId],
+    queryFn: async () => {
+      const res = await api.get<RfSummary>(`/projects/${projectId}/reports/runs/${runId}/rf-summary`);
+      return res.data;
+    },
+    enabled: !!projectId && !!runId,
+    staleTime: 30_000,
+  });
+}
+
+export function useRfSteps(
+  projectId: string | undefined,
+  runId: string | null,
+  resultId: string | undefined,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['rfSteps', projectId, runId, resultId],
+    queryFn: async () => {
+      const res = await api.get<RfStepsData>(
+        `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/rf-steps`,
+      );
+      return res.data;
+    },
+    enabled: !!projectId && !!runId && !!resultId && enabled,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+// ── Email config ───────────────────────────────────────────────────────────
+
 export function useSaveEmailConfig(projectId: string) {
   const qc = useQueryClient();
   return useMutation({

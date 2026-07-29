@@ -3,6 +3,8 @@ import { z } from 'zod';
 import XLSXStyle from 'xlsx-js-style';
 import JSZip from 'jszip';
 import fs from 'fs';
+import path from 'path';
+import { load as cheerioLoad } from 'cheerio';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
@@ -633,6 +635,175 @@ router.get('/trend', async (req: Request, res: Response, next: NextFunction) => 
     const days = parseInt(req.query['days'] as string || '30', 10);
     const trend = await getRunTrend(req.project.id, days);
     res.json({ trend });
+  } catch (err) { next(err); }
+});
+
+// ── RF output.xml parser ───────────────────────────────────────────────────
+
+interface RfKeyword {
+  name: string;
+  type?: string;
+  status: string;
+  durationMs: number;
+  errorMsg: string | null;
+}
+
+interface RfTest {
+  name: string;
+  status: string;
+  durationMs: number;
+  keywords: RfKeyword[];
+}
+
+function rfTimeMs(t: string | undefined): number {
+  if (!t) return 0;
+  // RF6 format: "20240101 10:00:00.000"
+  const m6 = t.match(/(\d{4})(\d{2})(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+  if (m6) return Date.UTC(+m6[1], +m6[2]-1, +m6[3], +m6[4], +m6[5], +m6[6], +m6[7]);
+  // RF7 format: ISO "2024-01-01T10:00:00.000000"
+  const ts = new Date(t).getTime();
+  return isNaN(ts) ? 0 : ts;
+}
+
+function parseRobotOutputXml(xml: string): RfTest[] {
+  const $ = cheerioLoad(xml, { xmlMode: true });
+  const tests: RfTest[] = [];
+
+  $('test').each((_, testEl) => {
+    const name = $(testEl).attr('name') ?? '';
+    const statusEl = $(testEl).children('status').first();
+    const status = statusEl.attr('status') ?? 'UNKNOWN';
+    const durationMs = Math.max(0, rfTimeMs(statusEl.attr('endtime')) - rfTimeMs(statusEl.attr('starttime')));
+
+    const keywords: RfKeyword[] = [];
+    $(testEl).children('kw').each((_, kwEl) => {
+      const kwName = $(kwEl).attr('name') ?? '';
+      const kwType = $(kwEl).attr('type') ?? undefined;
+      const kwStatusEl = $(kwEl).children('status').first();
+      const kwStatus = kwStatusEl.attr('status') ?? 'UNKNOWN';
+      const kwDuration = Math.max(0, rfTimeMs(kwStatusEl.attr('endtime')) - rfTimeMs(kwStatusEl.attr('starttime')));
+
+      let errorMsg: string | null = null;
+      if (kwStatus === 'FAIL') {
+        const failMsg = $(kwEl).find('msg').filter((_, m) =>
+          $(m).attr('level') === 'FAIL' || $(m).attr('level') === 'ERROR'
+        ).last().text().trim();
+        const statusText = kwStatusEl.text().trim();
+        errorMsg = (failMsg || statusText || null);
+        if (errorMsg && errorMsg.length > 500) errorMsg = errorMsg.substring(0, 500);
+      }
+
+      keywords.push({ name: kwName, type: kwType, status: kwStatus, durationMs: kwDuration, errorMsg });
+    });
+
+    tests.push({ name, status, durationMs, keywords });
+  });
+
+  return tests;
+}
+
+// ── GET /runs/:runId/rf-summary — whole-run dashboard data ────────────────────
+
+router.get('/runs/:runId/rf-summary', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const run = await prisma.run.findFirst({
+      where: { id: req.params['runId'], projectId: req.project.id },
+      select: { id: true, runSeq: true, name: true, status: true, environment: true, createdAt: true, completedAt: true },
+    });
+    if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
+
+    const results = await prisma.runResult.findMany({
+      where: { runId: run.id },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true, status: true, duration: true, errorMessage: true, rfLogPath: true,
+        testCase: { select: { id: true, tcId: true, title: true, useCaseTag: true } },
+        script: { select: { filename: true } },
+      },
+    });
+
+    const groupMap = new Map<string, typeof results>();
+    for (const r of results) {
+      const key = r.script?.filename ?? '_unlinked';
+      if (!groupMap.has(key)) groupMap.set(key, []);
+      groupMap.get(key)!.push(r);
+    }
+
+    const groups = Array.from(groupMap.entries()).map(([scriptFilename, items]) => ({
+      scriptFilename,
+      passed: items.filter(i => i.status === 'PASSED').length,
+      failed: items.filter(i => i.status === 'FAILED').length,
+      skipped: items.filter(i => i.status !== 'PASSED' && i.status !== 'FAILED').length,
+      results: items.map(r => ({
+        id: r.id,
+        tcId: r.testCase.tcId,
+        title: r.testCase.title,
+        useCaseTag: r.testCase.useCaseTag,
+        status: r.status,
+        duration: r.duration,
+        errorMessage: r.errorMessage,
+        hasRfLog: !!r.rfLogPath,
+      })),
+    }));
+
+    const passed = results.filter(r => r.status === 'PASSED').length;
+    const failed = results.filter(r => r.status === 'FAILED').length;
+    const skipped = results.filter(r => r.status !== 'PASSED' && r.status !== 'FAILED').length;
+    const durationMs = results.reduce((s, r) => s + (r.duration ?? 0), 0);
+
+    res.json({
+      run,
+      stats: { total: results.length, passed, failed, skipped, durationMs },
+      groups,
+    });
+  } catch (err) { next(err); }
+});
+
+// ── GET /runs/:runId/results/:resultId/rf-steps — keyword step detail ─────────
+
+router.get('/runs/:runId/results/:resultId/rf-steps', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await prisma.runResult.findFirst({
+      where: { id: req.params['resultId'], runId: req.params['runId'], run: { projectId: req.project.id } },
+      select: { rfLogPath: true },
+    });
+    if (!result?.rfLogPath) { res.status(404).json({ error: 'No RF log for this result' }); return; }
+
+    const xmlPath = path.join(path.dirname(result.rfLogPath), 'output.xml');
+    if (!fs.existsSync(xmlPath)) { res.status(404).json({ error: 'output.xml not found' }); return; }
+
+    const xml = fs.readFileSync(xmlPath, 'utf-8');
+    res.json({ tests: parseRobotOutputXml(xml) });
+  } catch (err) { next(err); }
+});
+
+// ── GET /runs/:runId/rf-logs-zip — download all log.html files as zip ─────────
+
+router.get('/runs/:runId/rf-logs-zip', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const run = await prisma.run.findFirst({
+      where: { id: req.params['runId'], projectId: req.project.id },
+      select: { runSeq: true, results: { select: { rfLogPath: true, testCase: { select: { tcId: true } } } } },
+    });
+    if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
+
+    const zip = new JSZip();
+    const runLabel = `RUN-${String(run.runSeq).padStart(4, '0')}`;
+    let count = 0;
+
+    for (const r of run.results) {
+      if (!r.rfLogPath || !fs.existsSync(r.rfLogPath)) continue;
+      const data = fs.readFileSync(r.rfLogPath);
+      zip.file(`${r.testCase.tcId}_log.html`, data);
+      count++;
+    }
+
+    if (count === 0) { res.status(404).json({ error: 'No RF logs available for this run' }); return; }
+
+    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="rf-logs-${runLabel}.zip"`);
+    res.send(buf);
   } catch (err) { next(err); }
 });
 
