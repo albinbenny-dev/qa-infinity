@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import multer from 'multer';
 import fs from 'fs';
+import path from 'path';
 import { z } from 'zod';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — @langchain/core types are resolved inside Docker; ignore locally
@@ -26,6 +27,8 @@ import {
   getProjectFileContent,
   deleteProjectFile,
   searchProjectFiles,
+  BINARY_EXTS,
+  projectRoot,
 } from '../services/scriptFileService.js';
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
@@ -76,6 +79,14 @@ const robotUpload = multer({
     if (file.originalname.endsWith('.robot')) cb(null, true);
     else cb(new Error('Only .robot files are allowed'));
   },
+});
+
+// Project Files uploads — any file type (xlsx, yaml, images, ...), no extension
+// filter. Matches the same "anything goes" precedent already set by the zip
+// folder import, just for one file at a time into an arbitrary folder.
+const projectFileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
 });
 
 // Large project-folder imports (500MB+) stream straight to disk instead of
@@ -989,6 +1000,88 @@ router.get('/search', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] GET /search', err);
     res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// ── GET /project-file/content — read any project text file for viewing/editing ─
+// Used by "Find in Files" search results and the file tree to open a file in
+// the editor instead of downloading it. Binary formats (xlsx, images, etc.)
+// are rejected — the frontend falls back to a plain download for those.
+
+router.get('/project-file/content', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    const ext = path.extname(relPath).toLowerCase();
+    if (BINARY_EXTS.has(ext)) {
+      res.status(415).json({ error: 'Binary file — use the download button instead.' });
+      return;
+    }
+    const { buffer } = getProjectFileContent(req.project.slug, relPath);
+    res.json({ content: buffer.toString('utf-8') });
+  } catch (err: any) {
+    res.status(err?.message === 'Invalid path' ? 400 : 404).json({ error: err?.message ?? 'File not found' });
+  }
+});
+
+// ── PUT /project-file/content — save edited content back to a project file ────
+
+router.put('/project-file/content', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    const { content } = req.body as { content?: string };
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    if (typeof content !== 'string') { res.status(400).json({ error: 'content is required' }); return; }
+    saveScript(req.project.slug, relPath, content);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[scripts] PUT /project-file/content', err);
+    res.status(500).json({ error: err?.message ?? 'Save failed' });
+  }
+});
+
+// ── POST /project-file/mkdir — create a folder anywhere in the project tree ────
+
+router.post('/project-file/mkdir', async (req: Request, res: Response) => {
+  try {
+    const { path: folderPath } = req.body as { path?: string };
+    if (!folderPath || typeof folderPath !== 'string') {
+      res.status(400).json({ error: 'path is required' });
+      return;
+    }
+    const segments = folderPath.split('/').filter(Boolean);
+    if (segments.length === 0 || segments.some((s) => s === '..' || s === '.')) {
+      res.status(400).json({ error: 'Invalid folder path' });
+      return;
+    }
+    const normalized = segments.join('/');
+    const fullPath = path.join(projectRoot(req.project.slug), normalized);
+    fs.mkdirSync(fullPath, { recursive: true });
+    const keepFile = path.join(fullPath, '.gitkeep');
+    if (!fs.existsSync(keepFile)) fs.writeFileSync(keepFile, '', 'utf-8');
+    res.json({ ok: true, path: normalized });
+  } catch (err: any) {
+    console.error('[scripts] POST /project-file/mkdir', err);
+    res.status(500).json({ error: err?.message ?? 'Failed to create folder' });
+  }
+});
+
+// ── POST /project-file/upload — upload any file into an arbitrary folder ──────
+
+router.post('/project-file/upload', projectFileUpload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) { res.status(400).json({ error: 'No file uploaded (field name: file)' }); return; }
+    const rawFolder = ((req.body as Record<string, string>).folder ?? '').trim();
+    const folderSegments = rawFolder.split('/').filter(Boolean).filter((s) => s !== '..' && s !== '.');
+    const basename = req.file.originalname.replace(/[^a-zA-Z0-9._\- ()]/g, '_');
+    const relPath = [...folderSegments, basename].join('/');
+    const fullPath = path.join(projectRoot(req.project.slug), relPath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, req.file.buffer);
+    res.status(201).json({ ok: true, path: relPath });
+  } catch (err: any) {
+    console.error('[scripts] POST /project-file/upload', err);
+    res.status(500).json({ error: err?.message ?? 'Upload failed' });
   }
 });
 

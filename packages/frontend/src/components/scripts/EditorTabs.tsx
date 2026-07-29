@@ -3,7 +3,8 @@ import type { Script } from '../../types';
 
 export type EditorTab =
   | { kind: 'script'; id: string; filename: string; script: Script }
-  | { kind: 'resource'; id: string; filename: string };
+  | { kind: 'resource'; id: string; filename: string }
+  | { kind: 'projectFile'; id: string; filename: string; relPath: string };
 
 interface EditorTabsProps {
   tabs: EditorTab[];
@@ -67,7 +68,7 @@ function Tab({
 }) {
   const [closeHover, setCloseHover] = React.useState(false);
   const [tabHover, setTabHover] = React.useState(false);
-  const isResource = tab.kind === 'resource';
+  const isResource = tab.kind === 'resource' || tab.kind === 'projectFile';
   const activeColor = isResource ? 'var(--emerald)' : '#60a5fa';
   const activeBg = isResource ? 'rgba(42,157,143,0.08)' : 'rgba(96,165,250,0.08)';
 

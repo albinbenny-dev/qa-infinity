@@ -85,7 +85,7 @@ function buildGroups(allTCs: TestCase[], useCases: string[]) {
 // ── File Tree Component ─────────────────────────────────────────────────────
 
 function FileTreeView({
-  nodes, expandedDirs, onToggle, onSelect, onDownloadFile, onDownloadZip, onDelete, indent,
+  nodes, expandedDirs, onToggle, onSelect, onDownloadFile, onDownloadZip, onDelete, onUploadTo, onNewFolder, indent,
 }: {
   nodes: FileTreeNode[];
   expandedDirs: Set<string>;
@@ -94,6 +94,8 @@ function FileTreeView({
   onDownloadFile: (p: string) => void;
   onDownloadZip: (p?: string) => void;
   onDelete?: (p: string) => void;
+  onUploadTo?: (folderPath: string) => void;
+  onNewFolder?: (parentPath: string) => void;
   indent: number;
 }) {
   return (
@@ -123,11 +125,27 @@ function FileTreeView({
               onClick={e => e.stopPropagation()}
             >
               {node.type === 'dir' ? (
-                <button
-                  title="Download as zip"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}
-                  onClick={() => onDownloadZip(node.path)}
-                >⬇</button>
+                <>
+                  {onUploadTo && (
+                    <button
+                      title="Upload a file here"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}
+                      onClick={() => onUploadTo(node.path)}
+                    >⬆</button>
+                  )}
+                  {onNewFolder && (
+                    <button
+                      title="New subfolder"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}
+                      onClick={() => onNewFolder(node.path)}
+                    >📁+</button>
+                  )}
+                  <button
+                    title="Download as zip"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}
+                    onClick={() => onDownloadZip(node.path)}
+                  >⬇</button>
+                </>
               ) : (
                 <button
                   title="Download file"
@@ -153,6 +171,8 @@ function FileTreeView({
               onDownloadFile={onDownloadFile}
               onDownloadZip={onDownloadZip}
               onDelete={onDelete}
+              onUploadTo={onUploadTo}
+              onNewFolder={onNewFolder}
               indent={indent + 1}
             />
           )}
@@ -2023,12 +2043,12 @@ export default function Scripts() {
     const filename = path.split('/').pop() ?? path;
     const matchedScript = scripts.find(s => s.filename === filename);
     if (matchedScript) { openTab(matchedScript); return; }
-    const resourceExts = ['.robot', '.py', '.yaml', '.yml', '.resource'];
-    if (resourceExts.some(ext => filename.endsWith(ext))) {
-      const matchedResource = resources.find(r => (r.filename.split('/').pop() ?? r.filename) === filename);
-      if (matchedResource) { openResourceTab(matchedResource.filename); return; }
-    }
-    downloadProjectFile(path);
+    const matchedResource = resources.find(r => (r.filename.split('/').pop() ?? r.filename) === filename);
+    if (matchedResource) { openResourceTab(matchedResource.filename); return; }
+    // Not a linked Script or a resourcesDir-scoped resource — open generically by
+    // its full path. openProjectFileTab itself falls back to a download if the
+    // file turns out to be binary (xlsx, images, etc.).
+    void openProjectFileTab(path);
   }
 
   // ── Project-wide file search ("Find in Files") ────────────────────────────
@@ -2061,7 +2081,7 @@ export default function Scripts() {
     if (matchedScript) { pendingRevealLineRef.current = line; openTab(matchedScript); return; }
     const matchedResource = resources.find(r => (r.filename.split('/').pop() ?? r.filename) === filename);
     if (matchedResource) { openResourceTab(matchedResource.filename, line); return; }
-    downloadProjectFile(path);
+    void openProjectFileTab(path, line);
   }
 
   // ── Import folder (zip) ───────────────────────────────────────────────────
@@ -2089,6 +2109,57 @@ export default function Scripts() {
       loadFileTree();
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'Import failed', { id: toastId });
+    }
+  }
+
+  // ── Upload a single file / create a folder anywhere in Project Files ───────
+  const projectFileUploadRef = useRef<HTMLInputElement>(null);
+  const uploadTargetFolderRef = useRef('');
+
+  function handleUploadToFolder(folderPath: string) {
+    uploadTargetFolderRef.current = folderPath;
+    projectFileUploadRef.current?.click();
+  }
+
+  async function handleProjectFilesSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    const folder = uploadTargetFolderRef.current;
+    const toastId = toast.loading(`Uploading ${files.length} file${files.length !== 1 ? 's' : ''}…`);
+    let ok = 0;
+    const failures: string[] = [];
+    for (const file of files) {
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('folder', folder);
+        await api.post(`/projects/${projectId}/scripts/project-file/upload`, form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        ok++;
+      } catch (err: any) {
+        failures.push(`${file.name}: ${err?.response?.data?.error ?? 'failed'}`);
+      }
+    }
+    if (failures.length === 0) {
+      toast.success(`Uploaded ${ok} file${ok !== 1 ? 's' : ''}`, { id: toastId });
+    } else {
+      toast.error(`Uploaded ${ok}/${files.length} — ${failures.join('; ')}`, { id: toastId, duration: 8000 });
+    }
+    loadFileTree();
+  }
+
+  async function handleCreateFolder(parentPath: string) {
+    const name = window.prompt(parentPath ? `New folder inside "${parentPath}":` : 'New folder name:');
+    if (!name || !name.trim()) return;
+    const fullPath = parentPath ? `${parentPath}/${name.trim()}` : name.trim();
+    try {
+      await api.post(`/projects/${projectId}/scripts/project-file/mkdir`, { path: fullPath });
+      toast.success('Folder created');
+      loadFileTree();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to create folder');
     }
   }
 
@@ -2179,6 +2250,44 @@ export default function Scripts() {
     [openTabs, tabContents, projectId],
   );
 
+  // Opens ANY project file by its full relative path — used by file-tree clicks
+  // and "Find in Files" search results for files that aren't a linked Script or
+  // a resourcesDir-scoped resource (e.g. a project imported with its own custom
+  // folder layout). Falls back to a plain download if the file is binary.
+  const openProjectFileTab = useCallback(
+    async (relPath: string, revealLine?: number) => {
+      if (!projectId) return;
+      if (revealLine) pendingRevealLineRef.current = revealLine;
+      const tabId = `pf:${relPath}`;
+      const filename = relPath.split('/').pop() ?? relPath;
+      const tab: EditorTab = { kind: 'projectFile', id: tabId, filename, relPath };
+      if (!openTabs.find((t) => t.id === tabId)) {
+        setOpenTabs((prev) => [...prev, tab]);
+      }
+      setActiveTabId(tabId);
+      if (!tabContents[tabId]) {
+        setLoadingContent(true);
+        try {
+          const res = await api.get<{ content: string }>(
+            `/projects/${projectId}/scripts/project-file/content`,
+            { params: { path: relPath } },
+          );
+          setTabContents((prev) => ({ ...prev, [tabId]: res.data.content }));
+        } catch (err: any) {
+          setOpenTabs((prev) => prev.filter((t) => t.id !== tabId));
+          if (err?.response?.status === 415) {
+            downloadProjectFile(relPath);
+          } else {
+            toast.error(err?.response?.data?.error ?? 'Failed to open file');
+          }
+        } finally {
+          setLoadingContent(false);
+        }
+      }
+    },
+    [openTabs, tabContents, projectId],
+  );
+
   // ── Close a tab ──────────────────────────────────────────────────────────
 
   const closeTab = useCallback(
@@ -2203,6 +2312,8 @@ export default function Scripts() {
     try {
       if (tab.kind === 'resource') {
         await saveResource.mutateAsync({ filename: tab.filename, content: tabContents[activeTabId] ?? '' });
+      } else if (tab.kind === 'projectFile') {
+        await api.put(`/projects/${projectId}/scripts/project-file/content`, { content: tabContents[activeTabId] ?? '' }, { params: { path: tab.relPath } });
       } else {
         await save.mutateAsync({ scriptId: activeTabId, content: tabContents[activeTabId] ?? '' });
       }
@@ -2211,7 +2322,7 @@ export default function Scripts() {
     } catch {
       toast.error('Save failed');
     }
-  }, [activeTabId, dirtyTabs, tabContents, openTabs, save, saveResource]);
+  }, [activeTabId, dirtyTabs, tabContents, openTabs, save, saveResource, projectId]);
 
   // ── Ctrl+S ───────────────────────────────────────────────────────────────
 
@@ -2759,6 +2870,15 @@ export default function Scripts() {
         onChange={e => { const f = e.target.files?.[0]; if (f) setImportConfirmFile(f); e.target.value = ''; }}
       />
 
+      {/* Hidden file input for uploading individual files into Project Files */}
+      <input
+        ref={projectFileUploadRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleProjectFilesSelected}
+      />
+
       {/* 2-column body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
@@ -3141,6 +3261,20 @@ export default function Scripts() {
                     📦 Import Folder
                   </button>
                 )}
+                {canWrite && (
+                  <button
+                    onClick={() => handleUploadToFolder('')}
+                    title="Upload one or more files to the project root"
+                    style={{ padding: '6px 10px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-mid)', fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}
+                  >⬆ Upload</button>
+                )}
+                {canWrite && (
+                  <button
+                    onClick={() => handleCreateFolder('')}
+                    title="Create a new folder at the project root"
+                    style={{ padding: '5px 8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-mid)', fontSize: 13 }}
+                  >📁+</button>
+                )}
                 <button
                   onClick={() => downloadFolderZip(undefined)}
                   style={{ padding: '5px 8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-mid)', fontSize: 13 }}
@@ -3251,6 +3385,8 @@ export default function Scripts() {
                     onDownloadFile={downloadProjectFile}
                     onDownloadZip={downloadFolderZip}
                     onDelete={canWrite ? deleteProjectEntry : undefined}
+                    onUploadTo={canWrite ? handleUploadToFolder : undefined}
+                    onNewFolder={canWrite ? handleCreateFolder : undefined}
                     indent={0}
                   />
                 )}
@@ -3674,9 +3810,10 @@ export default function Scripts() {
                   }}
                   language={
                     activeScript?.filename?.endsWith('.robot') ? 'robotframework'
-                    : activeTab?.kind === 'resource'
+                    : (activeTab?.kind === 'resource' || activeTab?.kind === 'projectFile')
                       ? (activeTab.filename.endsWith('.py') ? 'python'
                         : activeTab.filename.endsWith('.yaml') || activeTab.filename.endsWith('.yml') ? 'yaml'
+                        : activeTab.filename.endsWith('.json') ? 'json'
                         : activeTab.filename.endsWith('.csv') || activeTab.filename.endsWith('.tsv') ? 'plaintext'
                         : (activeTab.filename.endsWith('.robot') || activeTab.filename.endsWith('.resource')) ? 'robotframework'
                         : 'plaintext')
@@ -3694,7 +3831,7 @@ export default function Scripts() {
                     fontSize: 13, lineHeight: 20,
                     minimap: { enabled: false },
                     scrollBeyondLastLine: false,
-                    wordWrap: 'on', tabSize: activeTab?.kind === 'resource' ? 4 : 2,
+                    wordWrap: 'on', tabSize: (activeTab?.kind === 'resource' || activeTab?.kind === 'projectFile') ? 4 : 2,
                     renderLineHighlight: 'line',
                     scrollbar: { verticalScrollbarSize: 5, horizontalScrollbarSize: 5 },
                     overviewRulerLanes: 0,
@@ -3712,7 +3849,7 @@ export default function Scripts() {
                 color: 'rgba(226,232,240,0.5)', flexShrink: 0,
               }}>
                 <span style={{ color: 'rgba(226,232,240,0.8)' }}>{activeTab?.filename ?? ''}</span>
-                {activeTab?.kind === 'resource' ? (
+                {(activeTab?.kind === 'resource' || activeTab?.kind === 'projectFile') ? (
                   <span style={{ color: 'var(--emerald)', fontWeight: 700 }}>🤖 Robot Framework</span>
                 ) : activeScript?.scriptType === 'ROBOT' ? (
                   <span style={{ color: 'var(--emerald)', fontWeight: 700 }}>🤖 Robot Framework</span>
