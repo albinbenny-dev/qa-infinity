@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { TestCase } from '../../types';
+import type { Script, TestCase } from '../../types';
 import TCTableRow from './TCTableRow';
 import {
   DndContext,
@@ -22,6 +22,7 @@ export interface UseCaseGroupProps {
   tcs: TestCase[];
   selectedIds: Set<string>;
   scriptedTcIds: Set<string>;
+  scriptById?: Map<string, Script>;
   color: string;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -32,6 +33,8 @@ export interface UseCaseGroupProps {
   onDeleteTc: (tc: TestCase) => void;
   onDeleteGroup: (name: string) => void;
   onEditTc: (tc: TestCase) => void;
+  onLinkScript?: (tc: TestCase) => void;
+  onUnlinkScript?: (tc: TestCase) => void;
   onReorder?: (orderedIds: string[]) => void;
 }
 
@@ -44,15 +47,18 @@ interface SortableRowProps {
   hasScript: boolean;
   scriptedTcIds: Set<string>;
   selectedIds: Set<string>;
+  scriptById?: Map<string, Script>;
   expandedTcId: string | null;
   onToggleTc: (id: string) => void;
   onRunIndividual: (tc: TestCase) => void;
   onDeleteTc: (tc: TestCase) => void;
   onEditTc: (tc: TestCase) => void;
+  onLinkScript?: (tc: TestCase) => void;
+  onUnlinkScript?: (tc: TestCase) => void;
   onExpand: (id: string | null) => void;
 }
 
-function SortableRow({ id, tc, selected, hasScript, expandedTcId, onToggleTc, onRunIndividual, onDeleteTc, onEditTc, onExpand }: SortableRowProps) {
+function SortableRow({ id, tc, selected, hasScript, scriptById, expandedTcId, onToggleTc, onRunIndividual, onDeleteTc, onEditTc, onLinkScript, onUnlinkScript, onExpand }: SortableRowProps) {
   const {
     attributes,
     listeners,
@@ -102,10 +108,13 @@ function SortableRow({ id, tc, selected, hasScript, expandedTcId, onToggleTc, on
           tc={tc}
           selected={selected}
           hasScript={hasScript}
+          scriptById={scriptById}
           onToggle={onToggleTc}
           onRunIndividual={onRunIndividual}
           onDelete={onDeleteTc}
           onEdit={onEditTc}
+          onLinkScript={onLinkScript}
+          onUnlinkScript={onUnlinkScript}
           isExpanded={expandedTcId === tc.id}
           onExpand={onExpand}
         />
@@ -114,13 +123,14 @@ function SortableRow({ id, tc, selected, hasScript, expandedTcId, onToggleTc, on
   );
 }
 
-const COLUMNS_HEADER = ['', 'Test Case', 'Type', 'Automation', 'Run History', ''];
+const COLUMNS_HEADER = ['', 'Test Case', 'Type', 'Script Link', 'Automation', 'Run History', ''];
 
 export default function UseCaseGroup({
   name,
   tcs,
   selectedIds,
   scriptedTcIds,
+  scriptById,
   color,
   expanded,
   onToggleExpand,
@@ -131,6 +141,8 @@ export default function UseCaseGroup({
   onDeleteTc,
   onDeleteGroup,
   onEditTc,
+  onLinkScript,
+  onUnlinkScript,
   onReorder,
 }: UseCaseGroupProps) {
   const [expandedTcId, setExpandedTcId] = useState<string | null>(null);
@@ -370,7 +382,7 @@ export default function UseCaseGroup({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '28px 1fr 60px 100px 96px 80px',
+              gridTemplateColumns: '28px 1fr 60px 148px 90px 96px 80px',
               gap: '8px',
               padding: '6px 14px',
               background: 'var(--surface2)',
@@ -407,11 +419,14 @@ export default function UseCaseGroup({
                     hasScript={scriptedTcIds.has(tc.id)}
                     scriptedTcIds={scriptedTcIds}
                     selectedIds={selectedIds}
+                    scriptById={scriptById}
                     expandedTcId={expandedTcId}
                     onToggleTc={onToggleTc}
                     onRunIndividual={onRunIndividual}
                     onDeleteTc={onDeleteTc}
                     onEditTc={onEditTc}
+                    onLinkScript={onLinkScript}
+                    onUnlinkScript={onUnlinkScript}
                     onExpand={handleExpandTc}
                   />
                 ))}
@@ -424,10 +439,13 @@ export default function UseCaseGroup({
                 tc={tc}
                 selected={selectedIds.has(tc.id)}
                 hasScript={scriptedTcIds.has(tc.id)}
+                scriptById={scriptById}
                 onToggle={onToggleTc}
                 onRunIndividual={onRunIndividual}
                 onDelete={onDeleteTc}
                 onEdit={onEditTc}
+                onLinkScript={onLinkScript}
+                onUnlinkScript={onUnlinkScript}
                 isExpanded={expandedTcId === tc.id}
                 onExpand={handleExpandTc}
               />

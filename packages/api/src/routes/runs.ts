@@ -83,8 +83,21 @@ async function resolveScriptPaths(
   projectId: string,
   testCaseIds: string[],
 ): Promise<{ testCaseId: string; scriptPath: string }[]> {
-  const [project, scripts] = await Promise.all([
+  const [project, tcsWithLinks, agentScripts] = await Promise.all([
     prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } }),
+    // Manually linked scripts — TC Library "Link Script" action sets linkedScriptId
+    prisma.testCase.findMany({
+      where: { id: { in: testCaseIds }, linkedScriptId: { not: null } },
+      select: {
+        id: true,
+        sourceRef: true,
+        useCaseTag: true,
+        linkedScript: {
+          select: { filename: true, content: true, useCaseFolder: true },
+        },
+      },
+    }),
+    // Agent-generated scripts — Script.testCaseId set during script generation
     prisma.script.findMany({
       where: { projectId, testCaseId: { in: testCaseIds } },
       select: {
@@ -96,37 +109,72 @@ async function resolveScriptPaths(
       },
     }),
   ]);
-  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
 
+  type ScriptInfo = {
+    testCaseId: string;
+    filename: string;
+    content: string | null;
+    useCaseFolder: string | null;
+    ucTag: string | null;
+    sourceRef: string | null;
+  };
+
+  // Build resolution map; linkedScriptId (manual) takes priority over agent link
+  const scriptMap = new Map<string, ScriptInfo>();
+
+  for (const s of agentScripts) {
+    if (s.testCaseId) {
+      scriptMap.set(s.testCaseId, {
+        testCaseId: s.testCaseId,
+        filename: s.filename,
+        content: s.content,
+        useCaseFolder: s.useCaseFolder,
+        ucTag: s.testCase?.useCaseTag ?? null,
+        sourceRef: s.testCase?.sourceRef ?? null,
+      });
+    }
+  }
+
+  for (const tc of tcsWithLinks) {
+    if (tc.linkedScript) {
+      scriptMap.set(tc.id, {
+        testCaseId: tc.id,
+        filename: tc.linkedScript.filename,
+        content: tc.linkedScript.content,
+        useCaseFolder: tc.linkedScript.useCaseFolder,
+        ucTag: tc.useCaseTag ?? null,
+        sourceRef: tc.sourceRef ?? null,
+      });
+    }
+  }
+
+  const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
   const results: { testCaseId: string; scriptPath: string }[] = [];
 
-  for (const s of scripts.filter((s): s is typeof s & { testCaseId: string } => s.testCaseId !== null)) {
+  for (const s of scriptMap.values()) {
     const slug = project?.slug ?? projectId;
-    const ucFolder = s.useCaseFolder ?? s.testCase?.useCaseTag ?? null;
+    const ucFolder = s.useCaseFolder ?? s.ucTag ?? null;
 
-    // Canonical lookup — same TestCases/{useCase}/ + legacy scripts/ search used everywhere else
+    // Canonical lookup — TestCases/{useCase}/ + legacy scripts/ search
     const found = findScriptPath(slug, s.filename);
     if (found) {
       results.push({ testCaseId: s.testCaseId, scriptPath: found });
       continue;
     }
 
-    const sourceRef = s.testCase?.sourceRef;
-    const sourceRefPath = sourceRef ? `${SCRIPTS_ROOT}/${slug}/${sourceRef}` : null;
+    const sourceRefPath = s.sourceRef ? `${SCRIPTS_ROOT}/${slug}/${s.sourceRef}` : null;
     if (sourceRefPath && fs.existsSync(sourceRefPath)) {
       results.push({ testCaseId: s.testCaseId, scriptPath: sourceRefPath });
       continue;
     }
 
     if (s.content) {
-      // Script is in the DB but not on disk — write it to the canonical TestCases/{useCase}/ path.
       saveScript(slug, s.filename, s.content, ucFolder);
       const written = findScriptPath(slug, s.filename);
       results.push({ testCaseId: s.testCaseId, scriptPath: written ?? `${SCRIPTS_ROOT}/${slug}/TestCases/${ucFolder ?? 'Uncategorised'}/${s.filename}` });
       continue;
     }
 
-    // No content anywhere — runner will fail with a clear file-not-found error.
     results.push({ testCaseId: s.testCaseId, scriptPath: `${SCRIPTS_ROOT}/${slug}/TestCases/${ucFolder ?? 'Uncategorised'}/${s.filename}` });
   }
 

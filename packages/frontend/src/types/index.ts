@@ -87,6 +87,8 @@ export interface TestCase {
   prerequisiteTcId?: string | null;
   /** Minimal info about the prerequisite TC for display */
   prerequisiteTc?: { id: string; tcId: string; title: string } | null;
+  /** Manually linked script ID (TC Library "Link Script" action) */
+  linkedScriptId?: string | null;
   lastRun?: RunResult;
   /** Last ≤5 terminal run results, oldest → newest. Each carries the runId for navigation. */
   recentRunStatuses?: Array<{ status: 'PASSED' | 'FAILED' | 'SKIPPED' | 'CANCELLED'; runId: string }>;

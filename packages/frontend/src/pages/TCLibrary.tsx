@@ -170,7 +170,7 @@ export default function TCLibrary() {
 
   const allTCs: TestCase[] = tcData?.testCases ?? [];
 
-  // Set of TC IDs that have a generated script
+  // Set of TC IDs that have an agent-generated script
   const scriptedTcIds = useMemo(() => {
     const set = new Set<string>();
     for (const s of scripts) {
@@ -178,6 +178,12 @@ export default function TCLibrary() {
     }
     return set;
   }, [scripts]);
+
+  // Map scriptId → Script for Script Link column display
+  const scriptById = useMemo(() => new Map(scripts.map((s) => [s.id, s])), [scripts]);
+
+  // Track which single TC is being linked via per-row "+ Link" button
+  const [linkScriptForTc, setLinkScriptForTc] = useState<TestCase | null>(null);
 
   const filteredTCs = allTCs;
 
@@ -342,7 +348,7 @@ export default function TCLibrary() {
     }
   }
 
-  // ── Bulk link script ─────────────────────────────────────────────────────
+  // ── Bulk link script (from selection bar) ────────────────────────────────
   async function handleLinkScript(scriptId: string) {
     const tcIds = Array.from(selectedIds);
     if (!tcIds.length || !projectId) return;
@@ -352,6 +358,29 @@ export default function TCLibrary() {
       toast.success(`Linked ${tcIds.length} TC${tcIds.length !== 1 ? 's' : ''} to script`);
     } catch {
       toast.error('Link failed');
+    }
+  }
+
+  // ── Per-row link (opens modal scoped to that one TC) ──────────────────────
+  async function handleLinkScriptForRow(scriptId: string) {
+    if (!linkScriptForTc || !projectId) return;
+    try {
+      await bulkLinkScriptMutation.mutateAsync({ tcIds: [linkScriptForTc.id], scriptId });
+      setLinkScriptForTc(null);
+      toast.success(`Script linked to ${linkScriptForTc.tcId}`);
+    } catch {
+      toast.error('Link failed');
+    }
+  }
+
+  // ── Per-row unlink ────────────────────────────────────────────────────────
+  async function handleUnlinkScriptForRow(tc: TestCase) {
+    if (!projectId) return;
+    try {
+      await bulkLinkScriptMutation.mutateAsync({ tcIds: [tc.id], scriptId: null });
+      toast.success(`Script unlinked from ${tc.tcId}`);
+    } catch {
+      toast.error('Unlink failed');
     }
   }
 
@@ -562,6 +591,7 @@ export default function TCLibrary() {
                   tcs={g.tcs}
                   selectedIds={selectedIds}
                   scriptedTcIds={scriptedTcIds}
+                  scriptById={scriptById}
                   color={g.color}
                   expanded={isOpen}
                   onToggleExpand={() => dispatch({ type: 'TOGGLE_GROUP_OPEN', name: g.name })}
@@ -572,6 +602,8 @@ export default function TCLibrary() {
                   onDeleteTc={handleDeleteTc}
                   onDeleteGroup={handleDeleteGroup}
                   onEditTc={setEditingTc}
+                  onLinkScript={canWrite ? (tc) => setLinkScriptForTc(tc) : undefined}
+                  onUnlinkScript={canWrite ? handleUnlinkScriptForRow : undefined}
                   onReorder={(orderedIds) =>
                     reorderTcMutation.mutate({ useCaseTag: g.name === 'Uncategorised' ? null : g.name, orderedIds })
                   }
@@ -598,12 +630,23 @@ export default function TCLibrary() {
         />
       )}
 
+      {/* Bulk-link modal (selection bar) */}
       <LinkScriptModal
         open={linkScriptOpen}
         onClose={() => setLinkScriptOpen(false)}
         scripts={scripts}
         selectedCount={selectedIds.size}
         onLink={handleLinkScript}
+        isPending={bulkLinkScriptMutation.isPending}
+      />
+
+      {/* Per-row link modal */}
+      <LinkScriptModal
+        open={linkScriptForTc !== null}
+        onClose={() => setLinkScriptForTc(null)}
+        scripts={scripts}
+        selectedCount={1}
+        onLink={handleLinkScriptForRow}
         isPending={bulkLinkScriptMutation.isPending}
       />
     </div>

@@ -1,19 +1,30 @@
 import React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useChatSidebarStore } from '../../stores/chatSidebarStore';
-import type { TestCase } from '../../types';
+import type { Script, TestCase } from '../../types';
 
 interface TCTableRowProps {
   tc: TestCase;
   selected: boolean;
   hasScript?: boolean;
+  /** Map of scriptId → Script for resolving linkedScriptId */
+  scriptById?: Map<string, Script>;
   onToggle: (id: string) => void;
   onRunIndividual: (tc: TestCase) => void;
   onDelete: (tc: TestCase) => void;
   onEdit?: (tc: TestCase) => void;
+  /** Open the link-script modal scoped to this single TC */
+  onLinkScript?: (tc: TestCase) => void;
+  /** Remove the linkedScriptId for this TC */
+  onUnlinkScript?: (tc: TestCase) => void;
   isRunning?: boolean;
   isExpanded?: boolean;
   onExpand?: (id: string | null) => void;
+}
+
+function scriptDisplayName(filename: string): string {
+  const base = filename.replace(/\.[^.]+$/, '');
+  return base.length > 18 ? base.slice(0, 18) + '…' : base;
 }
 
 const TYPE_CLASS: Record<string, string> = {
@@ -113,10 +124,13 @@ export default function TCTableRow({
   tc,
   selected,
   hasScript = false,
+  scriptById,
   onToggle,
   onRunIndividual,
   onDelete,
   onEdit,
+  onLinkScript,
+  onUnlinkScript,
   isRunning = false,
   isExpanded = false,
   onExpand,
@@ -124,6 +138,8 @@ export default function TCTableRow({
   const { open: openChat } = useChatSidebarStore();
   const suiteTags = tc.tags.filter((t) => t.startsWith('suite:'));
   const regularTags = tc.tags.filter((t) => !t.startsWith('suite:'));
+  const linkedScript = tc.linkedScriptId ? scriptById?.get(tc.linkedScriptId) : undefined;
+  const canRun = hasScript || !!linkedScript;
 
   function handleRowClick() {
     onExpand?.(isExpanded ? null : tc.id);
@@ -136,7 +152,7 @@ export default function TCTableRow({
         className={`tc-item${selected ? ' selected' : ''}`}
         style={{
           display: 'grid',
-          gridTemplateColumns: '28px 1fr 60px 110px 96px 80px',
+          gridTemplateColumns: '28px 1fr 60px 148px 90px 96px 80px',
           gap: '8px',
           padding: '9px 14px',
           alignItems: 'center',
@@ -235,9 +251,104 @@ export default function TCTableRow({
           </span>
         </div>
 
+        {/* Script Link column */}
+        <div
+          style={{ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {linkedScript ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px', minWidth: 0 }}>
+              <span
+                title={linkedScript.filename}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  background: 'var(--violet-dim, rgba(99,102,241,0.12))',
+                  border: '1px solid rgba(99,102,241,0.3)',
+                  fontSize: '8px',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--violet)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '108px',
+                  cursor: 'default',
+                }}
+              >
+                ⚡ {scriptDisplayName(linkedScript.filename)}
+              </span>
+              {onUnlinkScript && (
+                <button
+                  title="Unlink script"
+                  onClick={() => onUnlinkScript(tc)}
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '3px',
+                    background: 'transparent',
+                    border: '1px solid transparent',
+                    color: 'var(--text-dim)',
+                    fontSize: '9px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    padding: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = 'var(--fail)';
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(220,38,38,0.3)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ) : (
+            onLinkScript ? (
+              <button
+                title="Link a script to this test case"
+                onClick={() => onLinkScript(tc)}
+                style={{
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  background: 'transparent',
+                  border: '1px dashed var(--border)',
+                  color: 'var(--text-dim)',
+                  fontSize: '8px',
+                  fontFamily: 'var(--font-mono)',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--violet)';
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--violet)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)';
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+                }}
+              >
+                + Link
+              </button>
+            ) : (
+              <span style={{ fontSize: '9px', color: 'var(--text-dim)' }}>—</span>
+            )
+          )}
+        </div>
+
         {/* Automation status column */}
         <div>
-          {hasScript ? (
+          {canRun ? (
             <span
               className="badge badge-pass"
               style={{ fontSize: '8px', display: 'flex', alignItems: 'center', gap: '3px', width: 'fit-content' }}
@@ -261,8 +372,8 @@ export default function TCTableRow({
           style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* ▶ only shown when a Playwright script exists */}
-          {hasScript && (
+          {/* ▶ shown when script is linked OR agent-generated */}
+          {canRun && (
             <button
               title="Run this test"
               onClick={() => onRunIndividual(tc)}
@@ -285,10 +396,10 @@ export default function TCTableRow({
             </button>
           )}
           <button
-            title={hasScript ? 'Fix script via AI chat' : 'Generate script via AI chat'}
+            title={canRun ? 'Fix script via AI chat' : 'Generate script via AI chat'}
             onClick={(e) => {
               e.stopPropagation();
-              const prompt = hasScript
+              const prompt = canRun
                 ? `Fix the script for ${tc.tcId} — ${tc.title}`
                 : `Generate a script for ${tc.tcId} — ${tc.title}`;
               openChat({ prompt, context: { tcId: tc.tcId, tcTitle: tc.title, page: 'tc-library' } });

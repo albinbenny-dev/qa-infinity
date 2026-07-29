@@ -89,6 +89,8 @@ const GenerateInputSchema = z.object({
 const SaveTestCasesSchema = z.object({
   testCases: z.array(
     z.object({
+      /** Preserve TC ID from import (e.g. AIR-TC-001). If omitted, one is auto-generated. */
+      tcId: z.string().optional(),
       title: z.string().min(1),
       description: z.string().optional().default(''),
       steps: z.array(z.string()).min(1),
@@ -797,12 +799,13 @@ router.post('/bulk-link-script', async (req: Request, res: Response, next: NextF
 router.get('/seed-template', (_req: Request, res: Response, next: NextFunction) => {
   try {
     const headers = [
-      'Use Case', 'Title', 'Objective', 'Priority', 'Test Type',
+      'TC ID', 'Use Case', 'Title', 'Objective', 'Priority', 'Test Type',
       'Pre-conditions / Dependencies', 'Test Steps', 'Test Data',
       'Expected Result', 'Actual Result', 'Notes',
     ];
     const samples = [
       {
+        'TC ID': '',
         'Use Case': 'User Login',
         'Title': 'Verify login with valid credentials',
         'Objective': 'Ensure a registered user can log in successfully',
@@ -816,6 +819,7 @@ router.get('/seed-template', (_req: Request, res: Response, next: NextFunction) 
         'Notes': 'Regression – run on every release',
       },
       {
+        'TC ID': '',
         'Use Case': 'User Login',
         'Title': 'Verify login with invalid password',
         'Objective': 'Ensure an error is shown when wrong credentials are used',
@@ -831,8 +835,8 @@ router.get('/seed-template', (_req: Request, res: Response, next: NextFunction) 
     ];
 
     const ws = xlsx.utils.json_to_sheet(samples, { header: headers });
-    // Set column widths
-    ws['!cols'] = [20, 40, 40, 12, 12, 40, 60, 40, 50, 20, 30].map((w) => ({ wch: w }));
+    // Set column widths (TC ID column added at front)
+    ws['!cols'] = [16, 20, 40, 40, 12, 12, 40, 60, 40, 50, 20, 30].map((w) => ({ wch: w }));
     const wb = xlsx.utils.book_new();
     xlsx.utils.book_append_sheet(wb, ws, 'Test Cases');
     const buf = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
@@ -858,6 +862,7 @@ router.post('/parse-seed', seedUpload.single('file'), async (req: Request, res: 
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(ws);
 
+    const tcIdKeys        = ['tc id', 'tcid', 'tc_id', 'test case id', 'id'];
     const titleKeys       = ['title', 'name', 'test case', 'test case title', 'tc title', 'testcase', 'tc name'];
     const useCaseKeys     = ['use case', 'usecase', 'use case tag', 'module', 'feature'];
     const objectiveKeys   = ['objective', 'description', 'test objective', 'purpose'];
@@ -910,7 +915,9 @@ router.post('/parse-seed', seedUpload.single('file'), async (req: Request, res: 
         const priorityRaw = findVal(row, priorityKeys);
         const typeRaw = findVal(row, typeKeys);
 
+        const tcIdRaw = findVal(row, tcIdKeys);
         return {
+          tcId: tcIdRaw || undefined,
           title,
           steps: steps.length ? steps : (stepsRaw ? [stepsRaw] : []),
           expectedResult: findVal(row, expectedKeys),
@@ -1059,26 +1066,44 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return m ? Math.max(max, parseInt(m[1], 10)) : max;
     }, 0);
 
+    // Auto-increment counter only for TCs without a provided tcId
+    let autoIdx = 0;
     const created = await prisma.$transaction(
-      parsed.data.testCases.map((tc, i) =>
-        prisma.testCase.create({
-          data: {
-            projectId,
-            tcId: `TC-${prefix}-${String(maxNum + i + 1).padStart(3, '0')}`,
-            title: tc.title,
-            description: tc.description,
-            steps: JSON.stringify(tc.steps),
-            expectedResult: tc.expectedResult,
-            type: tc.type,
-            tags: JSON.stringify(tc.tags),
-            useCaseTag: tc.useCaseTag,
-            priority: tc.priority,
-            status: tc.status,
-            sourceRef: tc.sourceRef,
-            generationHints: tc.generationHints ?? null,
+      parsed.data.testCases.map((tc) => {
+        const resolvedTcId = tc.tcId?.trim() || `TC-${prefix}-${String(maxNum + ++autoIdx).padStart(3, '0')}`;
+        const tcData = {
+          projectId,
+          tcId: resolvedTcId,
+          title: tc.title,
+          description: tc.description,
+          steps: JSON.stringify(tc.steps),
+          expectedResult: tc.expectedResult,
+          type: tc.type,
+          tags: JSON.stringify(tc.tags),
+          useCaseTag: tc.useCaseTag,
+          priority: tc.priority,
+          status: tc.status,
+          sourceRef: tc.sourceRef,
+          generationHints: tc.generationHints ?? null,
+        };
+        return prisma.testCase.upsert({
+          where: { projectId_tcId: { projectId, tcId: resolvedTcId } },
+          create: tcData,
+          update: {
+            title: tcData.title,
+            description: tcData.description,
+            steps: tcData.steps,
+            expectedResult: tcData.expectedResult,
+            type: tcData.type,
+            tags: tcData.tags,
+            useCaseTag: tcData.useCaseTag,
+            priority: tcData.priority,
+            status: tcData.status,
+            sourceRef: tcData.sourceRef,
+            generationHints: tcData.generationHints,
           },
-        }),
-      ),
+        });
+      }),
     );
 
     // Auto-save pre-generated scripts from agent traces (happy-path TC only)

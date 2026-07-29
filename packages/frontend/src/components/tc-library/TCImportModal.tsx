@@ -5,6 +5,7 @@ import { useParseSeedFileUpload, useSaveTestCases } from '../../hooks/useTestCas
 import { api } from '../../lib/api';
 
 interface SeedTC {
+  tcId?: string;
   title: string;
   steps: string[];
   expectedResult: string;
@@ -183,7 +184,7 @@ export default function TCImportModal({ open, onClose, projectId }: TCImportModa
                     {file ? file.name : 'Drop Excel file here or click to browse'}
                   </div>
                   <div style={{ fontSize: '10px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                    .xlsx — Use Case, Title, Steps, Expected Result, Priority, Type
+                    .xlsx — TC ID (optional), Use Case, Title, Steps, Expected Result, Priority, Type
                   </div>
                 </>
               )}
@@ -239,15 +240,19 @@ export default function TCImportModal({ open, onClose, projectId }: TCImportModa
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '44%' }}>Title</th>
-                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '24%' }}>UseCase</th>
-                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '16%' }}>Priority</th>
-                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '16%' }}>Type</th>
+                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '16%' }}>TC ID</th>
+                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '36%' }}>Title</th>
+                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '20%' }}>UseCase</th>
+                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '14%' }}>Priority</th>
+                      <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.06em', width: '14%' }}>Type</th>
                     </tr>
                   </thead>
                   <tbody>
                     {parsed.map((tc, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td style={{ padding: '5px 8px', color: tc.tcId ? 'var(--cyan)' : 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                          {tc.tcId || <span style={{ opacity: 0.4 }}>auto</span>}
+                        </td>
                         <td style={{ padding: '5px 8px', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 0 }}>
                           {tc.title}
                         </td>

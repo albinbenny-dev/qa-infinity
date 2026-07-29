@@ -17,6 +17,7 @@ interface GenerateInput {
 }
 
 interface SeedTCPayload {
+  tcId?: string;
   title: string;
   steps: string[];
   expectedResult: string;
