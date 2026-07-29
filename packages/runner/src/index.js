@@ -650,10 +650,12 @@ const server = http.createServer(async (req, res) => {
         '--report', 'NONE',
         '--log', 'log.html',
         '--listener', `${listenerPath}:${effectiveOutputDir}`,
-        '--variable', `BASE_URL:${baseUrl || ''}`,
         '--variable', `OUTPUTDIR:${effectiveOutputDir}`,
         '--variable', `HEADLESS:${hostBrowser ? 'False' : 'True'}`,
       ];
+      // Only override BASE_URL if a value was supplied — if empty, let the script's
+      // own *** Variables *** default take effect (e.g. imported projects with no env config).
+      if (baseUrl) robotArgs.push('--variable', `BASE_URL:${baseUrl}`);
       if (!scriptDeclares('TC_USERNAME') && username) robotArgs.push('--variable', `TC_USERNAME:${username}`);
       if (!scriptDeclares('TC_PASSWORD') && password) robotArgs.push('--variable', `TC_PASSWORD:${password}`);
 
