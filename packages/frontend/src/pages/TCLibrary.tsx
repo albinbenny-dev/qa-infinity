@@ -46,6 +46,7 @@ type LibAction =
   | { type: 'TOGGLE_TC'; id: string }
   | { type: 'TOGGLE_GROUP'; ids: string[] }
   | { type: 'CLEAR_SELECTION' }
+  | { type: 'SELECT_ALL'; ids: string[] }
   | { type: 'TOGGLE_GROUP_OPEN'; name: string }
   | { type: 'SET_ALL_OPEN'; values: Record<string, boolean> }
   | { type: 'SET_SEARCH'; value: string }
@@ -68,6 +69,8 @@ function libReducer(state: LibState, action: LibAction): LibState {
     }
     case 'CLEAR_SELECTION':
       return { ...state, selectedIds: new Set() };
+    case 'SELECT_ALL':
+      return { ...state, selectedIds: new Set(action.ids) };
     case 'DESELECT_MOVED': {
       const next = new Set(state.selectedIds);
       action.ids.forEach((id) => next.delete(id));
@@ -499,11 +502,23 @@ export default function TCLibrary() {
                 style={{ width: '200px', padding: '6px 10px' }}
               />
 
-              {/* Right: group info + expand/collapse */}
+              {/* Right: group info + expand/collapse + select all */}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
                   {totalGroups} groups · {totalVisible} TCs
                 </span>
+                <button
+                  className="tb-btn tb-btn-ghost"
+                  style={{ fontSize: '10px', padding: '3px 8px' }}
+                  onClick={() => {
+                    const allIds = filteredTCs.map((tc) => tc.id);
+                    const allSelected = allIds.every((id) => selectedIds.has(id));
+                    if (allSelected) dispatch({ type: 'CLEAR_SELECTION' });
+                    else dispatch({ type: 'SELECT_ALL', ids: allIds });
+                  }}
+                >
+                  {filteredTCs.length > 0 && filteredTCs.every((tc) => selectedIds.has(tc.id)) ? 'Deselect All' : 'Select All'}
+                </button>
                 <button className="tb-btn tb-btn-ghost" style={{ fontSize: '10px', padding: '3px 8px' }} onClick={handleExpandAll}>
                   Expand All
                 </button>
