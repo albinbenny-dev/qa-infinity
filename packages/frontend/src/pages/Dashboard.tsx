@@ -133,23 +133,23 @@ function RecentRunCard({
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 12,
-        padding: '10px 14px',
+        gap: 10,
+        padding: '7px 12px',
         borderBottom: '1px solid var(--border)',
       }}
     >
       {/* Status chip */}
       <div
         style={{
-          width: 32,
-          height: 32,
-          borderRadius: 8,
+          width: 26,
+          height: 26,
+          borderRadius: 6,
           background: `${RUN_STATUS_BG[run.status] ?? 'var(--text-dim)'}22`,
           border: `1px solid ${RUN_STATUS_BG[run.status] ?? 'var(--text-dim)'}44`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 14,
+          fontSize: 12,
           flexShrink: 0,
         }}
       >
@@ -160,7 +160,7 @@ function RecentRunCard({
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 600,
             color: 'var(--text)',
             whiteSpace: 'nowrap',
@@ -170,44 +170,23 @@ function RecentRunCard({
         >
           {run.name}
         </div>
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--text-dim)',
-            fontFamily: 'var(--font-mono)',
-            marginTop: 2,
-          }}
-        >
-          {new Date(run.createdAt).toLocaleString([], {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
-          {duration ? ` · ${duration}s` : ''}
-        </div>
-        {/* Pass / fail counts */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--pass)', fontWeight: 600 }}>✓ {passed}</span>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--fail)', fontWeight: 600 }}>✗ {failed}</span>
+        <div style={{ display: 'flex', gap: 8, marginTop: 2, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+            {new Date(run.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            {duration ? ` · ${duration}s` : ''}
+          </span>
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--pass)' }}>✓ {passed}</span>
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--fail)' }}>✗ {failed}</span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{total} total</span>
         </div>
         {/* Progress bar */}
-        <div
-          style={{
-            marginTop: 5,
-            height: 3,
-            background: 'var(--surface2)',
-            borderRadius: 2,
-            overflow: 'hidden',
-          }}
-        >
+        <div style={{ marginTop: 4, height: 5, background: 'var(--surface2)', borderRadius: 3, overflow: 'hidden' }}>
           <div
             style={{
               height: '100%',
               width: `${passRate}%`,
               background: 'linear-gradient(90deg, var(--pass), var(--cyan))',
-              borderRadius: 2,
+              borderRadius: 3,
               transition: 'width 0.3s ease',
             }}
           />
@@ -219,7 +198,7 @@ function RecentRunCard({
         style={{
           fontSize: 11,
           fontWeight: 700,
-          padding: '3px 9px',
+          padding: '2px 8px',
           borderRadius: 100,
           background:
             passRate >= 90
@@ -380,9 +359,6 @@ function SuiteHistoryCard({
 
                 {isExpanded && (
                   <div style={{ background: 'rgba(0,0,0,0.12)' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-dim)', padding: '8px 16px 4px 36px' }}>
-                      {suiteRuns.length} total runs · {overallRate}% overall success rate · Last run: {fmtRunDate(suiteRuns[0].createdAt)}
-                    </div>
                     {suiteRuns.slice(0, 7).map((run) => {
                       const pass = run.results.filter((r) => r.status === 'PASSED').length;
                       const fail = run.results.filter((r) => r.status === 'FAILED').length;
@@ -509,7 +485,7 @@ export default function Dashboard() {
             </div>
 
             {/* ── Row 1: Suite history + Recent Runs ───────────────────── */}
-            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
               {/* Col 1 — Suite / scheduled run history */}
               <SuiteHistoryCard
                 projectId={projectId}

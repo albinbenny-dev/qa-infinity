@@ -167,10 +167,6 @@ export default function RunDetail() {
                 <button onClick={() => setViewMode('script')} style={{ padding: '5px 14px', fontSize: 12, border: 'none', cursor: 'pointer', background: viewMode === 'script' ? 'var(--cyan)' : 'transparent', color: viewMode === 'script' ? '#fff' : 'var(--text)' }}>By Script</button>
                 <button onClick={() => setViewMode('tc')} style={{ padding: '5px 14px', fontSize: 12, border: 'none', cursor: 'pointer', background: viewMode === 'tc' ? 'var(--cyan)' : 'transparent', color: viewMode === 'tc' ? '#fff' : 'var(--text)' }}>By Test Case</button>
               </div>
-              <select value={suiteFilter} onChange={(e) => setSuiteFilter(e.target.value)} style={inputStyle}>
-                <option value="">All Suites</option>
-                {uniqueSuites.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}>
                 <option value="">All Status</option>
                 {['PASSED', 'FAILED', 'SKIPPED', 'RUNNING', 'CANCELLED'].map((s) => <option key={s} value={s}>{s}</option>)}
