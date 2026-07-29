@@ -1802,8 +1802,8 @@ export default function Scripts() {
     prevJobPhasesRef.current = Object.fromEntries(queueJobs.map((j) => [j.id, j.phase]));
   }, [queueJobs]);
 
-  // "Generate with Heal" toggle — defaults OFF every page load (no persistence)
-  const [withHeal, setWithHeal] = useState(false);
+  // Bulk quick-generate always runs without heal; per-generation modals have their own toggle.
+  const withHeal = false;
 
   // ── Generate context modal state ─────────────────────────────────────────
 
@@ -2855,44 +2855,16 @@ export default function Scripts() {
         ]}
         actions={
           <>
-            <button
-              style={{ display: isRunner ? 'none' : undefined }}
-              onClick={() => setWithHeal((v) => !v)}
-              title={
-                withHeal
-                  ? 'Each generated script will be live-tested and auto-healed (up to 2 attempts) before finalizing'
-                  : 'Generate only — no live verification or healing'
-              }
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
-                border: withHeal ? '1px solid rgba(139,92,246,0.5)' : '1px solid var(--border)',
-                background: withHeal
-                  ? 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(34,211,238,0.15))'
-                  : 'transparent',
-                color: withHeal ? 'var(--violet)' : 'var(--text-mid)',
-                fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
-                transition: 'all 0.15s',
-              }}
-            >
-              <span
-                style={{
-                  width: 22, height: 12, borderRadius: 8, position: 'relative',
-                  background: withHeal ? 'var(--violet)' : 'var(--surface3)',
-                  transition: 'background 0.15s',
-                }}
+            {canWrite && (
+              <TbBtn
+                variant="ghost"
+                onClick={handleScanTags}
+                disabled={scanningTags}
+                title="Scan every script in the project for [Tags] matching a TC ID and link them"
               >
-                <span
-                  style={{
-                    position: 'absolute', top: 1, left: withHeal ? 11 : 1,
-                    width: 10, height: 10, borderRadius: '50%',
-                    background: '#fff',
-                    transition: 'left 0.15s',
-                  }}
-                />
-              </span>
-              🩹 Generate with Heal
-            </button>
+                {scanningTags ? '⏳ Scanning…' : '⟳ Sync Tags'}
+              </TbBtn>
+            )}
             {canWrite && (
               <TbBtn variant="ghost" onClick={() => handleOpenImport()}>
                 ⬆ Import Script
@@ -2907,20 +2879,6 @@ export default function Scripts() {
                 🎥 Record
               </TbBtn>
             )}
-            <TbBtn
-              variant="ghost"
-              onClick={() => {
-                const a = document.createElement('a');
-                a.href = '/script-gen-guide.html';
-                a.download = 'SCRIPT_GEN_GUIDE.html';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-              }}
-              title="Download the script generation guide (HTML)"
-            >
-              📋 Script Guide
-            </TbBtn>
             <TbBtn variant="primary" onClick={handleSendToExecution}>
               → Send to Execution
             </TbBtn>
