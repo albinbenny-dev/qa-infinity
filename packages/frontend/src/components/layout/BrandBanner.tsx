@@ -42,8 +42,6 @@ export default function BrandBanner() {
                   {getInitials(activeProject.name)}
                 </span>
                 <span className="bb-proj">{activeProject.name}</span>
-                <span className="bb-sep">·</span>
-                <span className="bb-env">{activeProject.baseUrl ?? 'localhost'}</span>
                 <span className="bb-proj-chevron">▾</span>
               </button>
             </DropdownMenu.Trigger>

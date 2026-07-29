@@ -462,6 +462,8 @@
   }
   .bb-center {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -469,19 +471,15 @@
     font-size: 13px;
     font-weight: 500;
   }
-  .bb-proj { font-weight: 600; color: #fff; }
-  .bb-sep  { color: rgba(255,255,255,0.4); }
-  .bb-env {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: rgba(255,255,255,0.7);
-    letter-spacing: 0.5px;
-    padding: 4px 10px;
-    background: rgba(0,0,0,0.18);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 100px;
+  .bb-proj {
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
   }
-  .bb-right { display: flex; align-items: center; gap: 14px; }
+  .bb-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
   .bb-logo { height: 28px; width: auto; opacity: 0.95; flex-shrink: 0; }
 
   /* ── Project switcher (brand banner) ── */
