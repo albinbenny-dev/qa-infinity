@@ -25,6 +25,7 @@ import {
 import { useScriptJobs } from '../hooks/useScriptJobs';
 import { useExecutionStore } from '../stores/executionStore';
 import { useChatSidebarStore } from '../stores/chatSidebarStore';
+import { useAppConfig } from '../context/AppConfig';
 import { api } from '../lib/api';
 import { getToken } from '../lib/auth';
 import type { Script, TestCase, ScriptJob, ScriptJobPhase } from '../types';
@@ -1662,6 +1663,8 @@ export default function Scripts() {
   const qc = useQueryClient();
   const { canWrite } = useRBAC();
   const { open: openChat } = useChatSidebarStore();
+  const { mode: appMode } = useAppConfig();
+  const isRunner = appMode === 'runner';
 
   const { data: project } = useProject(slug);
   const projectId = project?.id;
@@ -2818,11 +2821,12 @@ export default function Scripts() {
         breadcrumbs={[
           { label: 'Projects', href: '/projects' },
           { label: project?.name ?? slug ?? '', href: `/projects/${slug}/dashboard` },
-          { label: '⌨ Script Agent' },
+          { label: isRunner ? '⌨ Scripts' : '⌨ Script Agent' },
         ]}
         actions={
           <>
             <button
+              style={{ display: isRunner ? 'none' : undefined }}
               onClick={() => setWithHeal((v) => !v)}
               title={
                 withHeal
@@ -2864,7 +2868,7 @@ export default function Scripts() {
                 ⬆ Import Script
               </TbBtn>
             )}
-            {canWrite && (
+            {canWrite && !isRunner && (
               <TbBtn
                 variant="ghost"
                 onClick={() => { setRecordedScript(''); setRecordingActive(false); setShowRecordModal(true); }}
@@ -3241,7 +3245,7 @@ export default function Scripts() {
                       }}>
                         🔒 View Only — script generation requires QA Engineer role
                       </div>
-                    ) : tcSelected.size > 0 ? (
+                    ) : tcSelected.size > 0 && !isRunner ? (
                       <button
                         onClick={handleQueueGenerate}
                         disabled={isQueuing}
