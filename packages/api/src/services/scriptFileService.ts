@@ -309,10 +309,21 @@ export async function importFromZip(slug: string, zipBuffer: Buffer): Promise<{ 
       relPath = 'TestCases/' + relPath.replace(/^tests\//i, '');
     }
 
-    const content = await file.async('string');
     const absPath = path.join(root, relPath);
     ensureDir(path.dirname(absPath));
-    fs.writeFileSync(absPath, content, 'utf-8');
+
+    // Binary formats (xlsx, images, pdf, ...) must round-trip as raw bytes —
+    // extracting them as a 'string' forces a lossy UTF-8 decode/re-encode that
+    // corrupts the file (e.g. an .xlsx's internal zip structure breaks with
+    // "Bad offset for central directory" the next time something opens it).
+    let content = '';
+    if (BINARY_EXTS.has(ext)) {
+      const buffer = await file.async('nodebuffer');
+      fs.writeFileSync(absPath, buffer);
+    } else {
+      content = await file.async('string');
+      fs.writeFileSync(absPath, content, 'utf-8');
+    }
 
     const isTestScript = /\.(robot|spec\.ts|spec\.js)$/.test(filename) && /^TestCases\//i.test(relPath);
     results.push({ relPath, content, isTestScript });
