@@ -136,6 +136,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Kolkata
+    shm_size: '2gb'    # Chrome/Selenium needs real shared memory; Docker's 64MB default crashes it
     depends_on:
       qa-api:
         condition: service_healthy

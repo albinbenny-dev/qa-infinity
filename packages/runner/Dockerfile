@@ -16,6 +16,16 @@ RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_a
   && DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/chrome.deb \
   && rm -f /tmp/chrome.deb
 
+# This container runs as root, and Chrome refuses to start as root without
+# --no-sandbox (crashes instantly with "session not created: Chrome instance
+# exited" — the exact error ChromeDriver gives no further detail on). Test
+# scripts calling `Open Browser` don't pass that flag themselves, so intercept
+# it transparently by wrapping the real binary every chrome alias resolves to.
+RUN real=$(readlink -f /usr/bin/google-chrome) \
+  && mv "$real" "${real}-orig" \
+  && printf '#!/bin/sh\nexec "%s-orig" --no-sandbox --disable-dev-shm-usage --disable-gpu "$@"\n' "$real" > "$real" \
+  && chmod +x "$real"
+
 # Install Robot Framework + RF Browser into a venv so it never conflicts with system pip
 RUN python3 -m venv /opt/rfbrowser \
   && /opt/rfbrowser/bin/pip install --upgrade pip \

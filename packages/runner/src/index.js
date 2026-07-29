@@ -572,8 +572,9 @@ const server = http.createServer(async (req, res) => {
       const relToScripts = path.relative(SCRIPTS_DIR, scriptPath);
       const projectSlug = relToScripts.split(path.sep)[0];
       const projectRoot = path.join(SCRIPTS_DIR, projectSlug);
-      const pageObjectsDir = path.join(projectRoot, 'Resource', 'PageObjects');
-      const hasHierarchy = fs.existsSync(path.join(projectRoot, 'Resource'));
+      const resourcesDirName = fs.existsSync(path.join(projectRoot, 'Resources')) ? 'Resources' : 'Resource';
+      const pageObjectsDir = path.join(projectRoot, resourcesDirName, 'PageObjects');
+      const hasHierarchy = fs.existsSync(path.join(projectRoot, resourcesDirName));
 
       if (!hasHierarchy) {
         // Flat layout: copy resource files directly into the script dir so RF can resolve
@@ -765,8 +766,34 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // For hierarchy projects, create an isolated run directory of symlinks into
+      // projectRoot. This lets Python open() follow symlinks to find files like
+      // Resources/TestData/*.xlsx (which need cwd=projectRoot), while any new
+      // directories the script creates (e.g. TestCases/) land in the temp dir and
+      // are cleaned up after the run — not polluting the actual project folder.
+      let runDir = null;
+      let spawnCwd = hasHierarchy ? projectRoot : scriptDir;
+      if (hasHierarchy) {
+        try {
+          runDir = fs.mkdtempSync('/tmp/robot-run-');
+          for (const entry of fs.readdirSync(projectRoot)) {
+            fs.symlinkSync(path.join(projectRoot, entry), path.join(runDir, entry));
+          }
+          spawnCwd = runDir;
+        } catch {
+          runDir = null; // fall back to projectRoot on symlink failure
+        }
+      }
+
+      const cleanupRunDir = () => {
+        if (runDir) {
+          try { fs.rmSync(runDir, { recursive: true, force: true }); } catch { /* non-fatal */ }
+          runDir = null;
+        }
+      };
+
       proc = spawn(spawnCmd, spawnArgs, {
-        cwd: scriptDir,
+        cwd: spawnCwd,
         env: robotEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -791,6 +818,7 @@ const server = http.createServer(async (req, res) => {
         }
         clearTimeout(killTimer);
         clearInterval(heartbeatTimer);
+        cleanupRunDir();
       });
 
       // Accumulate last 2 KB of output as a fallback error snippet
@@ -810,6 +838,7 @@ const server = http.createServer(async (req, res) => {
         procDone = true;
         clearTimeout(killTimer);
         clearInterval(heartbeatTimer);
+        cleanupRunDir();
         const reportData = parseRobotXmlReport(xmlOutputPath);
         // Build a compact error snippet from the last N lines that contain 'FAIL', 'Error', or 'Exception'
         const errorLines = outputLines.filter(l => /FAIL|Error|Exception|Critical/i.test(l)).slice(-5).join(' | ');

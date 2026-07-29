@@ -160,7 +160,7 @@ if ($Mode -eq 'sync') {
     # .env and scripts/ are gitignored - untouched by pull.
     # Docker named volumes (qa-pgdata etc.) are completely unaffected.
     Log-Step "Pulling + building on remote for: $Services"
-    ssh $SSH "cd $RemoteDir && git pull && sudo $RemoteComposeCmd -p $ProjectName build --parallel $Services && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
+    ssh $SSH "cd $RemoteDir && git checkout -- . && git pull && sudo $RemoteComposeCmd -p $ProjectName build --parallel $Services && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
     if ($LASTEXITCODE -ne 0) { Log-Error "Remote pull/build/restart failed" }
     Log-Ok "Build and restart complete"
 
