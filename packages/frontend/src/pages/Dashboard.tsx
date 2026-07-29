@@ -14,7 +14,7 @@ import { useCreateRun } from '../hooks/useRuns';
 import { useProject } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import RunHistoryTable from '../components/reports/RunHistoryTable';
-import type { AgentStatus, TopSuiteEntry } from '../types';
+import type { TopSuiteEntry } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -87,149 +87,6 @@ function StatTile({
         }}
       >
         {label}
-      </div>
-    </div>
-  );
-}
-
-// ── Agent status card ──────────────────────────────────────────────────────
-
-const AGENT_ICON: Record<string, string> = {
-  writer: '✍️',
-  scripts: '📝',
-  execution: '▶️',
-  healing: '🔧',
-  reports: '📊',
-};
-
-function AgentStatusCard({
-  statuses,
-  projectTokens,
-}: {
-  statuses: AgentStatus[];
-  projectTokens: number;
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div
-        style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-card)',
-        }}
-      >
-        <div
-          style={{
-            height: 3,
-            background: 'var(--cool-accent)',
-            borderRadius: '12px 12px 0 0',
-          }}
-        />
-        <div style={{ padding: '14px 16px 6px' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>
-            Agent Status
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {statuses.map((a) => (
-              <div
-                key={a.name}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '6px 8px',
-                  background: 'var(--surface2)',
-                  borderRadius: 7,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      flexShrink: 0,
-                      background:
-                        a.status === 'ok'
-                          ? 'var(--pass)'
-                          : a.status === 'busy'
-                          ? 'var(--amber)'
-                          : 'var(--text-dim)',
-                      boxShadow:
-                        a.status === 'ok'
-                          ? '0 0 6px var(--pass)'
-                          : a.status === 'busy'
-                          ? '0 0 6px var(--amber)'
-                          : 'none',
-                    }}
-                  />
-                  <span style={{ fontSize: 12, color: 'var(--text)' }}>
-                    {AGENT_ICON[a.name]} {a.label}
-                  </span>
-                </div>
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color:
-                      a.status === 'ok'
-                        ? 'var(--pass)'
-                        : a.status === 'busy'
-                        ? 'var(--amber)'
-                        : 'var(--text-dim)',
-                    background:
-                      a.status === 'ok'
-                        ? 'rgba(42,157,143,0.12)'
-                        : a.status === 'busy'
-                        ? 'rgba(251,191,36,0.12)'
-                        : 'var(--surface)',
-                    padding: '2px 8px',
-                    borderRadius: 100,
-                  }}
-                >
-                  {a.status === 'ok' ? 'Ready' : a.status === 'busy' ? 'Busy' : 'Idle'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        {/* Detail strip */}
-        <div style={{ padding: '8px 16px 12px' }}>
-          {statuses
-            .filter((a) => a.status === 'busy')
-            .map((a) => (
-              <div key={a.name} style={{ fontSize: 11, color: 'var(--amber)', marginTop: 4 }}>
-                ⚡ {a.label}: {a.detail}
-              </div>
-            ))}
-        </div>
-      </div>
-
-      {/* Project token usage tile */}
-      <div
-        style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-card)',
-        }}
-      >
-        <div style={{ height: 3, background: 'linear-gradient(90deg, #F47B20, var(--amber))', borderRadius: '12px 12px 0 0' }} />
-        <div style={{ padding: '12px 16px' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', marginBottom: 6 }}>
-            Project Tokens Used
-          </div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: '#F47B20', fontFamily: 'var(--font-mono)', lineHeight: 1 }}>
-            {fmtK(projectTokens)}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            all-time across all agents
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -717,9 +574,7 @@ export default function Dashboard() {
     date: p.date.slice(5), // MM-DD
   }));
   const recentRuns = data?.recentRuns ?? [];
-  const agentStatuses = data?.agentStatuses ?? [];
   const topSuites = data?.topSuites ?? [];
-  const projectTokens = data?.projectTokens ?? 0;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -787,11 +642,11 @@ export default function Dashboard() {
               />
             </div>
 
-            {/* ── 3-column dash grid ────────────────────────────────────── */}
+            {/* ── 2-column dash grid ────────────────────────────────────── */}
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr 300px',
+                gridTemplateColumns: '1fr 1fr',
                 gap: 16,
                 alignItems: 'start',
               }}
@@ -891,8 +746,6 @@ export default function Dashboard() {
                 )}
               </div>
 
-              {/* Col 3 — Agent Status + Project Tokens */}
-              <AgentStatusCard statuses={agentStatuses} projectTokens={projectTokens} />
             </div>
 
             {/* ── Top 5 Suites ──────────────────────────────────────────── */}
