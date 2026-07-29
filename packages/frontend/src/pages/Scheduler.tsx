@@ -466,6 +466,18 @@ function TcLibrarySelector({ testCases, selected, onChange, maxHeight = 340, scr
           Test Cases
         </label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 10, color: 'var(--text-dim)' }}>
+          <button type="button"
+            onClick={() => setAutoFilter(prev => prev === 'automated' ? '' : 'automated')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              padding: '3px 9px', borderRadius: 5,
+              background: autoFilter === 'automated' ? 'var(--cyan-dim)' : 'var(--bg)',
+              border: `1px solid ${autoFilter === 'automated' ? 'var(--cyan)' : 'var(--border)'}`,
+              color: autoFilter === 'automated' ? 'var(--cyan)' : 'var(--text-mid)',
+            }}>
+            📝 Scripts only
+          </button>
           <span style={{ fontWeight: 600 }}>{selected.length} / {testCases.length} selected</span>
           {testCases.length > 0 && (
             <button type="button"
@@ -784,6 +796,14 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave
   }, [testCases]);
 
   const [expandedUc, setExpandedUc] = useState<Set<string>>(new Set());
+  const [scriptsOnly, setScriptsOnly] = useState(false);
+
+  const visibleUcGroups = useMemo(() => {
+    if (!scriptsOnly) return ucGroups;
+    return ucGroups
+      .map(g => ({ ...g, tcs: g.tcs.filter(tc => scriptedTcIds.has(tc.id)) }))
+      .filter(g => g.tcs.length > 0);
+  }, [ucGroups, scriptsOnly, scriptedTcIds]);
 
   function isUcAdded(ucName: string) {
     return stages.some(s => s.useCaseTag === ucName);
@@ -897,9 +917,23 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave
 
       {/* Available Use Cases */}
       <div>
-        <label style={labelStyle}>Available Use Cases</label>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <label style={{ ...labelStyle, marginBottom: 0 }}>Available Use Cases</label>
+          <button type="button"
+            onClick={() => setScriptsOnly(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              padding: '3px 9px', borderRadius: 5,
+              background: scriptsOnly ? 'var(--cyan-dim)' : 'var(--bg)',
+              border: `1px solid ${scriptsOnly ? 'var(--cyan)' : 'var(--border)'}`,
+              color: scriptsOnly ? 'var(--cyan)' : 'var(--text-mid)',
+            }}>
+            📝 Scripts only
+          </button>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {ucGroups.map(({ name: ucName, tcs }, idx) => {
+          {visibleUcGroups.map(({ name: ucName, tcs }, idx) => {
             const stage = stageFor(ucName);
             const selectedCount = stage?.tcIds.length ?? 0;
             const allSelected = selectedCount === tcs.length && selectedCount > 0;
@@ -984,8 +1018,10 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave
               </div>
             );
           })}
-          {ucGroups.length === 0 && (
-            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>No test cases yet.</span>
+          {visibleUcGroups.length === 0 && (
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>
+              {scriptsOnly ? 'No test cases with scripts yet.' : 'No test cases yet.'}
+            </span>
           )}
         </div>
       </div>
@@ -1828,14 +1864,13 @@ export default function Scheduler() {
                   maxHeight: 'calc(100vh - 220px)', overflowY: 'auto',
                 }}>
                   <div style={{
-                    position: 'sticky', top: 0, left: 0, right: 0, height: 3, zIndex: 1,
+                    position: 'absolute', top: 0, left: 0, right: 0, height: 3,
                     background: mode === 'run-now'
                       ? 'linear-gradient(90deg,#2A9D8F,#1d7a6c)'
                       : mode === 'suite-create' || mode === 'suite-edit'
                         ? 'linear-gradient(90deg,#2A9D8F,#059669)'
                         : 'linear-gradient(90deg,#2563AB,#0A2A57)',
                     borderRadius: '12px 12px 0 0',
-                    marginTop: -18, marginLeft: -20, marginRight: -20, marginBottom: 18,
                   }} />
 
                   {(mode === 'create' || mode === 'edit') && (

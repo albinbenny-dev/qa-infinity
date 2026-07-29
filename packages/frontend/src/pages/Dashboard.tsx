@@ -118,6 +118,7 @@ function RecentRunCard({
   };
 }) {
   const passed = run.results.filter((r) => r.status === 'PASSED').length;
+  const failed = run.results.filter((r) => r.status === 'FAILED').length;
   const total = run._count.results;
   const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
   const duration =
@@ -183,15 +184,19 @@ function RecentRunCard({
             hour: '2-digit',
             minute: '2-digit',
           })}
-          {' · '}
-          {total} tests
           {duration ? ` · ${duration}s` : ''}
+        </div>
+        {/* Pass / fail counts */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 3, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--pass)', fontWeight: 600 }}>✓ {passed}</span>
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--fail)', fontWeight: 600 }}>✗ {failed}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{total} total</span>
         </div>
         {/* Progress bar */}
         <div
           style={{
             marginTop: 5,
-            height: 4,
+            height: 3,
             background: 'var(--surface2)',
             borderRadius: 2,
             overflow: 'hidden',
@@ -503,71 +508,15 @@ export default function Dashboard() {
               />
             </div>
 
-            {/* ── 2-column dash grid ────────────────────────────────────── */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 16,
-                alignItems: 'start',
-              }}
-            >
-              {/* Col 1 — 7-day trend chart */}
-              <div
-                style={{
-                  background: 'var(--surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 12,
-                  overflow: 'hidden',
-                  boxShadow: 'var(--shadow-card)',
-                }}
-              >
-                <div style={{ height: 3, background: 'var(--cool-accent)' }} />
-                <div style={{ padding: '14px 16px 16px' }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>
-                    7-Day Pass / Fail Trend
-                  </div>
-                  {trend.length === 0 ? (
-                    <div
-                      style={{
-                        height: 180,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--text-dim)',
-                        fontSize: 12,
-                      }}
-                    >
-                      No run data yet.
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={180}>
-                      <BarChart data={trend} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-                        <XAxis
-                          dataKey="date"
-                          tick={{ fontSize: 10, fill: 'var(--text-dim)' }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 10, fill: 'var(--text-dim)' }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Legend
-                          iconType="circle"
-                          iconSize={7}
-                          wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                        />
-                        <Bar dataKey="passed" name="Pass" stackId="a" fill="var(--pass)" radius={[0, 0, 0, 0]} />
-                        <Bar dataKey="failed" name="Fail" stackId="a" fill="var(--fail)" radius={[0, 0, 0, 0]} />
-                        <Bar dataKey="skipped" name="Skip" stackId="a" fill="var(--skip)" radius={[2, 2, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
+            {/* ── Row 1: Suite history + Recent Runs ───────────────────── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16, alignItems: 'start' }}>
+              {/* Col 1 — Suite / scheduled run history */}
+              <SuiteHistoryCard
+                projectId={projectId}
+                slug={slug}
+                navigate={navigate}
+                onViewAll={() => navigate(`/projects/${slug}/reports`)}
+              />
 
               {/* Col 2 — Recent Runs */}
               <div
@@ -592,181 +541,104 @@ export default function Dashboard() {
                   Recent Runs
                 </div>
                 {recentRuns.length === 0 ? (
-                  <div
-                    style={{
-                      padding: '30px 0',
-                      textAlign: 'center',
-                      color: 'var(--text-dim)',
-                      fontSize: 12,
-                    }}
-                  >
+                  <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
                     No runs yet. Head to Execution to start.
                   </div>
                 ) : (
                   recentRuns.map((run) => <RecentRunCard key={run.id} run={run} />)
                 )}
               </div>
-
             </div>
 
-            {/* ── Suite history ──────────────────────────────────────────── */}
-            <SuiteHistoryCard
-              projectId={projectId}
-              slug={slug}
-              navigate={navigate}
-              onViewAll={() => navigate(`/projects/${slug}/reports`)}
-            />
-
-            {/* ── Flaky tests (if any) ──────────────────────────────────── */}
-            {(stats?.flakyTests?.length ?? 0) > 0 && (
+            {/* ── Row 2: Trend chart + Flaky tests ─────────────────────── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+              {/* Col 1 — 7-day trend chart */}
               <div
                 style={{
                   background: 'var(--surface)',
                   border: '1px solid var(--border)',
                   borderRadius: 12,
+                  overflow: 'hidden',
                   boxShadow: 'var(--shadow-card)',
                 }}
               >
-                <div
-                  style={{
-                    height: 3,
-                    background: 'linear-gradient(90deg, var(--amber), var(--skip))',
-                    borderRadius: '12px 12px 0 0',
-                  }}
-                />
-                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                    ⚠️ Flaky Tests
-                  </span>
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: 'var(--amber)',
-                      background: 'rgba(251,191,36,0.12)',
-                      padding: '1px 7px',
-                      borderRadius: 100,
-                    }}
-                  >
-                    {stats!.flakyTests.length}
-                  </span>
-                  <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text-dim)' }}>
-                    Click a row to view run history
-                  </span>
-                </div>
-                <div style={{ padding: '4px 0 8px' }}>
-                  {stats!.flakyTests.slice(0, 5).map((t) => {
-                    const total = t.passCount + t.failCount;
-                    const flakiness = total > 0 ? Math.round((t.failCount / total) * 100) : 0;
-                    return (
-                      <div
-                        key={t.id}
-                        onClick={() => navigate(`/projects/${slug}/reports`)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '8px 16px',
-                          borderBottom: '1px solid var(--border)',
-                          cursor: 'pointer',
-                          transition: 'background 0.15s',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        {/* TC ID */}
-                        <span
-                          style={{
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: 10,
-                            color: 'var(--text-dim)',
-                            flexShrink: 0,
-                            minWidth: 56,
-                          }}
-                        >
-                          {t.tcId}
-                        </span>
-                        {/* Title */}
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: 'var(--text)',
-                            flex: 1,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {t.title}
-                        </span>
-                        {/* Last 10 run dots */}
-                        <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
-                          {t.recentResults.slice(0, 10).map((r, i) => (
-                            <span
-                              key={i}
-                              title={r}
-                              style={{
-                                display: 'inline-block',
-                                width: 9,
-                                height: 9,
-                                borderRadius: '50%',
-                                background: STATUS_DOT[r] ?? 'var(--text-dim)',
-                                flexShrink: 0,
-                              }}
-                            />
-                          ))}
-                          {Array.from({ length: Math.max(0, 10 - t.recentResults.length) }).map((_, i) => (
-                            <span
-                              key={`pad-${i}`}
-                              style={{
-                                display: 'inline-block',
-                                width: 9,
-                                height: 9,
-                                borderRadius: '50%',
-                                background: 'var(--border)',
-                                flexShrink: 0,
-                              }}
-                            />
-                          ))}
-                        </div>
-                        {/* Pass / fail counts */}
-                        <span style={{ fontSize: 11, color: 'var(--pass)', flexShrink: 0 }}>
-                          ✓ {t.passCount}
-                        </span>
-                        <span style={{ fontSize: 11, color: 'var(--fail)', flexShrink: 0 }}>
-                          ✗ {t.failCount}
-                        </span>
-                        {/* Flakiness badge */}
-                        <span
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            padding: '2px 7px',
-                            borderRadius: 100,
-                            flexShrink: 0,
-                            background:
-                              flakiness >= 50
-                                ? 'rgba(220,38,38,0.12)'
-                                : flakiness >= 25
-                                ? 'rgba(251,191,36,0.12)'
-                                : 'rgba(244,123,32,0.12)',
-                            color:
-                              flakiness >= 50
-                                ? 'var(--fail)'
-                                : flakiness >= 25
-                                ? 'var(--amber)'
-                                : 'var(--skip)',
-                          }}
-                        >
-                          {flakiness}%
-                        </span>
-                      </div>
-                    );
-                  })}
+                <div style={{ height: 3, background: 'var(--cool-accent)' }} />
+                <div style={{ padding: '14px 16px 16px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>
+                    7-Day Pass / Fail Trend
+                  </div>
+                  {trend.length === 0 ? (
+                    <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                      No run data yet.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={trend} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                        <Bar dataKey="passed" name="Pass" stackId="a" fill="var(--pass)" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="failed" name="Fail" stackId="a" fill="var(--fail)" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="skipped" name="Skip" stackId="a" fill="var(--skip)" radius={[2, 2, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </div>
-            )}
+
+              {/* Col 2 — Flaky tests */}
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-card)' }}>
+                <div style={{ height: 3, background: 'linear-gradient(90deg, var(--amber), var(--skip))', borderRadius: '12px 12px 0 0' }} />
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>⚠️ Flaky Tests</span>
+                  {(stats?.flakyTests?.length ?? 0) > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)', background: 'rgba(251,191,36,0.12)', padding: '1px 7px', borderRadius: 100 }}>
+                      {stats!.flakyTests.length}
+                    </span>
+                  )}
+                </div>
+                {(stats?.flakyTests?.length ?? 0) === 0 ? (
+                  <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                    ✓ No flaky tests detected.
+                  </div>
+                ) : (
+                  <div style={{ padding: '4px 0 8px' }}>
+                    {stats!.flakyTests.slice(0, 5).map((t) => {
+                      const total = t.passCount + t.failCount;
+                      const flakiness = total > 0 ? Math.round((t.failCount / total) * 100) : 0;
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => navigate(`/projects/${slug}/reports`)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, minWidth: 56 }}>{t.tcId}</span>
+                          <span style={{ fontSize: 12, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                          <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
+                            {t.recentResults.slice(0, 10).map((r, i) => (
+                              <span key={i} title={r} style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: STATUS_DOT[r] ?? 'var(--text-dim)', flexShrink: 0 }} />
+                            ))}
+                            {Array.from({ length: Math.max(0, 10 - t.recentResults.length) }).map((_, i) => (
+                              <span key={`pad-${i}`} style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: 'var(--border)', flexShrink: 0 }} />
+                            ))}
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--pass)', flexShrink: 0 }}>✓ {t.passCount}</span>
+                          <span style={{ fontSize: 11, color: 'var(--fail)', flexShrink: 0 }}>✗ {t.failCount}</span>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 100, flexShrink: 0,
+                            background: flakiness >= 50 ? 'rgba(220,38,38,0.12)' : flakiness >= 25 ? 'rgba(251,191,36,0.12)' : 'rgba(244,123,32,0.12)',
+                            color: flakiness >= 50 ? 'var(--fail)' : flakiness >= 25 ? 'var(--amber)' : 'var(--skip)',
+                          }}>{flakiness}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
           </>
         )}
       </div>

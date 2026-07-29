@@ -27,8 +27,12 @@ else
   DC="docker-compose"
 fi
 
-# Use sudo only when it exists (Linux/Mac); skip on Git Bash / Windows
-if command -v sudo &>/dev/null; then
+# Use sudo only on Linux/Mac; skip on Git Bash / Windows (MSYS/Cygwin).
+# Windows 11 ships a sudo binary that command -v finds, but it's disabled by
+# default and errors at runtime — so we check OSTYPE first.
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+  SUDO=""
+elif command -v sudo &>/dev/null; then
   SUDO="sudo"
 else
   SUDO=""
