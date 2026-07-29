@@ -212,8 +212,15 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     } catch { /* DB hiccup — keep polling */ }
   }, 2000);
 
-  // ── 5. Execute each script ───────────────────────────────────────────────
-  for (let i = 0; i < scriptPaths.length; i++) {
+  // ── 5. Execute scripts — up to `parallelWorkers` running concurrently ────
+  // Each lane pulls the next unclaimed index from a shared cursor, so N lanes
+  // process the array concurrently instead of one script finishing before the
+  // next starts. hostBrowser (visible/VNC) runs are forced to a single lane —
+  // there are only 2 VNC slots total and a run's live view is one connection,
+  // so parallel headed execution wouldn't be watchable or fit the slot budget.
+  const cancelNotice = { beforeStart: false, midExec: false };
+
+  async function runOneScript(i: number, laneNum: number): Promise<void> {
     const scriptPath = scriptPaths[i];
     const testCaseId = testCaseIds[i];
     const scriptName = path.basename(scriptPath);
@@ -221,11 +228,14 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
 
     // Check for cancellation before starting each script
     if (runAbortController.signal.aborted) {
-      emitLog(runId, 'warn', `■ Run cancelled — skipping remaining ${scriptPaths.length - i} scripts`);
-      break;
+      if (!cancelNotice.beforeStart) {
+        cancelNotice.beforeStart = true;
+        emitLog(runId, 'warn', '■ Run cancelled — skipping remaining scripts');
+      }
+      return;
     }
 
-    emitLog(runId, 'run', `→ [W${(i % parallelWorkers) + 1}] ${scriptName}`);
+    emitLog(runId, 'run', `→ [W${laneNum}] ${scriptName}`);
 
     if (runResultId) {
       await prisma.runResult.update({ where: { id: runResultId }, data: { status: 'RUNNING' } });
@@ -254,8 +264,11 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
           data: { status: 'FAILED', errorMessage: 'Run was cancelled' },
         });
       }
-      emitLog(runId, 'warn', '■ Run cancelled during script execution');
-      break;
+      if (!cancelNotice.midExec) {
+        cancelNotice.midExec = true;
+        emitLog(runId, 'warn', '■ Run cancelled during script execution');
+      }
+      return;
     }
 
     // Parse report or use exit-code fallback
@@ -375,6 +388,18 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       passed: totalPassed, failed: totalFailed,
     });
   }
+
+  const laneCount = Math.max(1, Math.min(hostBrowser ? 1 : (parallelWorkers || 1), scriptPaths.length || 1));
+  let nextIndex = 0;
+  async function workerLane(laneNum: number): Promise<void> {
+    while (true) {
+      if (runAbortController.signal.aborted) return;
+      const i = nextIndex++;
+      if (i >= scriptPaths.length) return;
+      await runOneScript(i, laneNum);
+    }
+  }
+  await Promise.all(Array.from({ length: laneCount }, (_, idx) => workerLane(idx + 1)));
 
   // Stop the cancel watcher and abort any in-flight fetch
   clearInterval(cancelWatcher);
