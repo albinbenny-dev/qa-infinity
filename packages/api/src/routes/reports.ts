@@ -735,13 +735,13 @@ router.get('/runs/:runId/rf-summary', async (req: Request, res: Response, next: 
 
     const groupMap = new Map<string, typeof results>();
     for (const r of results) {
-      const key = r.script?.filename ?? r.testCase.linkedScript?.filename ?? '_unlinked';
+      const key = r.testCase.useCaseTag ?? '_Untagged';
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(r);
     }
 
-    const groups = Array.from(groupMap.entries()).map(([scriptFilename, items]) => ({
-      scriptFilename,
+    const groups = Array.from(groupMap.entries()).map(([useCaseTag, items]) => ({
+      useCaseTag,
       passed: items.filter(i => i.status === 'PASSED').length,
       failed: items.filter(i => i.status === 'FAILED').length,
       skipped: items.filter(i => i.status !== 'PASSED' && i.status !== 'FAILED').length,
@@ -750,6 +750,7 @@ router.get('/runs/:runId/rf-summary', async (req: Request, res: Response, next: 
         tcId: r.testCase.tcId,
         title: r.testCase.title,
         useCaseTag: r.testCase.useCaseTag,
+        scriptFilename: r.script?.filename ?? r.testCase.linkedScript?.filename ?? null,
         status: r.status,
         duration: r.duration,
         errorMessage: r.errorMessage,

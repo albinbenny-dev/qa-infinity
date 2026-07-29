@@ -105,6 +105,22 @@ function TCRow({
         <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', minWidth: 44, textAlign: 'right' }}>
           {fmtMs(result.duration)}
         </span>
+        {result.scriptFilename && (
+          <span
+            title={result.scriptFilename}
+            style={{
+              fontSize: 10, color: 'var(--text-dim)', cursor: 'default',
+              whiteSpace: 'nowrap', maxWidth: 120, overflow: 'hidden',
+              textOverflow: 'ellipsis', fontFamily: 'var(--font-mono)',
+              padding: '1px 5px', borderRadius: 3,
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid var(--border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {result.scriptFilename}
+          </span>
+        )}
         <span style={{
           fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 3,
           background: statusBg(result.status), color: statusColor(result.status),
@@ -364,7 +380,7 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
               All ({stats?.total ?? 0})
             </button>
             <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-              {groups.length} script{groups.length !== 1 ? 's' : ''} · {stats?.total ?? 0} TC{(stats?.total ?? 0) !== 1 ? 's' : ''}
+              {groups.length} use case{groups.length !== 1 ? 's' : ''} · {stats?.total ?? 0} TC{(stats?.total ?? 0) !== 1 ? 's' : ''}
             </span>
             <button
               onClick={() => setFilter('failed')}
@@ -398,43 +414,42 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
                 {filter === 'failed' ? 'No failures — all tests passed.' : 'No results found.'}
               </div>
             )}
-            {filteredGroups.map((group) => {
-              // Only show group header for scripts with multiple TCs (manually imported/linked).
-              // Auto-generated scripts are 1:1 with TCs so the filename adds no value.
-              const showGroupHeader = group.results.length > 1 || group.scriptFilename === '_unlinked';
-              return (
-                <div key={group.scriptFilename} style={{ borderBottom: '1px solid var(--border)' }}>
-                  {showGroupHeader && (
-                    <div style={{
-                      padding: '7px 16px', background: 'var(--surface2)',
-                      borderBottom: '1px solid var(--border)',
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      fontSize: 11, color: 'var(--text-mid)', fontWeight: 600,
-                    }}>
-                      <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>🗂</span>
-                      <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{group.scriptFilename}</span>
-                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)' }}>
-                        {group.passed} pass
-                      </span>
-                      {group.failed > 0 && (
-                        <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(220,38,38,0.1)', color: 'var(--fail)' }}>
-                          {group.failed} fail
-                        </span>
-                      )}
-                    </div>
+            {filteredGroups.map((group) => (
+              <div key={group.useCaseTag} style={{ borderBottom: '1px solid var(--border)' }}>
+                {/* Use-case group header — always shown */}
+                <div style={{
+                  padding: '6px 16px', background: 'var(--surface2)',
+                  borderBottom: '1px solid var(--border)',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  fontSize: 11, color: 'var(--text-mid)', fontWeight: 600,
+                }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>▸</span>
+                  <span style={{ flex: 1, fontSize: 11 }}>{group.useCaseTag}</span>
+                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)' }}>
+                    {group.passed} pass
+                  </span>
+                  {group.failed > 0 && (
+                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(220,38,38,0.1)', color: 'var(--fail)' }}>
+                      {group.failed} fail
+                    </span>
                   )}
-                  {projectId && group.results.map((result) => (
-                    <TCRow
-                      key={result.id}
-                      projectId={projectId}
-                      runId={run!.id}
-                      result={result}
-                      autoExpand={result.id === firstFailedResultId}
-                    />
-                  ))}
+                  {group.skipped > 0 && (
+                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(251,191,36,0.1)', color: 'var(--amber)' }}>
+                      {group.skipped} skip
+                    </span>
+                  )}
                 </div>
-              );
-            })}
+                {projectId && group.results.map((result) => (
+                  <TCRow
+                    key={result.id}
+                    projectId={projectId}
+                    runId={run!.id}
+                    result={result}
+                    autoExpand={result.id === firstFailedResultId}
+                  />
+                ))}
+              </div>
+            ))}
           </div>
 
           {/* Footer */}

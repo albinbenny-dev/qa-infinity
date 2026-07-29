@@ -128,6 +128,7 @@ export interface RfSummaryResult {
   tcId: string;
   title: string;
   useCaseTag?: string | null;
+  scriptFilename?: string | null;
   status: string;
   duration?: number | null;
   errorMessage?: string | null;
@@ -135,7 +136,7 @@ export interface RfSummaryResult {
 }
 
 export interface RfSummaryGroup {
-  scriptFilename: string;
+  useCaseTag: string;
   passed: number;
   failed: number;
   skipped: number;
