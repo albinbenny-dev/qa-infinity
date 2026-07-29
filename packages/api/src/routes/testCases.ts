@@ -91,13 +91,13 @@ const SaveTestCasesSchema = z.object({
     z.object({
       /** Preserve TC ID from import (e.g. AIR-TC-001). If omitted, one is auto-generated. */
       tcId: z.string().optional(),
-      title: z.string().min(1),
+      title: z.string().min(1, 'Title is required'),
       description: z.string().optional().default(''),
       steps: z.array(z.string()).default([]),
       expectedResult: z.string().default(''),
       type: z.enum(['UI', 'API', 'SIT']).default('UI'),
       tags: z.array(z.string()).default([]),
-      useCaseTag: z.string().optional(),
+      useCaseTag: z.string().min(1, 'Use Case is required'),
       priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
       sourceRef: z.string().optional(),
       generationHints: z.string().optional(),
@@ -107,6 +107,29 @@ const SaveTestCasesSchema = z.object({
     }),
   ).min(1),
 });
+
+/** Convert Zod issues into one readable string per affected row, e.g.:
+ *  "Row 3 (TC_01 \"Login test\"): Title is required; Use Case is required" */
+function formatSaveErrors(issues: z.ZodIssue[], tcs: unknown[]): string[] {
+  const byRow = new Map<number, string[]>();
+  for (const issue of issues) {
+    const idx = typeof issue.path[1] === 'number' ? issue.path[1] : -1;
+    if (idx < 0) continue;
+    const msgs = byRow.get(idx) ?? [];
+    msgs.push(issue.message);
+    byRow.set(idx, msgs);
+  }
+  const lines: string[] = [];
+  for (const [idx, msgs] of [...byRow.entries()].sort((a, b) => a[0] - b[0])) {
+    const tc = Array.isArray(tcs) ? (tcs[idx] as Record<string, unknown>) : undefined;
+    const label = [
+      tc?.tcId ? String(tc.tcId) : null,
+      tc?.title ? `"${String(tc.title).slice(0, 40)}"` : null,
+    ].filter(Boolean).join(' ');
+    lines.push(`Row ${idx + 1}${label ? ` (${label})` : ''}: ${msgs.join('; ')}`);
+  }
+  return lines;
+}
 
 const UpdateTestCaseSchema = z.object({
   title: z.string().min(1).optional(),
@@ -1048,7 +1071,9 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = SaveTestCasesSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      const rows = formatSaveErrors(parsed.error.issues, (req.body as { testCases?: unknown[] }).testCases ?? []);
+      const summary = `Import failed: ${rows.length} row${rows.length !== 1 ? 's have' : ' has'} errors. Fix the following and re-import:`;
+      res.status(400).json({ error: summary, rows });
       return;
     }
 

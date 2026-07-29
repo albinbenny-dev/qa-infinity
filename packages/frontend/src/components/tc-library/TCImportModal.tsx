@@ -55,8 +55,11 @@ export default function TCImportModal({ open, onClose, projectId }: TCImportModa
     if (result) setParsed(result);
   }
 
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+
   async function handleImport() {
     if (!parsed || parsed.length === 0) return;
+    setImportErrors([]);
     const tcs = parsed.map((tc) => ({
       ...tc,
       useCaseTag: tc.useCaseTag || defaultUseCase || undefined,
@@ -69,8 +72,14 @@ export default function TCImportModal({ open, onClose, projectId }: TCImportModa
       const res = await saveMutation.mutateAsync(tcs as any);
       toast.success(`Imported ${res.count} test case${res.count !== 1 ? 's' : ''} to TC Library`);
       handleClose();
-    } catch {
-      toast.error('Import failed');
+    } catch (err: any) {
+      const data = err?.response?.data;
+      if (data?.rows?.length) {
+        setImportErrors(data.rows);
+        toast.error(data.error ?? 'Import failed — see errors below');
+      } else {
+        toast.error(data?.error ?? 'Import failed');
+      }
     }
   }
 
@@ -275,6 +284,27 @@ export default function TCImportModal({ open, onClose, projectId }: TCImportModa
                 </table>
               </div>
             </>
+          )}
+
+          {/* Import errors */}
+          {importErrors.length > 0 && (
+            <div style={{
+              background: 'rgba(220,38,38,0.06)',
+              border: '1px solid rgba(220,38,38,0.25)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              maxHeight: '140px',
+              overflowY: 'auto',
+            }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--fail)', marginBottom: '6px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                ✕ {importErrors.length} row{importErrors.length !== 1 ? 's' : ''} failed validation — fix in Excel and re-import
+              </div>
+              {importErrors.map((msg, i) => (
+                <div key={i} style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-mid)', lineHeight: 1.6 }}>
+                  {msg}
+                </div>
+              ))}
+            </div>
           )}
 
           {/* Actions */}
