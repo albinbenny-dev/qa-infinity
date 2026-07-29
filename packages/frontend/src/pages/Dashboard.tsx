@@ -11,6 +11,7 @@ import {
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useDashboard, useReportRuns } from '../hooks/useReports';
 import { useCreateRun } from '../hooks/useRuns';
+import { useProject } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import RunHistoryTable from '../components/reports/RunHistoryTable';
 import type { AgentStatus, TopSuiteEntry } from '../types';
@@ -693,12 +694,13 @@ function SuiteSchedulerHistoryCard({
 export default function Dashboard() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const projectId = slug!;
+  const { data: project } = useProject(slug);
+  const projectId = project?.id;
 
   const { data, isLoading } = useDashboard(projectId);
-  const createRun = useCreateRun(projectId);
+  const createRun = useCreateRun(projectId ?? '');
   const { activeProject } = useProjectStore();
-  const envConfigs = activeProject?.envConfigs ?? [];
+  const envConfigs = (project?.envConfigs ?? activeProject?.envConfigs) ?? [];
   const defaultEnv = envConfigs.find((e) => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
 
   function handleRunSuite(suite: TopSuiteEntry) {
