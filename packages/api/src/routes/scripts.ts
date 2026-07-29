@@ -424,6 +424,46 @@ router.post('/jobs/:jobId/retry', async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /project-file/content — read any project text file for viewing/editing ─
+// Used by "Find in Files" search results and the file tree to open a file in
+// the editor instead of downloading it. Binary formats (xlsx, images, etc.)
+// are rejected — the frontend falls back to a plain download for those.
+// NOTE: must be registered before /:id/content — otherwise Express matches
+// that generic route first (":id" = "project-file") and this never runs.
+
+router.get('/project-file/content', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    const ext = path.extname(relPath).toLowerCase();
+    if (BINARY_EXTS.has(ext)) {
+      res.status(415).json({ error: 'Binary file — use the download button instead.' });
+      return;
+    }
+    const { buffer } = getProjectFileContent(req.project.slug, relPath);
+    res.json({ content: buffer.toString('utf-8') });
+  } catch (err: any) {
+    res.status(err?.message === 'Invalid path' ? 400 : 404).json({ error: err?.message ?? 'File not found' });
+  }
+});
+
+// ── PUT /project-file/content — save edited content back to a project file ────
+// Same ordering note as above — must precede /:id/content.
+
+router.put('/project-file/content', async (req: Request, res: Response) => {
+  try {
+    const relPath = req.query.path as string;
+    const { content } = req.body as { content?: string };
+    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+    if (typeof content !== 'string') { res.status(400).json({ error: 'content is required' }); return; }
+    saveScript(req.project.slug, relPath, content);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[scripts] PUT /project-file/content', err);
+    res.status(500).json({ error: err?.message ?? 'Save failed' });
+  }
+});
+
 // ── GET /:id/content — return raw script content ───────────────────────────
 
 router.get('/:id/content', async (req: Request, res: Response) => {
@@ -1000,43 +1040,6 @@ router.get('/search', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[scripts] GET /search', err);
     res.status(500).json({ error: 'Search failed' });
-  }
-});
-
-// ── GET /project-file/content — read any project text file for viewing/editing ─
-// Used by "Find in Files" search results and the file tree to open a file in
-// the editor instead of downloading it. Binary formats (xlsx, images, etc.)
-// are rejected — the frontend falls back to a plain download for those.
-
-router.get('/project-file/content', async (req: Request, res: Response) => {
-  try {
-    const relPath = req.query.path as string;
-    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
-    const ext = path.extname(relPath).toLowerCase();
-    if (BINARY_EXTS.has(ext)) {
-      res.status(415).json({ error: 'Binary file — use the download button instead.' });
-      return;
-    }
-    const { buffer } = getProjectFileContent(req.project.slug, relPath);
-    res.json({ content: buffer.toString('utf-8') });
-  } catch (err: any) {
-    res.status(err?.message === 'Invalid path' ? 400 : 404).json({ error: err?.message ?? 'File not found' });
-  }
-});
-
-// ── PUT /project-file/content — save edited content back to a project file ────
-
-router.put('/project-file/content', async (req: Request, res: Response) => {
-  try {
-    const relPath = req.query.path as string;
-    const { content } = req.body as { content?: string };
-    if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
-    if (typeof content !== 'string') { res.status(400).json({ error: 'content is required' }); return; }
-    saveScript(req.project.slug, relPath, content);
-    res.json({ ok: true });
-  } catch (err: any) {
-    console.error('[scripts] PUT /project-file/content', err);
-    res.status(500).json({ error: err?.message ?? 'Save failed' });
   }
 });
 
