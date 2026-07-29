@@ -17,7 +17,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ $# -gt 0 ]; then
   SERVICES="$*"
 else
-  SERVICES="qa-api qa-ui"
+  SERVICES="qa-api qa-ui qa-runner"
 fi
 
 # Detect docker compose V1 vs V2
