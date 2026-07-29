@@ -1310,6 +1310,7 @@ function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onTogg
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(37,99,171,0.12)', color: 'var(--cyan)' }}>{schedule.environment}</span>
         <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(244,123,32,0.1)', color: 'var(--skip)' }}>{tcIds.length} test{tcIds.length !== 1 ? 's' : ''}</span>
+        <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(139,92,246,0.1)', color: 'var(--violet)' }}>W: {schedule.parallelWorkers}</span>
         {emails.length > 0 && <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(42,157,143,0.1)', color: 'var(--pass)' }}>📧 {emails.length}</span>}
         {!schedule.isActive && <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(100,116,139,0.12)', color: 'var(--text-dim)' }}>PAUSED</span>}
       </div>
@@ -1339,6 +1340,7 @@ interface ScheduleFormState {
   selectedTcIds: string[];
   emailRecipients: string;
   isActive: boolean;
+  parallelWorkers: number;
 }
 
 function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTcIds, onSave, onCancel: _onCancel, isSaving }: {
@@ -1360,6 +1362,7 @@ function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTc
     selectedTcIds: initial?.selectedTcIds ?? [],
     emailRecipients: initial?.emailRecipients ?? '',
     isActive: initial?.isActive ?? true,
+    parallelWorkers: initial?.parallelWorkers ?? 2,
   });
 
   const set = (p: Partial<ScheduleFormState>) => setForm(f => ({ ...f, ...p }));
@@ -1386,15 +1389,31 @@ function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTc
         <FrequencyPicker value={form.freq} onChange={freq => set({ freq })} />
       </div>
 
-      <div>
-        <label style={labelStyle}>Environment</label>
-        {envConfigs.length > 0 ? (
-          <select value={form.environment} onChange={e => set({ environment: e.target.value })} style={inputStyle}>
-            {envConfigs.map(env => <option key={env.id} value={env.name}>{env.name}</option>)}
-          </select>
-        ) : (
-          <input value={form.environment} onChange={e => set({ environment: e.target.value })} placeholder="Dev / QA / Staging / Prod" style={inputStyle} />
-        )}
+      <div style={{ display: 'flex', gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <label style={labelStyle}>Environment</label>
+          {envConfigs.length > 0 ? (
+            <select value={form.environment} onChange={e => set({ environment: e.target.value })} style={inputStyle}>
+              {envConfigs.map(env => <option key={env.id} value={env.name}>{env.name}</option>)}
+            </select>
+          ) : (
+            <input value={form.environment} onChange={e => set({ environment: e.target.value })} placeholder="Dev / QA / Staging / Prod" style={inputStyle} />
+          )}
+        </div>
+        <div style={{ width: 120 }}>
+          <label style={labelStyle}>Parallel Workers</label>
+          <input
+            type="number"
+            min={1}
+            max={16}
+            value={form.parallelWorkers}
+            onChange={e => {
+              const n = parseInt(e.target.value, 10);
+              set({ parallelWorkers: Number.isFinite(n) ? Math.min(16, Math.max(1, n)) : 2 });
+            }}
+            style={inputStyle}
+          />
+        </div>
       </div>
 
       <SuiteSelector
@@ -1554,7 +1573,7 @@ export default function Scheduler() {
     let emails = '';
     try { tcIds = JSON.parse(editingSchedule.testCaseIds); } catch { /* noop */ }
     try { emails = (JSON.parse(editingSchedule.emailRecipients) as string[]).join(', '); } catch { /* noop */ }
-    return { name: editingSchedule.name, freq: parseCronToFreq(editingSchedule.cronExpression), environment: editingSchedule.environment, selectedTcIds: tcIds, emailRecipients: emails, isActive: editingSchedule.isActive };
+    return { name: editingSchedule.name, freq: parseCronToFreq(editingSchedule.cronExpression), environment: editingSchedule.environment, selectedTcIds: tcIds, emailRecipients: emails, isActive: editingSchedule.isActive, parallelWorkers: editingSchedule.parallelWorkers };
   }, [editingSchedule]);
 
   const editSuiteInitial = useMemo(() => {
@@ -1571,10 +1590,10 @@ export default function Scheduler() {
     const emailRecipients = formData.emailRecipients.split(',').map(e => e.trim()).filter(Boolean);
     try {
       if (mode === 'create') {
-        await createSchedule({ name: formData.name, cronExpression, testCaseIds: formData.selectedTcIds, environment: formData.environment, isActive: formData.isActive, emailRecipients });
+        await createSchedule({ name: formData.name, cronExpression, testCaseIds: formData.selectedTcIds, environment: formData.environment, isActive: formData.isActive, emailRecipients, parallelWorkers: formData.parallelWorkers });
         toast.success('Schedule created');
       } else if (editingId) {
-        await updateSchedule({ id: editingId, name: formData.name, cronExpression, testCaseIds: formData.selectedTcIds, environment: formData.environment, isActive: formData.isActive, emailRecipients });
+        await updateSchedule({ id: editingId, name: formData.name, cronExpression, testCaseIds: formData.selectedTcIds, environment: formData.environment, isActive: formData.isActive, emailRecipients, parallelWorkers: formData.parallelWorkers });
         toast.success('Schedule updated');
       }
       closeForm();

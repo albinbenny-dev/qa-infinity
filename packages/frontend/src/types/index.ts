@@ -130,6 +130,7 @@ export interface Schedule {
   environment: string;
   isActive: boolean;
   emailRecipients: string;
+  parallelWorkers: number;
   createdAt: string;
   updatedAt: string;
 }

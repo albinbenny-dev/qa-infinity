@@ -243,6 +243,7 @@ model Schedule {
   environment     String
   isActive        Boolean  @default(true)
   emailRecipients String   @default("[]")
+  parallelWorkers Int      @default(2)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)

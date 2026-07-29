@@ -177,6 +177,7 @@ export function useCreateSchedule(projectId: string) {
       environment: string;
       isActive?: boolean;
       emailRecipients?: string[];
+      parallelWorkers?: number;
     }) => {
       const res = await api.post<{ schedule: Schedule }>(`/projects/${projectId}/runs/schedules`, data);
       return res.data.schedule;
@@ -195,6 +196,7 @@ export interface UpdateSchedulePayload {
   environment?: string;
   isActive?: boolean;
   emailRecipients?: string[];
+  parallelWorkers?: number;
 }
 
 export function useUpdateSchedule(projectId: string) {

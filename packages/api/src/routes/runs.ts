@@ -36,6 +36,7 @@ const CreateScheduleSchema = z.object({
   environment: z.string().min(1),
   isActive: z.boolean().default(true),
   emailRecipients: z.array(z.string().email()).default([]),
+  parallelWorkers: z.number().int().min(1).max(16).default(2),
 });
 
 const UpdateScheduleSchema = CreateScheduleSchema.partial();
@@ -232,7 +233,7 @@ router.post('/schedules', async (req: Request, res: Response, next: NextFunction
       res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
       return;
     }
-    const { name, cronExpression, testCaseIds, environment, isActive, emailRecipients } = parsed.data;
+    const { name, cronExpression, testCaseIds, environment, isActive, emailRecipients, parallelWorkers } = parsed.data;
 
     const schedule = await prisma.schedule.create({
       data: {
@@ -243,6 +244,7 @@ router.post('/schedules', async (req: Request, res: Response, next: NextFunction
         environment,
         isActive,
         emailRecipients: JSON.stringify(emailRecipients),
+        parallelWorkers,
       },
     });
 
@@ -254,6 +256,7 @@ router.post('/schedules', async (req: Request, res: Response, next: NextFunction
         cronExpression: schedule.cronExpression,
         testCaseIds: schedule.testCaseIds,
         environment: schedule.environment,
+        parallelWorkers: schedule.parallelWorkers,
       });
     }
 
@@ -282,6 +285,7 @@ router.put('/schedules/:id', async (req: Request, res: Response, next: NextFunct
         ...(parsed.data.environment !== undefined && { environment: parsed.data.environment }),
         ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
         ...(parsed.data.emailRecipients !== undefined && { emailRecipients: JSON.stringify(parsed.data.emailRecipients) }),
+        ...(parsed.data.parallelWorkers !== undefined && { parallelWorkers: parsed.data.parallelWorkers }),
       },
     });
 
@@ -294,6 +298,7 @@ router.put('/schedules/:id', async (req: Request, res: Response, next: NextFunct
         cronExpression: updated.cronExpression,
         testCaseIds: updated.testCaseIds,
         environment: updated.environment,
+        parallelWorkers: updated.parallelWorkers,
       });
     }
 
@@ -346,7 +351,7 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
       envPassword: envConfig.password,
-      parallelWorkers: 2,
+      parallelWorkers: schedule.parallelWorkers,
       headless: true,
       browser: 'chromium',
       triggerType: 'SCHEDULED',

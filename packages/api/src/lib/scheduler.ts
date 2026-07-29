@@ -26,6 +26,7 @@ interface ScheduleRow {
   cronExpression: string;
   testCaseIds: string;
   environment: string;
+  parallelWorkers: number;
   project?: { baseUrl?: string | null } | null;
 }
 
@@ -88,7 +89,7 @@ export function registerSchedule(schedule: ScheduleRow): void {
         envBaseUrl: envConfig?.baseUrl ?? schedule.project?.baseUrl ?? '',
         envUsername: envConfig?.username ?? '',
         envPassword: envConfig?.password ?? '',
-        parallelWorkers: 2,
+        parallelWorkers: schedule.parallelWorkers,
         headless: true,
         browser: 'chromium',
         triggerType: 'SCHEDULED',
