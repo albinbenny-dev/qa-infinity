@@ -339,17 +339,22 @@ export async function getTopSuites(projectId: string): Promise<TopSuiteEntry[]> 
     .sort((a, b) => b[1].count - a[1].count)
     .slice(0, 5);
 
-  // Fetch TC IDs for each suite tag in one query
+  // Fetch TC IDs for each suite tag — tags is a JSON string field, use string contains
   const suiteNames = top5.map(([name]) => name);
   const tcsWithTags = await prisma.testCase.findMany({
-    where: { projectId, tags: { hasSome: suiteNames.map((n) => `suite:${n}`) } },
+    where: {
+      projectId,
+      OR: suiteNames.map((n) => ({ tags: { contains: `suite:${n}` } })),
+    },
     select: { id: true, tags: true },
   });
 
   // Build a map: suiteName → testCaseIds
   const suiteToIds = new Map<string, string[]>();
   for (const tc of tcsWithTags) {
-    for (const tag of tc.tags) {
+    let parsed: string[] = [];
+    try { parsed = JSON.parse(tc.tags as string); } catch { /* skip */ }
+    for (const tag of parsed) {
       if (tag.startsWith('suite:')) {
         const suiteName = tag.slice(6);
         if (!suiteToIds.has(suiteName)) suiteToIds.set(suiteName, []);
