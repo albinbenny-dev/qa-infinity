@@ -29,6 +29,8 @@ export interface RunJobPayload {
   testCaseIds: string[];
   scriptPaths: string[];
   skippedTcIds?: string[];
+  /** Maps each representative tcId → mirror tcIds that share the same script. Mirror TCs receive a copy of the representative's pass/fail result without re-running the script. */
+  mirroredTcIds?: Record<string, string[]>;
   environment: string;
   envBaseUrl: string;
   envUsername?: string;

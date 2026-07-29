@@ -62,10 +62,11 @@ function flattenTests(suite: PWSuite): PWTestCase[] {
 // ── Main job processor ─────────────────────────────────────────────────────
 async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   const { runId, runSeq, projectId, testCaseIds, scriptPaths, skippedTcIds = [],
+    mirroredTcIds = {},
     environment, envBaseUrl,
     envUsername = '', envPassword = '', parallelWorkers, headless, browser, hostBrowser = false } = job.data;
 
-  const total = scriptPaths.length;
+  const total = scriptPaths.length + Object.values(mirroredTcIds).reduce((s, a) => s + a.length, 0);
   const runLabel = `RUN-${String(runSeq).padStart(4, '0')}`;
 
   // Resolve project slug once — used for artifact dir naming and passed to the runner
@@ -109,7 +110,8 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   }
 
   // ── 2b. Build readable TC id lookup (for artifact dir naming) ─────────────
-  const allTcIds = [...testCaseIds, ...skippedTcIds];
+  const allMirrorTcIds = Object.values(mirroredTcIds).flat();
+  const allTcIds = [...testCaseIds, ...skippedTcIds, ...allMirrorTcIds];
   const tcRecords = await prisma.testCase.findMany({
     where: { id: { in: allTcIds } },
     select: { id: true, tcId: true },
@@ -138,6 +140,21 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     await prisma.runResult.create({
       data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: tcIdToScriptId.get(tcId) },
     });
+  }
+
+  // Create PENDING RunResults for mirror TCs (share same script as their representative)
+  if (allMirrorTcIds.length > 0) {
+    const mirrorTcRecords = await prisma.testCase.findMany({
+      where: { id: { in: allMirrorTcIds } },
+      select: { id: true, linkedScriptId: true },
+    });
+    const mirrorScriptId = new Map<string, string>();
+    for (const m of mirrorTcRecords) { if (m.linkedScriptId) mirrorScriptId.set(m.id, m.linkedScriptId); }
+    for (const tcId of allMirrorTcIds) {
+      await prisma.runResult.create({
+        data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: mirrorScriptId.get(tcId) },
+      });
+    }
   }
 
   // Create SKIPPED RunResults for TCs with no automation script
@@ -317,13 +334,27 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     if (passed) {
       totalPassed++;
       emitLog(runId, 'pass', `✓ ${scriptName} PASSED · ${(duration / 1000).toFixed(1)}s`);
-      // Write verified locators back to generationHints so next generation starts with proven selectors
       void extractAndLockLocators(testCaseId, scriptPath).catch(() => {});
-      // Rebuild project-level pattern memory so future scripts learn from this passing run
       void updatePatternMemory(projectId).catch(() => {});
     } else {
       totalFailed++;
       emitLog(runId, 'fail', `✗ ${scriptName} FAILED · ${errorMessage ?? 'Unknown error'}`);
+    }
+
+    // Fan-out result to any mirror TCs that share the same script
+    const mirrors = mirroredTcIds[testCaseId] ?? [];
+    for (const mirrorTcId of mirrors) {
+      const mirrorRunResultId = tcIdToRunResultId.get(mirrorTcId);
+      if (mirrorRunResultId) {
+        await prisma.runResult.update({
+          where: { id: mirrorRunResultId },
+          data: { status: finalStatus, duration, errorMessage: errorMessage ?? null,
+                  screenshotPath: screenshotPath ?? null, tracePath: tracePath ?? null,
+                  videoPath: videoPath ?? null, rfLogPath: rfLogPath ?? null },
+        });
+      }
+      if (passed) totalPassed++; else totalFailed++;
+      emitToRun(runId, 'run:progress', { testCaseId: mirrorTcId, status: finalStatus, index: i, total });
     }
 
     emitToRun(runId, 'run:progress', {

@@ -82,7 +82,7 @@ async function checkRunRateLimit(
 async function resolveScriptPaths(
   projectId: string,
   testCaseIds: string[],
-): Promise<{ testCaseId: string; scriptPath: string }[]> {
+): Promise<{ pairs: { testCaseId: string; scriptPath: string }[]; mirrorMap: Record<string, string[]> }> {
   const [project, tcsWithLinks, agentScripts] = await Promise.all([
     prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } }),
     // Manually linked scripts — TC Library "Link Script" action sets linkedScriptId
@@ -149,36 +149,47 @@ async function resolveScriptPaths(
   }
 
   const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
-  const results: { testCaseId: string; scriptPath: string }[] = [];
+  const slug = project?.slug ?? projectId;
 
+  // Resolve a scriptPath for every TC that has a script
+  const rawPairs: { testCaseId: string; scriptPath: string }[] = [];
   for (const s of scriptMap.values()) {
-    const slug = project?.slug ?? projectId;
     const ucFolder = s.useCaseFolder ?? s.ucTag ?? null;
 
-    // Canonical lookup — TestCases/{useCase}/ + legacy scripts/ search
     const found = findScriptPath(slug, s.filename);
-    if (found) {
-      results.push({ testCaseId: s.testCaseId, scriptPath: found });
-      continue;
-    }
+    if (found) { rawPairs.push({ testCaseId: s.testCaseId, scriptPath: found }); continue; }
 
     const sourceRefPath = s.sourceRef ? `${SCRIPTS_ROOT}/${slug}/${s.sourceRef}` : null;
-    if (sourceRefPath && fs.existsSync(sourceRefPath)) {
-      results.push({ testCaseId: s.testCaseId, scriptPath: sourceRefPath });
-      continue;
-    }
+    if (sourceRefPath && fs.existsSync(sourceRefPath)) { rawPairs.push({ testCaseId: s.testCaseId, scriptPath: sourceRefPath }); continue; }
 
     if (s.content) {
       saveScript(slug, s.filename, s.content, ucFolder);
       const written = findScriptPath(slug, s.filename);
-      results.push({ testCaseId: s.testCaseId, scriptPath: written ?? `${SCRIPTS_ROOT}/${slug}/TestCases/${ucFolder ?? 'Uncategorised'}/${s.filename}` });
+      rawPairs.push({ testCaseId: s.testCaseId, scriptPath: written ?? `${SCRIPTS_ROOT}/${slug}/TestCases/${ucFolder ?? 'Uncategorised'}/${s.filename}` });
       continue;
     }
 
-    results.push({ testCaseId: s.testCaseId, scriptPath: `${SCRIPTS_ROOT}/${slug}/TestCases/${ucFolder ?? 'Uncategorised'}/${s.filename}` });
+    rawPairs.push({ testCaseId: s.testCaseId, scriptPath: `${SCRIPTS_ROOT}/${slug}/TestCases/${ucFolder ?? 'Uncategorised'}/${s.filename}` });
   }
 
-  return results;
+  // Deduplicate by scriptPath — same physical file should run only once.
+  // First TC encountered becomes the representative; the rest become mirrors that
+  // receive a copy of the representative's pass/fail result without re-running.
+  const seenPaths = new Map<string, string>(); // scriptPath → representative tcId
+  const pairs: { testCaseId: string; scriptPath: string }[] = [];
+  const mirrorMap: Record<string, string[]> = {};
+
+  for (const p of rawPairs) {
+    const existing = seenPaths.get(p.scriptPath);
+    if (existing) {
+      mirrorMap[existing] = [...(mirrorMap[existing] ?? []), p.testCaseId];
+    } else {
+      seenPaths.set(p.scriptPath, p.testCaseId);
+      pairs.push(p);
+    }
+  }
+
+  return { pairs, mirrorMap };
 }
 
 async function nextRunSeq(): Promise<number> {
@@ -305,7 +316,7 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
       return;
     }
 
-    const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
+    const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
     const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
@@ -330,6 +341,7 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
       skippedTcIds,
+      mirroredTcIds: mirrorMap,
       environment: schedule.environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
@@ -372,7 +384,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 
     if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
 
-    const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
+    const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
     const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
@@ -398,6 +410,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
       skippedTcIds,
+      mirroredTcIds: mirrorMap,
       environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
@@ -429,7 +442,7 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
     });
     if (!tc) { res.status(404).json({ error: 'Test case not found' }); return; }
 
-    const resolved = await resolveScriptPaths(req.project.id, [testCaseId]);
+    const { pairs: resolved } = await resolveScriptPaths(req.project.id, [testCaseId]);
     if (resolved.length === 0) {
       res.status(400).json({ error: 'No script found for this test case. Generate a script first.' });
       return;
@@ -501,7 +514,7 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
     }
 
     const testCaseIds = tcs.map((t) => t.id);
-    const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
+    const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
     const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
@@ -527,6 +540,7 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
       skippedTcIds,
+      mirroredTcIds: mirrorMap,
       environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
@@ -604,7 +618,7 @@ router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunct
       res.status(400).json({ error: 'No test cases in this run to retry' }); return;
     }
 
-    const resolved = await resolveScriptPaths(req.project.id, testCaseIds);
+    const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
     const scriptedIds = new Set(resolved.map((r) => r.testCaseId));
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
@@ -630,6 +644,7 @@ router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunct
       testCaseIds: resolved.map((r) => r.testCaseId),
       scriptPaths: resolved.map((r) => r.scriptPath),
       skippedTcIds,
+      mirroredTcIds: mirrorMap,
       environment: run.environment,
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,

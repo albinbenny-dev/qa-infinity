@@ -207,17 +207,31 @@ router.post('/:suiteId/run', (async (req, res) => {
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } });
   const slug = project?.slug ?? projectId;
 
-  const scriptPairs: { testCaseId: string; scriptPath: string }[] = [];
+  const rawPairs: { testCaseId: string; scriptPath: string }[] = [];
   for (const tcId of testCaseIds) {
-    const path = await resolveScriptPath(slug, projectId, tcId);
-    if (path) scriptPairs.push({ testCaseId: tcId, scriptPath: path });
+    const p = await resolveScriptPath(slug, projectId, tcId);
+    if (p) rawPairs.push({ testCaseId: tcId, scriptPath: p });
   }
 
-  if (scriptPairs.length === 0) {
+  if (rawPairs.length === 0) {
     return res.status(400).json({ error: `No scripts found for suite "${suite.name}". Generate scripts first.` });
   }
 
-  const skippedTcIds = testCaseIds.filter(id => !scriptPairs.some(s => s.testCaseId === id));
+  // Deduplicate by scriptPath — same script linked to multiple TCs runs only once
+  const seenPaths = new Map<string, string>(); // scriptPath → representative tcId
+  const scriptPairs: { testCaseId: string; scriptPath: string }[] = [];
+  const mirrorMap: Record<string, string[]> = {};
+  for (const p of rawPairs) {
+    const rep = seenPaths.get(p.scriptPath);
+    if (rep) {
+      mirrorMap[rep] = [...(mirrorMap[rep] ?? []), p.testCaseId];
+    } else {
+      seenPaths.set(p.scriptPath, p.testCaseId);
+      scriptPairs.push(p);
+    }
+  }
+
+  const skippedTcIds = testCaseIds.filter(id => !rawPairs.some(s => s.testCaseId === id));
   const envConfig = await getEnvConfig(projectId, environment);
   const runSeq = await nextRunSeq();
   const runName = name ?? `Suite: ${suite.name}`;
@@ -233,6 +247,7 @@ router.post('/:suiteId/run', (async (req, res) => {
     testCaseIds: scriptPairs.map(r => r.testCaseId),
     scriptPaths: scriptPairs.map(r => r.scriptPath),
     skippedTcIds,
+      mirroredTcIds: mirrorMap,
     environment,
     envBaseUrl: envConfig.baseUrl,
     envUsername: envConfig.username,
