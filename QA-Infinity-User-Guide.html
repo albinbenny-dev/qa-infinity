@@ -255,7 +255,7 @@
       <div class="logo-icon">&#9854;</div>
       <div>
         <div class="logo-text">QA Infinity</div>
-        <div class="logo-sub">User Guide v1.1</div>
+        <div class="logo-sub">User Guide v1.2</div>
       </div>
     </a>
   </div>
@@ -289,6 +289,14 @@
     <a class="nav-link" href="#skills">Skills</a>
     <a class="nav-link" href="#reports">Reports</a>
     <a class="nav-link" href="#chat">AI Chat</a>
+
+    <div class="nav-section-label">QA Workflow</div>
+    <a class="nav-link" href="#perfect-workflow">Creating Perfect Tests</a>
+    <a class="nav-link sub" href="#wf-skills-setup">Step 1 — Skills Setup</a>
+    <a class="nav-link sub" href="#wf-skill-tiers">Skill Tiers &amp; Injection</a>
+    <a class="nav-link sub" href="#wf-generate-modal">Generate Script Modal</a>
+    <a class="nav-link sub" href="#wf-reference-skills">Reference Script Strategy</a>
+    <a class="nav-link sub" href="#wf-full-workflow">End-to-End Workflow</a>
 
     <div class="nav-section-label">Best Practices</div>
     <a class="nav-link" href="#best-practices">Tips for Best Output</a>
@@ -819,6 +827,330 @@
         <li><em>&ldquo;List all test cases that cover the checkout page.&rdquo;</em></li>
       </ul>
       <p>The chat agent has access to your project&rsquo;s TCs, scripts, run history, and reports. It can write new TCs directly to the library from the conversation.</p>
+    </section>
+
+    <hr>
+
+    <!-- PERFECT WORKFLOW -->
+    <section class="section" id="perfect-workflow">
+      <h2><span class="h2-icon">&#127775;</span> Creating Perfect Test Cases &amp; Scripts</h2>
+      <p class="lead" style="font-size:14px">A structured approach to getting accurate, runnable Robot Framework scripts on the first generation &mdash; without manual selector hunting. Follow this workflow once per feature and the system compounds from there.</p>
+
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Why this matters.</strong> The script agent never sees your live application. Every locator it writes is guesswork &mdash; unless you feed it verified, app-specific knowledge through Skills. The more accurate your skills library, the more accurate the generated scripts.</div>
+      </div>
+
+      <!-- STEP 1: SKILLS SETUP -->
+      <h3 id="wf-skills-setup" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">Step 1 &mdash; Build Your Skills Library</h3>
+      <p>Skills are the AI&rsquo;s knowledge base about your application. Set them up once per project/feature. They are automatically injected into every script generation prompt.</p>
+
+      <div class="callout danger" style="margin-top:4px">
+        <span class="callout-icon">&#128308;</span>
+        <div class="callout-body"><strong>Do this before generating any scripts.</strong> A project with no skills will produce guessed locators that will fail. A well-stocked skills library produces scripts that run on first attempt.</div>
+      </div>
+
+      <h3>1a. Login Skill <span class="tag tag-amber">GLOBAL &bull; Mandatory</span></h3>
+      <p>The most critical skill. The agent treats any <code>UI_FLOW</code> skill whose name or scope contains &ldquo;login&rdquo; as the <strong>MANDATORY LOGIN SKILL</strong> &mdash; it gets injected into every script with the highest-priority instruction banner and the agent is told to copy its locators verbatim.</p>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Go to <strong>Skills</strong> &rarr; <strong>+ New Skill</strong> &rarr; Type: <code>UI_FLOW</code></div>
+            <div class="step-desc">Name it exactly <strong>&ldquo;Login&rdquo;</strong> or include &ldquo;login&rdquo; in the name. Set <strong>Tier: GLOBAL</strong> so it injects into all scripts regardless of feature.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Use <strong>Capture from Browser</strong> to record the login flow</div>
+            <div class="step-desc">The system opens a real browser session. Perform the login yourself &mdash; click the username field, type credentials, click the submit button, wait for the dashboard. This captures the exact selectors (<code>css=#username</code>, <code>css=#kc-login</code>) with <code>[RECORDED IN LIVE BROWSER]</code> trust flag.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Verify the captured selectors make sense</div>
+            <div class="step-desc">Check that the username, password, and submit selectors look correct. Recorded skills get the highest trust &mdash; the agent copies them verbatim and will never substitute alternatives.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body"><strong>Keycloak / SSO apps.</strong> If your app uses an SSO redirect (Keycloak, ADFS, Azure AD), the recorder may capture the SSO URL. The agent is programmed to <em>ignore</em> the raw SSO redirect URL and always navigate to <code>${BASE_URL}</code> instead &mdash; the redirect happens automatically. The important part is capturing the correct username/password field selectors on the SSO page.</div>
+      </div>
+
+      <h3>1b. Navigation Helper Skills <span class="tag tag-cyan">UI_FLOW &bull; FEATURE-scoped</span></h3>
+      <p>For each feature group (use-case tag), create one navigation helper that records the exact menu path to reach the main page for that feature. This solves the biggest locator problem: sidebar navigation.</p>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>Ventas sidebar tip.</strong> The Ventas sidebar has two element types: <em>section headers</em> (collapse toggles, use <code>text=Stock Creation</code>) and <em>leaf links</em> (navigable pages, use <code>role=link[name="Stock"]</code>). The agent knows this distinction &mdash; but only if it has a recorded skill showing the full click sequence. Never skip recording the section header clicks; the sidebar starts collapsed.</div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:12px">
+        <table>
+          <thead><tr><th>Feature Group</th><th>Skill Name</th><th>What to Record</th></tr></thead>
+          <tbody>
+            <tr><td>Primary Sales</td><td>Navigate to New Order</td><td>Menu clicks from dashboard to the New Order form</td></tr>
+            <tr><td>Stock Management</td><td>Navigate to Stock Creation</td><td>Stock Creation &rarr; Stock Management &rarr; Stock page</td></tr>
+            <tr><td>Reports</td><td>Navigate to Reports</td><td>Reports menu expansion + sub-menu click</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Set the <strong>Feature Group</strong> on each navigation skill to match the use-case tag of the TCs it supports (e.g. <code>primary-sales</code>). The agent only receives feature-scoped skills when the TC it is generating carries the matching tag &mdash; keeping prompts focused and token-efficient.</p>
+
+      <h3>1c. Business Rules &amp; HLD <span class="tag tag-violet">FUNCTIONAL_RULES &bull; BUSINESS_USE_CASE</span></h3>
+      <p>Document the business logic the agent must respect when writing assertions and test data. Examples: mandatory fields, valid value ranges, workflow state rules, approval flows.</p>
+      <ul>
+        <li><strong>FUNCTIONAL_RULES</strong> &mdash; rules that govern field validation, form behaviour, workflow transitions (e.g. &ldquo;GRN cannot be submitted without a PO number&rdquo;).</li>
+        <li><strong>BUSINESS_USE_CASE</strong> &mdash; high-level descriptions of what the feature does end-to-end. Helps the agent understand <em>why</em> steps exist, not just <em>what</em> to click.</li>
+        <li><strong>HLD</strong> &mdash; high-level design documents. Upload as plain text or paste content. The agent uses these to write accurate expected-result assertions.</li>
+      </ul>
+      <p>Set the feature group to scope these skills to the relevant use-case. Keep content factual and terse &mdash; the agent reads every word in the prompt window.</p>
+
+      <h3>1d. Test Data <span class="tag tag-green">TEST_DATA &bull; FEATURE-scoped</span></h3>
+      <p>Provide concrete valid values the agent can use in generated scripts. Without this, the agent invents placeholder data that may fail field validation.</p>
+      <pre><code><span class="cm"># Example TEST_DATA skill content (paste as JSON or plain text)</span>
+<span class="key">validData</span>: {
+  <span class="str">"poNumber"</span>: <span class="str">"PO-2025-00142"</span>,
+  <span class="str">"grnNumber"</span>: <span class="str">"GRN-2025-00087"</span>,
+  <span class="str">"quantity"</span>: <span class="str">"10"</span>,
+  <span class="str">"warehouse"</span>: <span class="str">"Nairobi Central"</span>
+}
+<span class="key">referenceData</span>: {
+  <span class="str">"productCode"</span>: <span class="str">"SIM-STANDARD-250"</span>,
+  <span class="str">"supplierCode"</span>: <span class="str">"VENDOR-AIRTEL-01"</span>
+}</code><span class="pre-label">JSON</span></pre>
+      <p>Values in <code>validData</code> are injected verbatim into the <code>${TC_USERNAME}</code>/<code>${TC_PASSWORD}</code>-style variables. Values in <code>referenceData</code> supply option codes and look-up IDs for dropdown fields.</p>
+
+      <h3>1e. User Role <span class="tag tag-amber">USER_ROLE &bull; FEATURE-scoped</span></h3>
+      <p>If the feature requires testing under a specific role (e.g. &ldquo;Warehouse Manager&rdquo; vs &ldquo;Finance Reviewer&rdquo;), create a <code>USER_ROLE</code> skill that stores the test credentials for that role. The agent injects <code>TC_USERNAME</code> and <code>TC_PASSWORD</code> directly from this skill into the generated <code>*** Variables ***</code> section.</p>
+
+      <h3>1f. Locator Guide <span class="tag tag-violet">LOCATOR_GUIDE &bull; GLOBAL</span></h3>
+      <p>A freeform skill describing the application&rsquo;s ID and selector patterns. Useful when the app uses a consistent naming convention the agent should follow (e.g. <code>id=sixdee_field_&lt;name&gt;</code> for all form inputs). Set this as GLOBAL &mdash; it applies to every script in the project.</p>
+      <pre><code><span class="cm"># Example LOCATOR_GUIDE content</span>
+All form input fields follow the pattern: css=#sixdee_field_&lt;fieldName&gt;
+Custom dropdowns use: css=#sixdee_field_infinite_select_&lt;fieldName&gt;
+Submit buttons always have: css=button[type="submit"]
+Section navigation headers are &lt;a role="button"&gt; — use text= selector, not role=link.
+Leaf page links are &lt;a href&gt; — use role=link[name="exact name"] for precise matching.</code><span class="pre-label">plain text</span></pre>
+
+      <!-- SKILL TIERS -->
+      <h3 id="wf-skill-tiers" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">How Skill Injection Works</h3>
+      <p>The agent does not receive all skills every time. The injection pipeline filters and orders skills before the prompt is built:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Tier</th><th>When injected</th><th>Use for</th></tr></thead>
+          <tbody>
+            <tr><td><strong>GLOBAL</strong></td><td>Every script generation, regardless of feature</td><td>Login skill, Locator Guide, company-wide business rules</td></tr>
+            <tr><td><strong>FEATURE</strong></td><td>Only when TC&rsquo;s use-case tag matches the skill&rsquo;s Feature Group</td><td>Navigation helpers, feature-specific test data, HLD per module</td></tr>
+            <tr><td><strong>HISTORICAL</strong></td><td>Only when TC&rsquo;s use-case tag matches the skill&rsquo;s Feature Group</td><td>Past corrections, known failure patterns, QA engineer notes</td></tr>
+            <tr><td><strong>Pinned</strong></td><td>Always &mdash; explicitly selected in the Generate Script modal</td><td>Reference scripts, ad-hoc overrides for a specific generation run</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Pinned skills always come first in the prompt. The agent is told: <em>&ldquo;Mirror its locators, navigation, and RF syntax EXACTLY.&rdquo;</em> Auto-detected (tier-based) skills follow, deduplicated by name so the same skill never appears twice.</p>
+
+      <div class="callout info">
+        <span class="callout-icon">&#129302;</span>
+        <div class="callout-body">
+          <strong>What the agent sees per skill type:</strong>
+          <ul style="margin-top:6px;margin-bottom:0">
+            <li><strong>UI_FLOW (Login)</strong> &mdash; MANDATORY LOGIN SKILL banner + all recorded locators + annotated Playwright code with RF transformation rules inline</li>
+            <li><strong>UI_FLOW (Navigation)</strong> &mdash; Target URL + navigation path + locators + step-by-step flow</li>
+            <li><strong>FUNCTIONAL_RULES / HLD</strong> &mdash; Raw text injected as business context for assertions</li>
+            <li><strong>TEST_DATA</strong> &mdash; <code>validData</code> and <code>referenceData</code> as concrete values for variables</li>
+            <li><strong>USER_ROLE</strong> &mdash; <code>TC_USERNAME</code> / <code>TC_PASSWORD</code> values for the role</li>
+            <li><strong>LOCATOR_GUIDE</strong> &mdash; ID patterns and selector conventions</li>
+            <li><strong>HISTORICAL</strong> &mdash; QA corrections that must not be repeated</li>
+            <li><strong>REFERENCE_SCRIPT</strong> &mdash; VERIFIED PASSING EXAMPLE banner + TC snapshot + full verified script body</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- GENERATE SCRIPT MODAL -->
+      <h3 id="wf-generate-modal" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">Step 2 &mdash; Use the Generate Script Modal</h3>
+      <p>Open a TC in the Scripts page and click <strong>Generate Script</strong>. The redesigned modal gives you full control over which skills the agent receives.</p>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Auto-detect pre-fills skills for you</div>
+            <div class="step-desc">On open, the modal reads the TC&rsquo;s use-case tag and automatically selects all skills whose Feature Group matches. GLOBAL skills (Login, Locator Guide) are always included. You will see them appear as chips immediately.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Review the chips &mdash; deselect irrelevant skills</div>
+            <div class="step-desc">Click the &times; on any chip to remove it from this generation. Fewer, more relevant skills produce better output than a large noisy set. Remove navigation helpers for features the TC does not visit.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Add skills from the dropdown</div>
+            <div class="step-desc">Click the skill selector dropdown to browse all project skills. Add Reference Scripts from related TCs, or add a User Role skill if the TC requires a non-default role.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Generate</strong></div>
+            <div class="step-desc">The selected skill IDs are passed alongside the TC to the script agent. Pinned skills are injected first, then feature-matched skills are appended (deduped). The agent always generates in Robot Framework mode.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>Add context for the specific run.</strong> Use the <strong>Additional Context</strong> field to give the agent one-time instructions (e.g. &ldquo;this test must cover the negative case where the PO number is already closed&rdquo;). This is different from skills &mdash; it is ephemeral and not stored.</div>
+      </div>
+
+      <!-- REFERENCE SCRIPT STRATEGY -->
+      <h3 id="wf-reference-skills" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">The Reference Script Strategy</h3>
+      <p>This is the most powerful technique for getting accurate scripts at scale. Instead of only giving the agent <em>instructions</em>, you give it a <strong>verified working example</strong> &mdash; a TC and its passing script together as a skill. The agent mirrors the locators and navigation patterns exactly.</p>
+
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body"><strong>The locator problem.</strong> Even with Login and Navigation skills, the agent still guesses locators for form fields it has never seen. The only way to give it ground truth for a specific form is to show it a script that already worked against that form &mdash; that is what a Reference Script does.</div>
+      </div>
+
+      <h3>Why it works</h3>
+      <p>When the agent receives a <code>REFERENCE_SCRIPT</code> skill, it sees this in the prompt:</p>
+      <pre><code>&#9556;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9559;
+&#9553;  REFERENCE SCRIPT &mdash; VERIFIED PASSING EXAMPLE                &#9553;
+&#9553;  Mirror its locators, navigation, and RF syntax EXACTLY.    &#9553;
+&#9553;  Only modify test data and assertions as needed.             &#9553;
+&#9560;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9563;
+  TC: [TC-AIR-012] Create GRN from valid PO
+  Steps: 1. Navigate to Stock page ... 4. Fill GRN form ...
+  Verified Robot Framework script:
+  ```robot
+  *** Test Cases ***
+  ...</code><span class="pre-label">agent prompt</span></pre>
+      <p>The agent treats this as <em>authoritative ground truth</em> &mdash; it copies the same <code>css=#sixdee_field_infinite_select_warehouse</code>, <code>role=link[name="Stock"]</code>, and <code>Keyboard Input</code> patterns instead of guessing. For a negative test on the same form, only the test data and assertion step needs to change; all navigation and form-fill locators stay identical.</p>
+
+      <h3>How to create a Reference Script skill</h3>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Pick 2&ndash;4 &ldquo;happy path&rdquo; TCs for the feature</div>
+            <div class="step-desc">Choose TCs that cover the full navigation and the main form interactions for the feature. These become your reference anchors for all other TCs in the same feature group.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Generate and run the script</div>
+            <div class="step-desc">Use the Generate Script modal with the Login and Navigation skills pinned. Run the script. If it fails, fix it manually using the editor &mdash; update selectors, correct navigation steps.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">When the run passes, click <strong>&#128278; Ref Skill</strong> in the editor toolbar</div>
+            <div class="step-desc">This button appears next to the &#9733; Golden button when a TC and script are both active. Clicking it opens a confirmation dialog where you name the skill and choose its Feature Group. The current script body + TC snapshot are saved together as a <code>REFERENCE_SCRIPT</code> skill.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">For the next TC in the same feature: open Generate Script, the reference skill appears in the auto-detected chips</div>
+            <div class="step-desc">Since the Reference Script skill has the same Feature Group as the TC&rsquo;s use-case tag, the modal pre-selects it automatically. The agent receives the full verified example and produces a much more accurate script.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>The flywheel.</strong> Each passing script you promote becomes a better source of truth for the next generation. After 3&ndash;4 reference scripts per feature, the agent has seen every important locator in a verified context &mdash; new TCs (negative cases, edge cases, monkey tests) can be generated with near-zero manual correction needed.</div>
+      </div>
+
+      <!-- END-TO-END WORKFLOW -->
+      <h3 id="wf-full-workflow" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">Step 3 &mdash; End-to-End Workflow for a New Feature</h3>
+      <p>Follow this sequence when onboarding a new feature group into QA Infinity:</p>
+
+      <div class="feature-grid" style="grid-template-columns:1fr;gap:10px;margin:16px 0">
+
+        <div class="feature-card" style="flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="feature-card-icon">&#9312;</div>
+            <div class="feature-card-title">Set up GLOBAL skills (do once for the project)</div>
+          </div>
+          <div class="feature-card-desc">Create a <code>UI_FLOW</code> Login skill (GLOBAL tier) by recording your login flow in a live browser. Create a <code>LOCATOR_GUIDE</code> skill (GLOBAL) describing the application&rsquo;s selector patterns and component conventions.</div>
+        </div>
+
+        <div class="feature-card" style="flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="feature-card-icon">&#9313;</div>
+            <div class="feature-card-title">Set up FEATURE skills for the new feature group</div>
+          </div>
+          <div class="feature-card-desc">Create a Navigation Helper (<code>UI_FLOW</code>, FEATURE tier, Feature Group = use-case tag) by recording the menu path to the feature&rsquo;s main page. Add a <code>TEST_DATA</code> skill with valid PO numbers, product codes, warehouse names etc. Add a <code>FUNCTIONAL_RULES</code> skill with field validation rules and workflow constraints.</div>
+        </div>
+
+        <div class="feature-card" style="flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="feature-card-icon">&#9314;</div>
+            <div class="feature-card-title">Generate &amp; verify 2&ndash;4 happy-path TC scripts</div>
+          </div>
+          <div class="feature-card-desc">Pick the core happy-path TCs. Open Generate Script, confirm the auto-detected chips (Login + Navigation Helper + Test Data), click Generate. Run each script. Fix any selector issues manually in the Monaco editor. Re-run until green.</div>
+        </div>
+
+        <div class="feature-card" style="flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="feature-card-icon">&#9315;</div>
+            <div class="feature-card-title">Promote passing scripts to Reference Script skills</div>
+          </div>
+          <div class="feature-card-desc">For each passing script, click <strong>&#128278; Ref Skill</strong> in the editor toolbar. Name it descriptively (e.g. &ldquo;GRN Create &mdash; Happy Path&rdquo;). Set Feature Group to the same use-case tag. The verified TC + script body is saved as a <code>REFERENCE_SCRIPT</code> skill.</div>
+        </div>
+
+        <div class="feature-card" style="flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="feature-card-icon">&#9316;</div>
+            <div class="feature-card-title">Generate all remaining TCs (negative, edge, monkey)</div>
+          </div>
+          <div class="feature-card-desc">For every other TC in the feature group, open Generate Script. The Reference Script skills now appear as pre-selected chips alongside Login and Navigation. The agent mirrors the verified locators &mdash; it only needs to change test data and assertion logic. Most scripts will run without any manual correction.</div>
+        </div>
+
+        <div class="feature-card" style="flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="feature-card-icon">&#9317;</div>
+            <div class="feature-card-title">Build the reference library over time</div>
+          </div>
+          <div class="feature-card-desc">As more scripts pass, promote them to Reference Scripts. The library grows &mdash; covering more forms, more navigation paths, more interaction patterns. Each new TC in the project benefits from an increasingly accurate set of verified examples. This is the flywheel: passing scripts &rarr; Reference Skills &rarr; more passing scripts.</div>
+        </div>
+
+      </div>
+
+      <div class="callout info" style="margin-top:24px">
+        <span class="callout-icon">&#9997;&#65039;</span>
+        <div class="callout-body">
+          <strong>Quick reference &mdash; which skill type covers what need?</strong>
+          <div class="table-wrap" style="margin-top:10px;margin-bottom:0">
+            <table>
+              <thead><tr><th>Need</th><th>Skill Type</th><th>Tier</th></tr></thead>
+              <tbody>
+                <tr><td>Login / authentication flow</td><td><code>UI_FLOW</code> (name contains &ldquo;login&rdquo;)</td><td>GLOBAL</td></tr>
+                <tr><td>Menu navigation to a feature page</td><td><code>UI_FLOW</code></td><td>FEATURE</td></tr>
+                <tr><td>Field validation and workflow rules</td><td><code>FUNCTIONAL_RULES</code></td><td>FEATURE</td></tr>
+                <tr><td>High-level design / module description</td><td><code>HLD</code> or <code>BUSINESS_USE_CASE</code></td><td>FEATURE</td></tr>
+                <tr><td>Concrete test values (POs, codes, names)</td><td><code>TEST_DATA</code></td><td>FEATURE</td></tr>
+                <tr><td>Role-specific credentials</td><td><code>USER_ROLE</code></td><td>FEATURE</td></tr>
+                <tr><td>App-wide selector/ID patterns</td><td><code>LOCATOR_GUIDE</code></td><td>GLOBAL</td></tr>
+                <tr><td>Past failures &amp; QA corrections</td><td><code>HISTORICAL</code></td><td>FEATURE</td></tr>
+                <tr><td>Verified TC + passing script pair</td><td><code>REFERENCE_SCRIPT</code> (via &#128278; Ref Skill button)</td><td>FEATURE</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
 
     <hr>
