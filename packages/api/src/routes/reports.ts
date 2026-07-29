@@ -162,6 +162,7 @@ router.get('/runs/:runId/export', async (req: Request, res: Response, next: Next
                 id: true, tcId: true, title: true, description: true,
                 steps: true, expectedResult: true, type: true,
                 useCaseTag: true, priority: true, createdAt: true,
+                linkedScript: { select: { filename: true } },
               },
             },
             script: { select: { filename: true } },
@@ -402,7 +403,7 @@ router.get('/runs/:runId/export', async (req: Request, res: Response, next: Next
         r.testCase.expectedResult,
         actualResult,
         r.status,
-        r.script?.filename ?? '',
+        r.script?.filename ?? r.testCase.linkedScript?.filename ?? '',
         r.testCase.priority ?? 'Medium',
         r.testCase.type,
         r.testCase.createdAt.toISOString().split('T')[0],
@@ -727,14 +728,14 @@ router.get('/runs/:runId/rf-summary', async (req: Request, res: Response, next: 
       orderBy: { createdAt: 'asc' },
       select: {
         id: true, status: true, duration: true, errorMessage: true, rfLogPath: true,
-        testCase: { select: { id: true, tcId: true, title: true, useCaseTag: true } },
+        testCase: { select: { id: true, tcId: true, title: true, useCaseTag: true, linkedScript: { select: { filename: true } } } },
         script: { select: { filename: true } },
       },
     });
 
     const groupMap = new Map<string, typeof results>();
     for (const r of results) {
-      const key = r.script?.filename ?? '_unlinked';
+      const key = r.script?.filename ?? r.testCase.linkedScript?.filename ?? '_unlinked';
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(r);
     }
