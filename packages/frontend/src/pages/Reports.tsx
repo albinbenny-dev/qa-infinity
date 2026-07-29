@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useRBAC } from '../hooks/useRBAC';
 import { useProject } from '../hooks/useProjects';
@@ -167,6 +167,15 @@ export default function Reports() {
 
   const [days, setDays] = useState(30);
   const [page, setPage] = useState(1);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Auto-collapse sidebar on narrow windows
+  useEffect(() => {
+    function check() { setSidebarOpen(window.innerWidth >= 960); }
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   const { canAccessHealing } = useRBAC();
   const { data: stats } = useProjectStats(projectId);
@@ -260,7 +269,14 @@ export default function Reports() {
         </div>
 
         {/* ── 2-column main layout ──────────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(260px, 420px)', gap: 16, alignItems: 'start' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: sidebarOpen ? 'minmax(0, 1fr) 300px' : 'minmax(0, 1fr) 0px',
+          gap: sidebarOpen ? 16 : 0,
+          alignItems: 'start',
+          transition: 'grid-template-columns 0.2s ease, gap 0.2s ease',
+          position: 'relative',
+        }}>
 
           {/* LEFT column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
@@ -421,81 +437,70 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* RIGHT sidebar */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
-
-            {/* Flaky tests */}
-            <div
+          {/* RIGHT sidebar — collapsible */}
+          <div style={{ overflow: 'hidden', minWidth: 0, position: 'relative' }}>
+            {/* Toggle tab — always visible, hugs the left edge of the sidebar column */}
+            <button
+              onClick={() => setSidebarOpen((v) => !v)}
+              title={sidebarOpen ? 'Collapse panel' : 'Expand panel'}
               style={{
+                position: 'absolute',
+                left: sidebarOpen ? -12 : -28,
+                top: 12,
+                zIndex: 10,
+                width: 24,
+                height: 48,
+                borderRadius: sidebarOpen ? '8px 0 0 8px' : '8px',
                 background: 'var(--surface)',
                 border: '1px solid var(--border)',
-                borderRadius: 12,
-                overflow: 'hidden',
-                boxShadow: 'var(--shadow-card)',
+                borderRight: sidebarOpen ? 'none' : '1px solid var(--border)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 11,
+                color: 'var(--text-dim)',
+                boxShadow: '-2px 0 6px rgba(0,0,0,0.08)',
+                transition: 'left 0.2s ease',
               }}
             >
-              <div
-                style={{
-                  height: 3,
-                  background: 'linear-gradient(90deg, var(--amber), var(--skip))',
-                }}
-              />
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                  Flaky Tests
-                </span>
-                {(stats?.flakyTests.length ?? 0) > 0 && (
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: 'var(--amber)',
-                      background: 'rgba(251,191,36,0.12)',
-                      padding: '1px 7px',
-                      borderRadius: 100,
-                    }}
-                  >
-                    {stats!.flakyTests.length}
-                  </span>
-                )}
-              </div>
-              <div style={{ padding: '8px 0' }}>
-                <FlakyTestTable tests={stats?.flakyTests ?? []} />
-              </div>
-            </div>
+              {sidebarOpen ? '›' : '‹'}
+            </button>
 
-            {/* Email config */}
-            <div
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                overflow: 'hidden',
-                boxShadow: 'var(--shadow-card)',
-              }}
-            >
-              <div style={{ height: 3, background: 'var(--cool-accent)' }} />
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--border)',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: 'var(--text)',
-                }}
-              >
-                📧 Email Reports
+            {/* Sidebar content */}
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 16,
+              width: 300,
+              opacity: sidebarOpen ? 1 : 0,
+              transition: 'opacity 0.15s ease',
+              pointerEvents: sidebarOpen ? 'auto' : 'none',
+            }}>
+
+              {/* Flaky tests */}
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+                <div style={{ height: 3, background: 'linear-gradient(90deg, var(--amber), var(--skip))' }} />
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>⚠ Flaky Tests</span>
+                  {(stats?.flakyTests.length ?? 0) > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)', background: 'rgba(251,191,36,0.12)', padding: '1px 7px', borderRadius: 100 }}>
+                      {stats!.flakyTests.length}
+                    </span>
+                  )}
+                </div>
+                <div style={{ padding: '8px 0' }}>
+                  <FlakyTestTable tests={stats?.flakyTests ?? []} />
+                </div>
               </div>
-              <div style={{ padding: '14px 16px' }}>
-                <EmailConfig projectId={projectId ?? ''} />
+
+              {/* Email config */}
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+                <div style={{ height: 3, background: 'var(--cool-accent)' }} />
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                  📧 Email Reports
+                </div>
+                <div style={{ padding: '14px 16px' }}>
+                  <EmailConfig projectId={projectId ?? ''} />
+                </div>
               </div>
             </div>
           </div>
