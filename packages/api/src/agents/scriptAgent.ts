@@ -535,6 +535,20 @@ Rules:
 - Test Cases section should read like a business scenario — one keyword call per logical step
 - [Setup] and [Teardown] tags on the test case for browser open/close (teardown = Close Test Session)
 - The Close Test Session keyword MUST call Take Screenshot before Close Browser (see above)
+- NEVER declare Suite Setup / Suite Teardown in *** Settings *** for browser lifecycle. Browser
+  open/close belongs ONLY on the test case via [Setup]/[Teardown], as instructed above — never both.
+  If a test case has [Teardown]    Close Test Session AND *** Settings *** also has
+  Suite Teardown    Close Test Session, Close Test Session runs TWICE: once after the test (closing
+  the browser), then again at suite end — the second call crashes on Take Screenshot because no
+  page is open anymore ("Tried to take screenshot, but no page was open."). This is NON-NEGOTIABLE:
+      BAD *** Settings ***:
+          Suite Setup       Open Test Session
+          Suite Teardown    Close Test Session
+      GOOD *** Settings ***:
+          Library    Browser
+          (no Suite Setup / Suite Teardown line at all)
+  Every test case opens and closes its own session via [Setup]/[Teardown] — do not share one session
+  across the whole suite.
 - [Tags] on every test: use the use-case tag, test type, and "automation"
 - NEVER put inline comments (# Step X: ...) or raw Browser keywords inside *** Test Cases ***
   Every action belongs in a keyword. The test body must contain ONLY keyword calls.
