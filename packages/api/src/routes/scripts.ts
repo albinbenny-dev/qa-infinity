@@ -1061,7 +1061,7 @@ router.post(
         const filename = parts[parts.length - 1];
 
         try {
-          const existing = await prisma.script.findFirst({ where: { projectId, filename } });
+          const existing = await prisma.script.findFirst({ where: { projectId, filename, useCaseFolder: useCaseTag } });
           let testCasesCreated = 0;
 
           // Helper: auto-create a TC for this script if createTCs is enabled
