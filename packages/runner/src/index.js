@@ -766,22 +766,55 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      // For hierarchy projects, create an isolated run directory of symlinks into
-      // projectRoot. This lets Python open() follow symlinks to find files like
-      // Resources/TestData/*.xlsx (which need cwd=projectRoot), while any new
-      // directories the script creates (e.g. TestCases/) land in the temp dir and
-      // are cleaned up after the run — not polluting the actual project folder.
+      // For hierarchy projects, create an isolated run directory with file-level
+      // symlinks into projectRoot. cwd=runDir lets Python open() resolve relative
+      // paths (e.g. Resources/TestData/*.xlsx) via the symlinks, while any new
+      // directories the scripts create (e.g. TestCases/) stay in the temp dir.
+      //
+      // YAML variable files that use ${CURDIR} get a real expanded copy because
+      // Robot Framework does NOT substitute ${CURDIR} inside YAML values — the
+      // literal string is passed to Python which then fails to open() it.
       let runDir = null;
       let spawnCwd = hasHierarchy ? projectRoot : scriptDir;
       if (hasHierarchy) {
         try {
           runDir = fs.mkdtempSync('/tmp/robot-run-');
-          for (const entry of fs.readdirSync(projectRoot)) {
-            fs.symlinkSync(path.join(projectRoot, entry), path.join(runDir, entry));
-          }
+
+          // Recursively create file-level symlinks so individual files can be
+          // replaced (e.g. YAML files with expanded ${CURDIR}).
+          const symlinkTree = (src, dest) => {
+            fs.mkdirSync(dest, { recursive: true });
+            for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
+              const srcP = path.join(src, ent.name);
+              const dstP = path.join(dest, ent.name);
+              if (ent.isDirectory()) symlinkTree(srcP, dstP);
+              else fs.symlinkSync(srcP, dstP);
+            }
+          };
+          symlinkTree(projectRoot, runDir);
+
+          // Expand ${CURDIR} in YAML variable files. RF does not substitute
+          // built-in variables inside YAML values, so Python receives the
+          // literal string. Replace with the real absolute directory of each
+          // YAML file so open() works regardless of cwd.
+          const expandYaml = (dir) => {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              const p = path.join(dir, ent.name);
+              if (ent.isDirectory()) { expandYaml(p); continue; }
+              if (!ent.name.endsWith('.yaml') && !ent.name.endsWith('.yml')) continue;
+              const realSrc = fs.realpathSync(p);
+              const content = fs.readFileSync(realSrc, 'utf8');
+              if (!content.includes('${CURDIR}')) continue;
+              const fixed = content.split('${CURDIR}').join(path.dirname(realSrc));
+              fs.unlinkSync(p);
+              fs.writeFileSync(p, fixed, 'utf8');
+            }
+          };
+          expandYaml(runDir);
+
           spawnCwd = runDir;
         } catch {
-          runDir = null; // fall back to projectRoot on symlink failure
+          runDir = null; // fall back to projectRoot on any failure
         }
       }
 
