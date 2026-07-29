@@ -207,12 +207,12 @@ function KeywordRow({ kw }: { kw: RfKeyword }) {
 // ── Main modal ─────────────────────────────────────────────────────────────
 
 export default function RFDashboardModal({ open, onClose, projectId, run }: Props) {
-  const [filter, setFilter] = useState<'failed' | 'all'>('failed');
+  const [filter, setFilter] = useState<'failed' | 'all'>('all');
 
   const { data: summary, isLoading, error } = useRfSummary(projectId, run?.id ?? null);
 
-  // Reset to "failed" filter whenever a new run is opened
-  useEffect(() => { if (open) setFilter('failed'); }, [open, run?.id]);
+  // Reset to "all" filter whenever a new run is opened
+  useEffect(() => { if (open) setFilter('all'); }, [open, run?.id]);
 
   async function downloadExcel() {
     if (!projectId || !run) return;
@@ -351,25 +351,34 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
 
           {/* Filter bar */}
           <div style={{ padding: '8px 18px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 6, alignItems: 'center', background: 'var(--surface2)' }}>
-            {(['failed', 'all'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                style={{
-                  fontSize: 11, fontWeight: 600, padding: '3px 11px', borderRadius: 12,
-                  border: filter === f ? '1px solid rgba(220,38,38,0.35)' : '1px solid var(--border)',
-                  background: filter === f ? 'rgba(220,38,38,0.1)' : 'transparent',
-                  color: filter === f ? 'var(--fail)' : 'var(--text-dim)',
-                  cursor: 'pointer',
-                  textTransform: 'capitalize',
-                }}
-              >
-                {f === 'failed' ? `Failed (${stats?.failed ?? 0})` : `All (${stats?.total ?? 0})`}
-              </button>
-            ))}
-            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+            <button
+              onClick={() => setFilter('all')}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '3px 11px', borderRadius: 12,
+                border: filter === 'all' ? '1px solid rgba(37,99,171,0.35)' : '1px solid var(--border)',
+                background: filter === 'all' ? 'rgba(37,99,171,0.1)' : 'transparent',
+                color: filter === 'all' ? 'var(--cyan)' : 'var(--text-dim)',
+                cursor: 'pointer',
+              }}
+            >
+              All ({stats?.total ?? 0})
+            </button>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
               {groups.length} script{groups.length !== 1 ? 's' : ''} · {stats?.total ?? 0} TC{(stats?.total ?? 0) !== 1 ? 's' : ''}
             </span>
+            <button
+              onClick={() => setFilter('failed')}
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11, fontWeight: 600, padding: '3px 11px', borderRadius: 12,
+                border: filter === 'failed' ? '1px solid rgba(220,38,38,0.35)' : '1px solid var(--border)',
+                background: filter === 'failed' ? 'rgba(220,38,38,0.1)' : 'transparent',
+                color: filter === 'failed' ? 'var(--fail)' : 'var(--text-dim)',
+                cursor: 'pointer',
+              }}
+            >
+              Failed ({stats?.failed ?? 0})
+            </button>
           </div>
 
           {/* Body */}
@@ -389,38 +398,43 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
                 {filter === 'failed' ? 'No failures — all tests passed.' : 'No results found.'}
               </div>
             )}
-            {filteredGroups.map((group) => (
-              <div key={group.scriptFilename} style={{ borderBottom: '1px solid var(--border)' }}>
-                {/* Script group header */}
-                <div style={{
-                  padding: '7px 16px', background: 'var(--surface2)',
-                  borderBottom: '1px solid var(--border)',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  fontSize: 11, color: 'var(--text-mid)', fontWeight: 600,
-                }}>
-                  <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>🗂</span>
-                  <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{group.scriptFilename}</span>
-                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)' }}>
-                    {group.passed} pass
-                  </span>
-                  {group.failed > 0 && (
-                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(220,38,38,0.1)', color: 'var(--fail)' }}>
-                      {group.failed} fail
-                    </span>
+            {filteredGroups.map((group) => {
+              // Only show group header for scripts with multiple TCs (manually imported/linked).
+              // Auto-generated scripts are 1:1 with TCs so the filename adds no value.
+              const showGroupHeader = group.results.length > 1 || group.scriptFilename === '_unlinked';
+              return (
+                <div key={group.scriptFilename} style={{ borderBottom: '1px solid var(--border)' }}>
+                  {showGroupHeader && (
+                    <div style={{
+                      padding: '7px 16px', background: 'var(--surface2)',
+                      borderBottom: '1px solid var(--border)',
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      fontSize: 11, color: 'var(--text-mid)', fontWeight: 600,
+                    }}>
+                      <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>🗂</span>
+                      <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{group.scriptFilename}</span>
+                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)' }}>
+                        {group.passed} pass
+                      </span>
+                      {group.failed > 0 && (
+                        <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(220,38,38,0.1)', color: 'var(--fail)' }}>
+                          {group.failed} fail
+                        </span>
+                      )}
+                    </div>
                   )}
+                  {projectId && group.results.map((result) => (
+                    <TCRow
+                      key={result.id}
+                      projectId={projectId}
+                      runId={run!.id}
+                      result={result}
+                      autoExpand={result.id === firstFailedResultId}
+                    />
+                  ))}
                 </div>
-                {/* TC rows */}
-                {projectId && group.results.map((result) => (
-                  <TCRow
-                    key={result.id}
-                    projectId={projectId}
-                    runId={run!.id}
-                    result={result}
-                    autoExpand={result.id === firstFailedResultId}
-                  />
-                ))}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Footer */}
