@@ -505,6 +505,27 @@ router.delete('/project-file', async (req: Request, res: Response) => {
   try {
     const relPath = req.query.path as string;
     if (!relPath) { res.status(400).json({ error: 'path query param required' }); return; }
+
+    const { id: projectId } = req.project;
+    const isDir = !relPath.includes('.') || relPath.endsWith('/');
+
+    if (isDir) {
+      // Deleting a folder — remove all scripts whose useCaseFolder matches or whose
+      // relPath starts with this prefix
+      const folderName = relPath.replace(/\/$/, '').split('/').pop() ?? '';
+      const scripts = await prisma.script.findMany({
+        where: { projectId, useCaseFolder: folderName },
+        select: { id: true },
+      });
+      if (scripts.length) {
+        await prisma.script.deleteMany({ where: { id: { in: scripts.map(s => s.id) } } });
+      }
+    } else {
+      const filename = relPath.split('/').pop() ?? relPath;
+      const script = await prisma.script.findFirst({ where: { projectId, filename } });
+      if (script) await prisma.script.delete({ where: { id: script.id } });
+    }
+
     deleteProjectFile(req.project.slug, relPath);
     res.json({ ok: true });
   } catch (err: any) {
