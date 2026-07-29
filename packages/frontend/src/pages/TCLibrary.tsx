@@ -438,7 +438,7 @@ export default function TCLibrary() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* Topbar */}
       <Topbar
         breadcrumbs={[
@@ -624,21 +624,6 @@ export default function TCLibrary() {
           </div>
         </div>
 
-        {/* Selection action bar */}
-        <SelectionBar
-          visible={selectedIds.size > 0}
-          selectedCount={selectedIds.size}
-          useCaseOptions={useCases}
-          onMove={handleMove}
-          onAddToSuite={handleAddToSuite}
-          onClear={() => dispatch({ type: 'CLEAR_SELECTION' })}
-          onSendToExecution={handleSendToExecution}
-          onDelete={handleDeleteSelected}
-          onLinkScript={canWrite ? () => setLinkScriptOpen(true) : undefined}
-          onUnlinkScript={canWrite ? handleUnlinkSelected : undefined}
-          onRun={handleRunSelected}
-        />
-
         {/* UseCase groups */}
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: '40px', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-dim)' }}>
@@ -679,6 +664,32 @@ export default function TCLibrary() {
             })}
           </div>
         )}
+      </div>
+
+      {/* Selection action bar — floats above content, pinned to the bottom of the page */}
+      <div
+        style={{
+          position: 'absolute',
+          left: '20px',
+          right: '20px',
+          bottom: '16px',
+          zIndex: 40,
+          filter: selectedIds.size > 0 ? 'drop-shadow(0 8px 24px rgba(0,0,0,0.35))' : 'none',
+        }}
+      >
+        <SelectionBar
+          visible={selectedIds.size > 0}
+          selectedCount={selectedIds.size}
+          useCaseOptions={useCases}
+          onMove={handleMove}
+          onAddToSuite={handleAddToSuite}
+          onClear={() => dispatch({ type: 'CLEAR_SELECTION' })}
+          onSendToExecution={handleSendToExecution}
+          onDelete={handleDeleteSelected}
+          onLinkScript={canWrite ? () => setLinkScriptOpen(true) : undefined}
+          onUnlinkScript={canWrite ? handleUnlinkSelected : undefined}
+          onRun={handleRunSelected}
+        />
       </div>
 
       {editingTc && (
