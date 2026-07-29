@@ -17,6 +17,7 @@ import Chat from './pages/Chat';
 import Usage from './pages/Usage';
 import UserManagement from './pages/UserManagement';
 import Skills from './pages/Skills';
+import CopyExport from './pages/CopyExport';
 import { isAuthenticated } from './lib/auth';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { AppConfigProvider, useAppConfig } from './context/AppConfig';
@@ -37,36 +38,6 @@ function AiRoute({ element }: { element: React.ReactElement }) {
     return <Navigate to={slug ? `/projects/${slug}/dashboard` : '/projects'} replace />;
   }
   return element;
-}
-
-// ── Placeholder for screens not yet implemented ────────────────────────────
-function PlaceholderScreen({ title }: { title: string }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column',
-        gap: '12px',
-        padding: '40px',
-      }}
-    >
-      <div style={{ fontSize: '48px', color: 'var(--6d-orange)' }}>∞</div>
-      <h1 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text)' }}>{title}</h1>
-      <p
-        style={{
-          fontSize: '12px',
-          color: 'var(--text-dim)',
-          fontFamily: 'var(--font-mono)',
-          textAlign: 'center',
-        }}
-      >
-        This screen is coming in an upcoming stage.
-      </p>
-    </div>
-  );
 }
 
 // ── App ────────────────────────────────────────────────────────────────────
@@ -102,7 +73,7 @@ export default function App() {
           <Route path="/projects/:slug/reports"      element={<Reports />} />
           <Route path="/projects/:slug/chat"         element={<AiRoute element={<Chat />} />} />
           <Route path="/projects/:slug/skills"       element={<AiRoute element={<Skills />} />} />
-          <Route path="/projects/:slug/copy-export"  element={<PlaceholderScreen title="Copy / Export" />} />
+          <Route path="/projects/:slug/copy-export"  element={<CopyExport />} />
           <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
           <Route path="/usage"                       element={<AiRoute element={<Usage />} />} />
           <Route path="/admin/users"                 element={<UserManagement />} />

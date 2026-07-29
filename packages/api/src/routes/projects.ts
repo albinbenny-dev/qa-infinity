@@ -2,9 +2,11 @@ import { Router, Request, Response, NextFunction, RequestHandler } from 'express
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import JSZip from 'jszip';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
+import { exportZip, projectRoot } from '../services/scriptFileService.js';
 import {
   CreateProjectSchema,
   UpdateProjectSchema,
@@ -706,6 +708,202 @@ projectRouter.delete(
       try { await fs.promises.unlink(doc.filePath); } catch { /* ignore */ }
 
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── Export project as .qai.zip ────────────────────────────────────────────
+projectRouter.get(
+  '/export-project',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const project = req.project!;
+
+      // Fetch all TCs for this project
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const testCases = await (prisma.testCase as any).findMany({
+        where: { projectId: project.id },
+        orderBy: { sortOrder: 'asc' },
+      }) as Awaited<ReturnType<typeof prisma.testCase.findMany>>;
+
+      // Fetch all scripts for this project
+      const scripts = await prisma.script.findMany({
+        where: { projectId: project.id },
+      });
+
+      // Build TC-id → tcId lookup for script records
+      const idToTcId = new Map(testCases.map((t) => [t.id, t.tcId]));
+
+      const manifest = {
+        version: '1',
+        exportedAt: new Date().toISOString(),
+        project: {
+          name: project.name,
+          slug: project.slug,
+          description: project.description,
+          baseUrl: project.baseUrl,
+          color: project.color,
+        },
+        testCases: testCases.map((t) => ({
+          tcId: t.tcId,
+          title: t.title,
+          description: t.description,
+          steps: t.steps,
+          expectedResult: t.expectedResult,
+          type: t.type,
+          tags: t.tags,
+          useCaseTag: t.useCaseTag,
+          status: t.status,
+          priority: t.priority,
+          sortOrder: (t as any).sortOrder ?? 0,
+          prerequisiteTcId: t.prerequisiteTcId ? idToTcId.get(t.prerequisiteTcId) ?? null : null,
+        })),
+        scripts: scripts.map((s) => ({
+          filename: s.filename,
+          useCaseFolder: s.useCaseFolder,
+          scriptType: s.scriptType,
+          isCustomUpload: s.isCustomUpload,
+          tcId: s.testCaseId ? (idToTcId.get(s.testCaseId) ?? null) : null,
+        })),
+      };
+
+      // Get filesystem files as a ZIP buffer
+      const filesZipBuf = await exportZip(project.slug);
+      const filesZip = await JSZip.loadAsync(filesZipBuf);
+
+      // Build final ZIP
+      const zip = new JSZip();
+      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+      // Re-add all files/ from the inner zip under files/
+      const promises: Promise<void>[] = [];
+      filesZip.forEach((relPath, entry) => {
+        if (entry.dir) return;
+        promises.push(
+          entry.async('nodebuffer').then((buf) => {
+            zip.file(`files/${relPath}`, buf);
+          }),
+        );
+      });
+      await Promise.all(promises);
+
+      const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${project.slug}.qai.zip"`);
+      res.end(outBuf);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── Project import (must be before /:projectId catch-all) ─────────────────
+const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
+
+router.post(
+  '/import-project',
+  verifyToken as RequestHandler,
+  importUpload.single('file'),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const file = req.file;
+      if (!file) { res.status(400).json({ error: 'No file uploaded' }); return; }
+
+      const zip = await JSZip.loadAsync(file.buffer);
+
+      const manifestFile = zip.file('manifest.json');
+      if (!manifestFile) { res.status(400).json({ error: 'Invalid .qai.zip: missing manifest.json' }); return; }
+
+      const manifest = JSON.parse(await manifestFile.async('string'));
+      if (manifest.version !== '1') { res.status(400).json({ error: 'Unsupported export version' }); return; }
+
+      // Resolve slug conflict
+      let slug: string = manifest.project.slug;
+      if (await prisma.project.findUnique({ where: { slug } })) {
+        let i = 2;
+        while (await prisma.project.findUnique({ where: { slug: `${manifest.project.slug}-${i}` } })) i++;
+        slug = `${manifest.project.slug}-${i}`;
+      }
+
+      // Create project
+      const project = await prisma.project.create({
+        data: {
+          name: manifest.project.name,
+          slug,
+          description: manifest.project.description ?? '',
+          baseUrl: manifest.project.baseUrl ?? '',
+          color: manifest.project.color ?? '#22d3ee',
+          createdBy: req.user.id,
+        },
+      });
+
+      // Create TCs (first pass — no prerequisite links yet)
+      const tcIdToDbId = new Map<string, string>();
+      for (const tc of (manifest.testCases ?? [])) {
+        const created = await prisma.testCase.create({
+          data: {
+            projectId: project.id,
+            tcId: tc.tcId,
+            title: tc.title,
+            description: tc.description ?? null,
+            steps: tc.steps ?? '[]',
+            expectedResult: tc.expectedResult ?? '',
+            type: tc.type ?? 'UI',
+            tags: tc.tags ?? '[]',
+            useCaseTag: tc.useCaseTag ?? '_uncategorized',
+            status: tc.status ?? 'DRAFT',
+            priority: tc.priority ?? 'MEDIUM',
+            ...(tc.sortOrder !== undefined ? { sortOrder: tc.sortOrder } : {}),
+          },
+        });
+        tcIdToDbId.set(tc.tcId, created.id);
+      }
+
+      // Second pass — wire prerequisite links
+      for (const tc of (manifest.testCases ?? [])) {
+        if (tc.prerequisiteTcId && tcIdToDbId.has(tc.prerequisiteTcId)) {
+          await prisma.testCase.update({
+            where: { id: tcIdToDbId.get(tc.tcId)! },
+            data: { prerequisiteTcId: tcIdToDbId.get(tc.prerequisiteTcId)! },
+          });
+        }
+      }
+
+      // Create scripts
+      for (const s of (manifest.scripts ?? [])) {
+        await prisma.script.create({
+          data: {
+            projectId: project.id,
+            testCaseId: s.tcId ? (tcIdToDbId.get(s.tcId) ?? null) : null,
+            filename: s.filename,
+            useCaseFolder: s.useCaseFolder ?? '_uncategorized',
+            scriptType: s.scriptType ?? 'ROBOT',
+            isCustomUpload: s.isCustomUpload ?? true,
+            content: '',
+          },
+        });
+      }
+
+      // Extract project files
+      const root = projectRoot(slug);
+      fs.mkdirSync(root, { recursive: true });
+      const writes: Promise<void>[] = [];
+      zip.forEach((relPath, entry) => {
+        if (!relPath.startsWith('files/') || entry.dir) return;
+        const abs = path.join(root, relPath.slice('files/'.length));
+        writes.push(
+          entry.async('nodebuffer').then((buf) => {
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, buf);
+          }),
+        );
+      });
+      await Promise.all(writes);
+
+      res.json({ success: true, project: { id: project.id, slug: project.slug, name: project.name } });
     } catch (err) {
       next(err);
     }
