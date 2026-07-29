@@ -10,11 +10,9 @@ import {
 } from 'recharts';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useDashboard, useReportRuns } from '../hooks/useReports';
-import { useCreateRun } from '../hooks/useRuns';
 import { useProject } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import RunHistoryTable from '../components/reports/RunHistoryTable';
-import type { TopSuiteEntry } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -271,7 +269,7 @@ function CustomTooltip({
   );
 }
 
-// ── Top Suites Card ────────────────────────────────────────────────────────
+// ── Status dot (used by Flaky Tests) ──────────────────────────────────────
 
 const STATUS_DOT: Record<string, string> = {
   PASSED: 'var(--pass)',
@@ -281,208 +279,13 @@ const STATUS_DOT: Record<string, string> = {
   PENDING: 'var(--amber)',
 };
 
-function TopSuitesCard({
-  suites,
-  onNavigate,
-  onRunSuite,
-}: {
-  suites: TopSuiteEntry[];
-  onNavigate: () => void;
-  onRunSuite: (suite: TopSuiteEntry) => void;
-}) {
-  if (suites.length === 0) return null;
-
-  return (
-    <div
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 12,
-        overflow: 'hidden',
-        boxShadow: 'var(--shadow-card)',
-      }}
-    >
-      <div style={{ height: 3, background: 'linear-gradient(90deg, var(--violet), var(--cyan))' }} />
-      <div
-        style={{
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-          🏆 Top Suites by Run Frequency
-        </span>
-        <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
-          Last 5 runs shown
-        </span>
-      </div>
-      <div>
-        {suites.map((suite, idx) => {
-          const dots = suite.lastRunStatuses.slice(0, 5);
-          return (
-            <div
-              key={idx}
-              onClick={onNavigate}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '10px 16px',
-                borderBottom: idx < suites.length - 1 ? '1px solid var(--border)' : 'none',
-                cursor: 'pointer',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              {/* Rank badge */}
-              <span
-                style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: 6,
-                  background: idx === 0 ? 'rgba(244,123,32,0.15)' : 'var(--surface2)',
-                  border: `1px solid ${idx === 0 ? 'rgba(244,123,32,0.4)' : 'var(--border)'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 10,
-                  fontWeight: 800,
-                  color: idx === 0 ? '#F47B20' : 'var(--text-dim)',
-                  flexShrink: 0,
-                }}
-              >
-                {idx + 1}
-              </span>
-
-              {/* Suite name */}
-              <span
-                style={{
-                  flex: 1,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: 'var(--text)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {suite.name}
-              </span>
-
-              {/* Run count */}
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: 'var(--text-dim)',
-                  fontFamily: 'var(--font-mono)',
-                  flexShrink: 0,
-                  minWidth: 40,
-                  textAlign: 'right',
-                }}
-              >
-                ×{suite.runCount}
-              </span>
-
-              {/* Last 5 run dots */}
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
-                {dots.map((s, i) => (
-                  <span
-                    key={i}
-                    title={s}
-                    style={{
-                      display: 'inline-block',
-                      width: 10,
-                      height: 10,
-                      borderRadius: '50%',
-                      background: STATUS_DOT[s] ?? 'var(--text-dim)',
-                      flexShrink: 0,
-                    }}
-                  />
-                ))}
-                {/* Pad to 5 */}
-                {Array.from({ length: Math.max(0, 5 - dots.length) }).map((_, i) => (
-                  <span
-                    key={`pad-${i}`}
-                    style={{
-                      display: 'inline-block',
-                      width: 10,
-                      height: 10,
-                      borderRadius: '50%',
-                      background: 'var(--border)',
-                      flexShrink: 0,
-                    }}
-                  />
-                ))}
-              </div>
-
-              {/* Success % */}
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  padding: '2px 8px',
-                  borderRadius: 100,
-                  flexShrink: 0,
-                  minWidth: 42,
-                  textAlign: 'center',
-                  background:
-                    suite.successRate >= 90
-                      ? 'rgba(42,157,143,0.15)'
-                      : suite.successRate >= 60
-                      ? 'rgba(251,191,36,0.15)'
-                      : 'rgba(220,38,38,0.15)',
-                  color:
-                    suite.successRate >= 90
-                      ? 'var(--pass)'
-                      : suite.successRate >= 60
-                      ? 'var(--amber)'
-                      : 'var(--fail)',
-                }}
-              >
-                {suite.successRate}%
-              </span>
-
-              {/* Quick-run button */}
-              {suite.testCaseIds.length > 0 && (
-                <button
-                  title={`Run suite (${suite.testCaseIds.length} TCs)`}
-                  onClick={(e) => { e.stopPropagation(); onRunSuite(suite); }}
-                  style={{
-                    flexShrink: 0,
-                    padding: '3px 10px',
-                    background: 'var(--emerald-dim)',
-                    border: '1px solid rgba(42,157,143,0.3)',
-                    borderRadius: 5,
-                    color: 'var(--emerald)',
-                    fontSize: 10,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  ▶ Run
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ── Suite & Scheduler Run History Card ──────────────────────────────────────
 
 function SuiteSchedulerHistoryCard({
   projectId,
   onViewAll,
 }: {
-  projectId: string;
+  projectId: string | undefined;
   onViewAll: () => void;
 }) {
   const { data, isLoading } = useReportRuns(projectId, 1, {
@@ -497,11 +300,10 @@ function SuiteSchedulerHistoryCard({
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderRadius: 12,
-        overflow: 'hidden',
         boxShadow: 'var(--shadow-card)',
       }}
     >
-      <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))' }} />
+      <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))', borderRadius: '12px 12px 0 0' }} />
       <div
         style={{
           padding: '12px 16px',
@@ -555,18 +357,7 @@ export default function Dashboard() {
   const projectId = project?.id;
 
   const { data, isLoading } = useDashboard(projectId);
-  const createRun = useCreateRun(projectId ?? '');
   const { activeProject } = useProjectStore();
-  const envConfigs = (project?.envConfigs ?? activeProject?.envConfigs) ?? [];
-  const defaultEnv = envConfigs.find((e) => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
-
-  function handleRunSuite(suite: TopSuiteEntry) {
-    if (suite.testCaseIds.length === 0) return;
-    createRun.mutate(
-      { testCaseIds: suite.testCaseIds, environment: defaultEnv, name: suite.name },
-      { onSuccess: () => navigate(`/projects/${slug}/execution`) },
-    );
-  }
 
   const stats = data?.stats;
   const trend = (data?.trend ?? []).map((p) => ({
@@ -574,7 +365,7 @@ export default function Dashboard() {
     date: p.date.slice(5), // MM-DD
   }));
   const recentRuns = data?.recentRuns ?? [];
-  const topSuites = data?.topSuites ?? [];
+  const projectTokens = data?.projectTokens ?? 0;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -639,6 +430,11 @@ export default function Dashboard() {
                 label="Scripts Generated"
                 value={stats?.scriptsGenerated ?? 0}
                 accent="linear-gradient(90deg, var(--violet), #7c3aed)"
+              />
+              <StatTile
+                label="AI Tokens Used"
+                value={fmtK(projectTokens)}
+                accent="linear-gradient(90deg, #F47B20, var(--amber))"
               />
             </div>
 
@@ -748,13 +544,6 @@ export default function Dashboard() {
 
             </div>
 
-            {/* ── Top 5 Suites ──────────────────────────────────────────── */}
-            <TopSuitesCard
-              suites={topSuites}
-              onNavigate={() => navigate(`/projects/${slug}/reports`)}
-              onRunSuite={handleRunSuite}
-            />
-
             {/* ── Suite & Scheduler run history ─────────────────────────── */}
             <SuiteSchedulerHistoryCard
               projectId={projectId}
@@ -768,7 +557,6 @@ export default function Dashboard() {
                   background: 'var(--surface)',
                   border: '1px solid var(--border)',
                   borderRadius: 12,
-                  overflow: 'hidden',
                   boxShadow: 'var(--shadow-card)',
                 }}
               >
@@ -776,6 +564,7 @@ export default function Dashboard() {
                   style={{
                     height: 3,
                     background: 'linear-gradient(90deg, var(--amber), var(--skip))',
+                    borderRadius: '12px 12px 0 0',
                   }}
                 />
                 <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
