@@ -492,49 +492,8 @@ function ExpandedRunDetail({
         </table>
       </div>
 
-      {/* Footer actions */}
-      <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface2)' }}>
-        {onExport && (
-          <button
-            onClick={() => onExport(runId)}
-            style={{
-              padding: '5px 14px',
-              borderRadius: 6,
-              background: 'rgba(164,123,250,0.12)',
-              color: 'var(--violet)',
-              border: '1px solid rgba(164,123,250,0.25)',
-              cursor: 'pointer',
-              fontSize: 11,
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            📥 Download Excel Report
-          </button>
-        )}
-        {onHeal && runStatus === 'FAILED' && (
-          <button
-            onClick={onHeal}
-            disabled={isHealing}
-            style={{
-              padding: '5px 14px',
-              borderRadius: 6,
-              background: isHealing ? 'rgba(244,123,32,0.06)' : 'rgba(244,123,32,0.12)',
-              color: isHealing ? 'rgba(244,123,32,0.5)' : '#F47B20',
-              border: '1px solid rgba(244,123,32,0.25)',
-              cursor: isHealing ? 'not-allowed' : 'pointer',
-              fontSize: 11,
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            {isHealing ? '⏳ Sending…' : '🔧 Heal Failed'}
-          </button>
-        )}
+      {/* Footer — run ID only */}
+      <div style={{ padding: '6px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', background: 'var(--surface2)' }}>
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
           {runId.slice(0, 20)}…
         </span>
@@ -666,56 +625,40 @@ export default function RunHistoryTable({ projectId, runs, onExport, initialExpa
                 </span>
               </div>
               {/* Quick action buttons — stop propagation so they don't toggle the row */}
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                 {(run.status === 'PASSED' || run.status === 'FAILED' || run.status === 'CANCELLED') && (
                   <button
                     onClick={() => handleRetryRun(run.id)}
                     disabled={retryRun.isPending}
-                    title="Re-run all test cases from this run"
+                    title="Re-run"
                     style={{
-                      padding: '3px 10px', borderRadius: 6,
+                      width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       background: retryRun.isPending ? 'rgba(37,99,171,0.06)' : 'rgba(37,99,171,0.12)',
                       color: retryRun.isPending ? 'rgba(37,99,171,0.4)' : 'var(--cyan)',
                       border: '1px solid rgba(37,99,171,0.25)',
                       cursor: retryRun.isPending ? 'not-allowed' : 'pointer',
-                      fontSize: 11, fontWeight: 600,
+                      fontSize: 14,
                     }}
                   >
-                    {retryRun.isPending ? '⏳' : '↻'} Retry
-                  </button>
-                )}
-                {canAccessHealing && failed > 0 && (run.status === 'FAILED') && (
-                  <button
-                    onClick={() => handleHeal(run.id)}
-                    disabled={triggerHeal.isPending}
-                    title="Send failed tests to Healing Agent"
-                    style={{
-                      padding: '3px 10px', borderRadius: 6,
-                      background: triggerHeal.isPending ? 'rgba(244,123,32,0.06)' : 'rgba(244,123,32,0.12)',
-                      color: triggerHeal.isPending ? 'rgba(244,123,32,0.45)' : '#F47B20',
-                      border: '1px solid rgba(244,123,32,0.25)',
-                      cursor: triggerHeal.isPending ? 'not-allowed' : 'pointer',
-                      fontSize: 11, fontWeight: 600,
-                    }}
-                  >
-                    🔧 Heal
+                    {retryRun.isPending ? '⏳' : '↺'}
                   </button>
                 )}
                 {onExport && (
                   <button
                     onClick={() => onExport(run.id)}
-                    style={{ padding: '3px 10px', borderRadius: 6, background: 'rgba(164,123,250,0.12)', color: 'var(--violet)', border: '1px solid rgba(164,123,250,0.25)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
+                    title="Export to Excel"
+                    style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(164,123,250,0.12)', color: 'var(--violet)', border: '1px solid rgba(164,123,250,0.25)', cursor: 'pointer', fontSize: 14 }}
                   >
-                    Export
+                    ⬇
                   </button>
                 )}
                 {(run.status === 'PASSED' || run.status === 'FAILED' || run.status === 'CANCELLED') && (
                   <button
                     onClick={() => setDashboardRun(run)}
-                    title="View RF run dashboard"
-                    style={{ padding: '3px 10px', borderRadius: 6, background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)', border: '1px solid rgba(52,211,153,0.25)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
+                    title="RF Dashboard"
+                    style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(52,211,153,0.1)', color: 'var(--emerald)', border: '1px solid rgba(52,211,153,0.25)', cursor: 'pointer', fontSize: 14 }}
                   >
-                    Dashboard
+                    ◫
                   </button>
                 )}
               </div>
