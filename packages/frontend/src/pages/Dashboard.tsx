@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   BarChart,
@@ -12,7 +13,7 @@ import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useDashboard, useReportRuns } from '../hooks/useReports';
 import { useProject } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
-import RunHistoryTable from '../components/reports/RunHistoryTable';
+import type { ReportRun } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -279,69 +280,133 @@ const STATUS_DOT: Record<string, string> = {
   PENDING: 'var(--amber)',
 };
 
-// ── Suite & Scheduler Run History Card ──────────────────────────────────────
+// ── Suite History Card ─────────────────────────────────────────────────────
 
-function SuiteSchedulerHistoryCard({
+const STATUS_DOT_COLOR: Record<string, string> = {
+  PASSED: 'var(--pass)',
+  FAILED: 'var(--fail)',
+  RUNNING: 'var(--cyan)',
+  CANCELLED: 'var(--text-dim)',
+  PENDING: 'var(--amber)',
+};
+
+function passRateBg(rate: number) {
+  if (rate >= 80) return { bg: 'rgba(42,157,143,0.15)', color: 'var(--pass)' };
+  if (rate >= 50) return { bg: 'rgba(251,191,36,0.15)', color: 'var(--amber)' };
+  return { bg: 'rgba(220,38,38,0.15)', color: 'var(--fail)' };
+}
+
+function fmtRunDate(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+}
+
+function SuiteHistoryCard({
   projectId,
+  slug,
+  navigate,
   onViewAll,
 }: {
   projectId: string | undefined;
+  slug: string | undefined;
+  navigate: (path: string) => void;
   onViewAll: () => void;
 }) {
-  const { data, isLoading } = useReportRuns(projectId, 1, {
-    triggerTypes: ['SUITE', 'SCHEDULED'],
-    limit: 8,
-  });
-  const runs = data?.runs ?? [];
+  const { data } = useReportRuns(projectId, 1, { triggerTypes: ['SUITE', 'SCHEDULED'], limit: 50 });
+  const runs: ReportRun[] = data?.runs ?? [];
+  const [expandedSuite, setExpandedSuite] = useState<string | null>(null);
+
+  const suiteMap = new Map<string, ReportRun[]>();
+  for (const run of runs) {
+    if (!suiteMap.has(run.name)) suiteMap.set(run.name, []);
+    suiteMap.get(run.name)!.push(run);
+  }
+  const suites = Array.from(suiteMap.entries());
 
   return (
-    <div
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 12,
-        boxShadow: 'var(--shadow-card)',
-      }}
-    >
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-card)' }}>
       <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))', borderRadius: '12px 12px 0 0' }} />
-      <div
-        style={{
-          padding: '12px 16px',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-          🗂️ Suite &amp; Scheduler Run History
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>🗂 Test Suites</span>
+        <span onClick={onViewAll} style={{ fontSize: 10, color: 'var(--text-dim)', cursor: 'pointer' }}>
+          {suites.length} suites · click to view runs
         </span>
-        <button
-          onClick={onViewAll}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--cyan)',
-            fontSize: 11,
-            fontWeight: 700,
-            cursor: 'pointer',
-          }}
-        >
-          View All →
-        </button>
       </div>
-      {isLoading ? (
-        <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
-          Loading…
-        </div>
-      ) : runs.length === 0 ? (
-        <div style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, lineHeight: 1.7 }}>
-          No suite or scheduled runs yet.<br />
-          <span style={{ color: 'var(--text-mid)' }}>Run a suite or a schedule to see its history here.</span>
+
+      {runs.length === 0 ? (
+        <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+          No suite or scheduled runs yet.
         </div>
       ) : (
-        <div style={{ padding: '10px 12px' }}>
-          <RunHistoryTable projectId={projectId} runs={runs} />
+        <div>
+          {suites.map(([suiteName, suiteRuns]) => {
+            const isExpanded = expandedSuite === suiteName;
+            const last5 = suiteRuns.slice(0, 5);
+            const isScheduled = suiteRuns.some((r) => r.triggerType === 'SCHEDULED');
+            const allPass = suiteRuns.reduce((acc, r) => acc + r.results.filter((x) => x.status === 'PASSED').length, 0);
+            const allTotal = suiteRuns.reduce((acc, r) => acc + r._count.results, 0);
+            const overallRate = allTotal > 0 ? Math.round((allPass / allTotal) * 100) : 0;
+            const { bg, color } = passRateBg(overallRate);
+
+            return (
+              <div key={suiteName}>
+                <div
+                  onClick={() => setExpandedSuite(isExpanded ? null : suiteName)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={{ fontSize: 10, color: 'var(--cyan)', flexShrink: 0 }}>{isExpanded ? '▼' : '▶'}</span>
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{suiteName}</span>
+                  {isScheduled && (
+                    <span style={{ fontSize: 9, color: 'var(--amber)', background: 'rgba(251,191,36,0.12)', borderRadius: 100, padding: '1px 6px', flexShrink: 0 }}>Scheduled</span>
+                  )}
+                  <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>×{suiteRuns.length}</span>
+                  <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
+                    {Array.from({ length: 5 }).map((_, i) => {
+                      const run = last5[i];
+                      return (
+                        <span key={i} style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: run ? (STATUS_DOT_COLOR[run.status] ?? 'var(--text-dim)') : 'var(--border)' }} />
+                      );
+                    })}
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 100, background: bg, color, flexShrink: 0 }}>{overallRate}%</span>
+                </div>
+
+                {isExpanded && (
+                  <div style={{ background: 'rgba(0,0,0,0.12)' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-dim)', padding: '8px 16px 4px 36px' }}>
+                      {suiteRuns.length} total runs · {overallRate}% overall success rate · Last run: {fmtRunDate(suiteRuns[0].createdAt)}
+                    </div>
+                    {suiteRuns.slice(0, 7).map((run) => {
+                      const pass = run.results.filter((r) => r.status === 'PASSED').length;
+                      const fail = run.results.filter((r) => r.status === 'FAILED').length;
+                      const total = run._count.results;
+                      const rate = total > 0 ? Math.round((pass / total) * 100) : 0;
+                      const { bg: rb, color: rc } = passRateBg(rate);
+                      return (
+                        <div
+                          key={run.id}
+                          onClick={() => navigate(`/projects/${slug}/reports/runs/${run.id}`)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px 7px 36px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', width: 50, flexShrink: 0 }}>#{String(run.runSeq).padStart(4, '0')}</span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, minWidth: 110 }}>{fmtRunDate(run.createdAt)}</span>
+                          <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>{total} total</span>
+                          <span style={{ fontSize: 11, color: 'var(--pass)', flexShrink: 0 }}>✓ {pass}</span>
+                          <span style={{ fontSize: 11, color: 'var(--fail)', flexShrink: 0 }}>✗ {fail}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 100, background: rb, color: rc, flexShrink: 0 }}>{rate}%</span>
+                          <span style={{ fontSize: 10, color: STATUS_DOT_COLOR[run.status] ?? 'var(--text-dim)', flexShrink: 0 }}>{run.status}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -544,9 +609,11 @@ export default function Dashboard() {
 
             </div>
 
-            {/* ── Suite & Scheduler run history ─────────────────────────── */}
-            <SuiteSchedulerHistoryCard
+            {/* ── Suite history ──────────────────────────────────────────── */}
+            <SuiteHistoryCard
               projectId={projectId}
+              slug={slug}
+              navigate={navigate}
               onViewAll={() => navigate(`/projects/${slug}/reports`)}
             />
 

@@ -750,11 +750,11 @@ const UC_ORDER = [
   'Sales API', 'Secondary Sales', 'Distributor API',
 ];
 
-function SuiteForm({ mode, initial, testCases, onSave, onCancel: _onCancel, isSaving }: {
+function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave, onCancel: _onCancel, isSaving }: {
   mode: 'create' | 'edit';
   initial?: { name: string; stages: SuiteStage[] };
   testCases: TestCase[];
-  scriptedTcIds?: Set<string>; // kept for call-site compat, unused
+  scriptedTcIds?: Set<string>;
   onSave: (data: { name: string; stages: SuiteStage[] }) => void;
   onCancel: () => void;
   isSaving: boolean;

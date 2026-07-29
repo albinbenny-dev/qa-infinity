@@ -12,6 +12,7 @@ import Execution from './pages/Execution';
 import Healing from './pages/Healing';
 import Dashboard from './pages/Dashboard';
 import Reports from './pages/Reports';
+import RunDetail from './pages/RunDetail';
 import Scheduler from './pages/Scheduler';
 import Chat from './pages/Chat';
 import Usage from './pages/Usage';
@@ -71,6 +72,7 @@ export default function App() {
           <Route path="/projects/:slug/scheduler"    element={<Scheduler />} />
           <Route path="/projects/:slug/healing"      element={<AiRoute element={<Healing />} />} />
           <Route path="/projects/:slug/reports"      element={<Reports />} />
+          <Route path="/projects/:slug/reports/runs/:runId" element={<RunDetail />} />
           <Route path="/projects/:slug/chat"         element={<AiRoute element={<Chat />} />} />
           <Route path="/projects/:slug/skills"       element={<AiRoute element={<Skills />} />} />
           <Route path="/projects/:slug/copy-export"  element={<CopyExport />} />
