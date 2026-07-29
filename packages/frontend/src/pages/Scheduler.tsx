@@ -1572,7 +1572,12 @@ export default function Scheduler() {
     try {
       await api.post(`/projects/${projectId}/suites/${suite.id}/run`, {});
       toast.success('Run queued — check Execution for live logs');
-    } catch (e) { toast.error((e as Error).message ?? 'Failed to trigger'); }
+    } catch (e) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? (e as Error).message
+        ?? 'Failed to trigger';
+      toast.error(msg);
+    }
     finally { setSuiteRunNowId(null); }
   }
 

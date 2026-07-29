@@ -39,7 +39,7 @@ export interface RunJobPayload {
   headless: boolean;
   browser: 'chromium' | 'firefox' | 'webkit';
   hostBrowser?: boolean;
-  triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP' | 'HEAL_RERUN';
+  triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP' | 'HEAL_RERUN' | 'SUITE';
 }
 
 export interface HealJobPayload {
