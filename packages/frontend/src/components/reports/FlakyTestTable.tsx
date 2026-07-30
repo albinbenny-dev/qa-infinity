@@ -20,7 +20,7 @@ export default function FlakyTestTable({ tests }: FlakyTestTableProps) {
   }
 
   return (
-    <div style={{ overflow: 'auto' }}>
+    <div style={{ overflow: 'auto', height: '100%' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr>
@@ -37,6 +37,9 @@ export default function FlakyTestTable({ tests }: FlakyTestTableProps) {
                   color: 'var(--text-dim)',
                   borderBottom: '1px solid var(--border)',
                   whiteSpace: 'nowrap',
+                  position: 'sticky',
+                  top: 0,
+                  background: 'var(--surface)',
                 }}
               >
                 {h}

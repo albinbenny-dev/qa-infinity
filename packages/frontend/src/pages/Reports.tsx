@@ -170,7 +170,7 @@ export default function Reports() {
   const { canAccessHealing } = useRBAC();
   const { data: stats } = useProjectStats(projectId);
   const { data: trend = [] } = useRunTrend(projectId, days);
-  const { data: runsData } = useReportRuns(projectId, page);
+  const { data: runsData } = useReportRuns(projectId, page, { limit: 30 });
 
   const runs = runsData?.runs ?? [];
   const totalPages = runsData?.pages ?? 1;
@@ -248,7 +248,7 @@ export default function Reports() {
         </div>
 
         {/* ── 50/50 row: trend chart + flaky tests ─────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'stretch' }}>
 
           {/* Trend chart */}
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
@@ -285,9 +285,9 @@ export default function Reports() {
           </div>
 
           {/* Flaky tests */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
-            <div style={{ height: 3, background: 'linear-gradient(90deg, var(--amber), var(--skip))' }} />
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ height: 3, background: 'linear-gradient(90deg, var(--amber), var(--skip))', flexShrink: 0 }} />
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>⚠ Flaky Tests</span>
               {(stats?.flakyTests.length ?? 0) > 0 && (
                 <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)', background: 'rgba(251,191,36,0.12)', padding: '1px 7px', borderRadius: 100 }}>
@@ -295,7 +295,7 @@ export default function Reports() {
                 </span>
               )}
             </div>
-            <div style={{ padding: '8px 0' }}>
+            <div style={{ padding: '8px 0', flex: 1, minHeight: 0, overflow: 'hidden' }}>
               <FlakyTestTable tests={stats?.flakyTests ?? []} />
             </div>
           </div>
@@ -309,7 +309,7 @@ export default function Reports() {
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Run History</span>
             <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{runsData?.total ?? 0} total</span>
           </div>
-          <div style={{ padding: '12px 16px' }}>
+          <div style={{ padding: '12px 16px', maxHeight: 1800, overflow: 'auto' }}>
             <RunHistoryTable
               projectId={projectId}
               runs={runs}
