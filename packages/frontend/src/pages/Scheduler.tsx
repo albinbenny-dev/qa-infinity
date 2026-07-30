@@ -17,6 +17,7 @@ import {
 import { useSuites, useCreateSuite, useUpdateSuite, useDeleteSuite } from '../hooks/useSuites';
 import { useScripts } from '../hooks/useScripts';
 import { useProjectStore } from '../stores/projectStore';
+import EmailConfig from '../components/reports/EmailConfig';
 import type { Schedule, Suite, SuiteStage, TestCase, EnvConfig } from '../types';
 import { api } from '../lib/api';
 import type { RunListItem } from '../hooks/useRuns';
@@ -1984,6 +1985,17 @@ export default function Scheduler() {
                     <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{scheduledRuns.length} total</span>
                   </div>
                   <RecentRunsTable runs={scheduledRuns.slice(0, 20)} loading={runsLoading} />
+                </div>
+
+                {/* Email reports config */}
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+                  <div style={{ height: 3, background: 'var(--cool-accent)' }} />
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                    📧 Email Reports
+                  </div>
+                  <div style={{ padding: '14px 16px' }}>
+                    <EmailConfig projectId={activeProject?.id ?? ''} />
+                  </div>
                 </div>
               </>
             )}

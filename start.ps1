@@ -1,17 +1,22 @@
 # ==============================================================================
-# QA Infinity - Local Development Startup Script
+# QA Infinity — Windows PowerShell Startup Script
 #
 # First time:  .\start.ps1          (sets up .env, builds images, starts stack)
-# After that:  .\start.ps1          (starts existing stack - fast)
+# After that:  .\start.ps1          (starts existing stack — fast)
 #              .\start.ps1 -Build   (force-rebuild images after code changes)
+#              .\start.ps1 -Reset   (cancel all active/stuck runs, then start)
 #              .\start.ps1 -Stop    (stop all containers)
 #              .\start.ps1 -Logs    (tail live logs)
+#
+# Note: if blocked on first run, allow scripts in the current user scope:
+#   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 # ==============================================================================
 
 param(
     [switch]$Build,
     [switch]$Stop,
-    [switch]$Logs
+    [switch]$Logs,
+    [switch]$Reset
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,22 +33,44 @@ Write-Host ""
 
 Push-Location $PSScriptRoot
 
+# ==============================================================================
+# Detect Docker Compose (V2 plugin: `docker compose`  vs  V1: `docker-compose`)
+# ==============================================================================
+$script:ComposeV2 = $false
+& docker compose version 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    $script:ComposeV2 = $true
+} elseif (-not (Get-Command docker-compose -ErrorAction SilentlyContinue)) {
+    Write-Err "Neither 'docker compose' (V2) nor 'docker-compose' (V1) found."
+    Write-Host "    Install Docker Desktop and try again." -ForegroundColor Red
+    Pop-Location; exit 1
+}
+
+# Wrapper with NO param() block so -d / -f / --flags pass through via $args unchanged
+function Compose {
+    if ($script:ComposeV2) {
+        & docker compose @args
+    } else {
+        & docker-compose @args
+    }
+}
+
 # -- Stop mode -----------------------------------------------------------------
 if ($Stop) {
     Write-Step "Stopping QA Infinity"
-    docker compose stop
+    Compose stop
     Write-Ok "All containers stopped. Data is preserved."
     Pop-Location; exit 0
 }
 
 # -- Logs mode -----------------------------------------------------------------
 if ($Logs) {
-    docker compose logs -f --tail=50
+    Compose logs '-f' '--tail=50'
     Pop-Location; exit 0
 }
 
 # ==============================================================================
-# STEP 1 - Check Docker
+# STEP 1 — Check Docker
 # ==============================================================================
 Write-Step "Checking Docker"
 try {
@@ -51,17 +78,17 @@ try {
     if ($LASTEXITCODE -ne 0) { throw }
     Write-Ok "Docker is running"
 } catch {
-    Write-Err "Docker is not running. Please start Docker Desktop and try again."
+    Write-Err "Docker is not running. Start Docker Desktop and try again."
     Pop-Location; exit 1
 }
 
 # ==============================================================================
-# STEP 2 - First-time .env setup
+# STEP 2 — First-time .env setup
 # ==============================================================================
 Write-Step "Checking environment configuration"
 
 if (-not (Test-Path "$PSScriptRoot\.env")) {
-    Write-Warn ".env not found - creating from .env.example"
+    Write-Warn ".env not found — creating from .env.example"
     Copy-Item "$PSScriptRoot\.env.example" "$PSScriptRoot\.env"
 
     Write-Host ""
@@ -73,14 +100,13 @@ if (-not (Test-Path "$PSScriptRoot\.env")) {
     Write-Host "  |    JWT_SECRET         - paste 2-3 random UUIDs      |" -ForegroundColor Yellow
     Write-Host "  |    ANTHROPIC_API_KEY  - or set LLM_PROVIDER and key |" -ForegroundColor Yellow
     Write-Host "  |                                                     |" -ForegroundColor Yellow
-    Write-Host "  |  Opening .env in Notepad - save and close to cont.  |" -ForegroundColor Yellow
+    Write-Host "  |  Opening .env in Notepad - save and close to cont. |" -ForegroundColor Yellow
     Write-Host "  +-----------------------------------------------------+" -ForegroundColor Yellow
     Write-Host ""
 
     Start-Process notepad "$PSScriptRoot\.env" -Wait
 }
 
-# Validate required fields
 function Read-EnvVar {
     param([string]$key)
     $line = Get-Content "$PSScriptRoot\.env" -ErrorAction SilentlyContinue |
@@ -111,18 +137,19 @@ if ($missing.Count -gt 0) {
 Write-Ok ".env is configured (provider: $provider)"
 
 # ==============================================================================
-# STEP 3 - Build or pull images
+# STEP 3 — Build or pull images
 # ==============================================================================
-$isFirstRun = -not (docker images -q qa-infinity-qa-api:latest 2>$null)
+$imageId    = & docker images -q qa-infinity-qa-api:latest 2>$null
+$isFirstRun = [string]::IsNullOrWhiteSpace($imageId)
 
 if ($Build -or $isFirstRun) {
     if ($isFirstRun) {
-        Write-Step "First run - building Docker images (this takes ~3 minutes)"
+        Write-Step "First run — building Docker images (this takes ~3-5 minutes)"
+        Compose build qa-api qa-runner qa-ui
     } else {
         Write-Step "Building Docker images (--no-cache)"
+        Compose build '--no-cache' qa-api qa-runner qa-ui
     }
-    $buildArgs = if ($Build) { '--no-cache' } else { '' }
-    Invoke-Expression "docker compose build $buildArgs qa-api qa-runner qa-ui"
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Docker build failed. Check the output above."
         Pop-Location; exit 1
@@ -134,17 +161,34 @@ if ($Build -or $isFirstRun) {
 }
 
 # ==============================================================================
-# STEP 4 - Start the stack
+# STEP 3.5 — Inject FORCE_CANCEL_RUNS for -Reset mode
+# ==============================================================================
+if ($Reset) {
+    Write-Step "Reset mode — cancelling all active runs on startup"
+    # Remove any existing FORCE_CANCEL_RUNS line, then append the one-shot flag.
+    # qa-api picks it up via env_file: .env in docker-compose.yml.
+    $envLines = Get-Content "$PSScriptRoot\.env" | Where-Object { $_ -notmatch '^FORCE_CANCEL_RUNS=' }
+    Set-Content "$PSScriptRoot\.env" -Value $envLines -Encoding utf8
+    Add-Content "$PSScriptRoot\.env" "FORCE_CANCEL_RUNS=true" -Encoding utf8
+    Write-Warn "FORCE_CANCEL_RUNS=true added to .env — will be removed after startup"
+}
+
+# ==============================================================================
+# STEP 4 — Start the stack
 # ==============================================================================
 Write-Step "Starting QA Infinity stack"
-docker compose up -d
+Compose up '-d'
 if ($LASTEXITCODE -ne 0) {
     Write-Err "docker compose up failed."
     Pop-Location; exit 1
 }
+if ($Reset) {
+    # Force-recreate the API container so it picks up the updated .env
+    Compose up '-d' '--force-recreate' qa-api
+}
 
 # ==============================================================================
-# STEP 5 - Wait for API health
+# STEP 5 — Wait for API health
 # ==============================================================================
 Write-Step "Waiting for API to be ready"
 
@@ -152,14 +196,27 @@ $healthy = $false
 for ($i = 1; $i -le 24; $i++) {
     Start-Sleep -Seconds 5
     try {
-        $res = Invoke-WebRequest -Uri 'http://localhost:4100/health' -UseBasicParsing -TimeoutSec 3 -ErrorAction SilentlyContinue
+        $res = Invoke-WebRequest -Uri 'http://localhost:4100/health' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
         if ($res.StatusCode -eq 200) { $healthy = $true; break }
     } catch { }
     Write-Host "    Waiting... ($($i * 5)s)" -ForegroundColor Gray
 }
 
 # ==============================================================================
-# STEP 6 - Summary
+# STEP 5.5 — Remove one-shot reset flag
+# ==============================================================================
+if ($Reset) {
+    $envLines = Get-Content "$PSScriptRoot\.env" | Where-Object { $_ -notmatch '^FORCE_CANCEL_RUNS=' }
+    Set-Content "$PSScriptRoot\.env" -Value $envLines -Encoding utf8
+    if ($healthy) {
+        Write-Ok "FORCE_CANCEL_RUNS removed from .env — reset complete"
+    } else {
+        Write-Warn "API did not start cleanly; FORCE_CANCEL_RUNS removed anyway (check logs)"
+    }
+}
+
+# ==============================================================================
+# STEP 6 — Summary
 # ==============================================================================
 Write-Host ""
 if ($healthy) {

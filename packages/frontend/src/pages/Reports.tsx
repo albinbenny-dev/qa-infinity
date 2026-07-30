@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useRBAC } from '../hooks/useRBAC';
 import { useProject } from '../hooks/useProjects';
@@ -12,9 +12,8 @@ import {
   Legend,
 } from 'recharts';
 import toast from 'react-hot-toast';
-import Topbar, { TbBtn } from '../components/layout/Topbar';
+import Topbar from '../components/layout/Topbar';
 import RunHistoryTable from '../components/reports/RunHistoryTable';
-import EmailConfig from '../components/reports/EmailConfig';
 import FlakyTestTable from '../components/reports/FlakyTestTable';
 import {
   useProjectStats,
@@ -167,15 +166,6 @@ export default function Reports() {
 
   const [days, setDays] = useState(30);
   const [page, setPage] = useState(1);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  // Auto-collapse sidebar on narrow windows
-  useEffect(() => {
-    function check() { setSidebarOpen(window.innerWidth >= 960); }
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
 
   const { canAccessHealing } = useRBAC();
   const { data: stats } = useProjectStats(projectId);
@@ -213,17 +203,6 @@ export default function Reports() {
           { label: project?.name ?? slug ?? '' },
           { label: '📈 Reports' },
         ]}
-        actions={
-          <div style={{ display: 'flex', gap: 8 }}>
-            <TbBtn
-              variant="ghost"
-              style={{ background: 'rgba(164,123,250,0.12)', color: 'var(--violet)', border: '1px solid rgba(164,123,250,0.3)' }}
-              onClick={() => runs[0] && handleExport(runs[0].id)}
-            >
-              📥 Export Excel
-            </TbBtn>
-          </div>
-        }
       />
 
       <div
@@ -268,242 +247,95 @@ export default function Reports() {
           />
         </div>
 
-        {/* ── 2-column main layout ──────────────────────────────────────── */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: sidebarOpen ? 'minmax(0, 1fr) 300px' : 'minmax(0, 1fr) 0px',
-          gap: sidebarOpen ? 16 : 0,
-          alignItems: 'start',
-          transition: 'grid-template-columns 0.2s ease, gap 0.2s ease',
-          position: 'relative',
-        }}>
+        {/* ── 50/50 row: trend chart + flaky tests ─────────────────────────── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
 
-          {/* LEFT column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
-
-            {/* Chart card */}
-            <div
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                overflow: 'hidden',
-                boxShadow: 'var(--shadow-card)',
-              }}
-            >
-              <div style={{ height: 3, background: 'var(--cool-accent)' }} />
-              <div style={{ padding: '12px 16px' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 14,
-                  }}
-                >
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                    Run History — {days}-Day Trend
-                  </span>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {[7, 30, 90].map((d) => (
-                      <RangeTab
-                        key={d}
-                        days={d}
-                        active={days === d}
-                        onClick={() => { setDays(d); setPage(1); }}
-                      />
-                    ))}
-                  </div>
-                </div>
-                {chartData.length === 0 ? (
-                  <div
-                    style={{
-                      height: 200,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--text-dim)',
-                      fontSize: 12,
-                    }}
-                  >
-                    No run data in this period.
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-                      <XAxis
-                        dataKey="date"
-                        tick={{ fontSize: 10, fill: 'var(--text-dim)' }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 10, fill: 'var(--text-dim)' }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
-                      <Bar dataKey="passed" name="Pass" stackId="a" fill="var(--pass)" />
-                      <Bar dataKey="failed" name="Fail" stackId="a" fill="var(--fail)" />
-                      <Bar dataKey="skipped" name="Skip" stackId="a" fill="var(--skip)" radius={[2, 2, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-
-            {/* Run history table */}
-            <div
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                overflow: 'hidden',
-                boxShadow: 'var(--shadow-card)',
-              }}
-            >
-              <div style={{ height: 3, background: 'var(--warm-accent)' }} />
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
+          {/* Trend chart */}
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+            <div style={{ height: 3, background: 'var(--cool-accent)' }} />
+            <div style={{ padding: '12px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                  Run History
+                  Run History — {days}-Day Trend
                 </span>
-                <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                  {runsData?.total ?? 0} total
-                </span>
-              </div>
-              <div style={{ padding: '12px 16px' }}>
-                <RunHistoryTable
-                  projectId={projectId}
-                  runs={runs}
-                  onExport={handleExport}
-                  initialExpandedRunId={deepLinkedRunId}
-                />
-              </div>
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div
-                  style={{
-                    padding: '10px 16px',
-                    borderTop: '1px solid var(--border)',
-                    display: 'flex',
-                    gap: 8,
-                    justifyContent: 'center',
-                  }}
-                >
-                  <button
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
-                    style={{
-                      padding: '4px 12px',
-                      borderRadius: 6,
-                      border: '1px solid var(--border)',
-                      background: 'var(--surface2)',
-                      color: 'var(--text-dim)',
-                      cursor: page <= 1 ? 'not-allowed' : 'pointer',
-                      fontSize: 11,
-                    }}
-                  >
-                    ← Prev
-                  </button>
-                  <span style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: '26px' }}>
-                    Page {page} / {totalPages}
-                  </span>
-                  <button
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => p + 1)}
-                    style={{
-                      padding: '4px 12px',
-                      borderRadius: 6,
-                      border: '1px solid var(--border)',
-                      background: 'var(--surface2)',
-                      color: 'var(--text-dim)',
-                      cursor: page >= totalPages ? 'not-allowed' : 'pointer',
-                      fontSize: 11,
-                    }}
-                  >
-                    Next →
-                  </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[7, 30, 90].map((d) => (
+                    <RangeTab key={d} days={d} active={days === d} onClick={() => { setDays(d); setPage(1); }} />
+                  ))}
                 </div>
+              </div>
+              {chartData.length === 0 ? (
+                <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                  No run data in this period.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                    <Bar dataKey="passed" name="Pass" stackId="a" fill="var(--pass)" />
+                    <Bar dataKey="failed" name="Fail" stackId="a" fill="var(--fail)" />
+                    <Bar dataKey="skipped" name="Skip" stackId="a" fill="var(--skip)" radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               )}
             </div>
           </div>
 
-          {/* RIGHT sidebar — collapsible */}
-          <div style={{ overflow: 'hidden', minWidth: 0, position: 'relative' }}>
-            {/* Toggle tab — always visible, hugs the left edge of the sidebar column */}
-            <button
-              onClick={() => setSidebarOpen((v) => !v)}
-              title={sidebarOpen ? 'Collapse panel' : 'Expand panel'}
-              style={{
-                position: 'absolute',
-                left: sidebarOpen ? -12 : -28,
-                top: 12,
-                zIndex: 10,
-                width: 24,
-                height: 48,
-                borderRadius: sidebarOpen ? '8px 0 0 8px' : '8px',
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRight: sidebarOpen ? 'none' : '1px solid var(--border)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 11,
-                color: 'var(--text-dim)',
-                boxShadow: '-2px 0 6px rgba(0,0,0,0.08)',
-                transition: 'left 0.2s ease',
-              }}
-            >
-              {sidebarOpen ? '›' : '‹'}
-            </button>
-
-            {/* Sidebar content */}
-            <div style={{
-              display: 'flex', flexDirection: 'column', gap: 16,
-              width: 300,
-              opacity: sidebarOpen ? 1 : 0,
-              transition: 'opacity 0.15s ease',
-              pointerEvents: sidebarOpen ? 'auto' : 'none',
-            }}>
-
-              {/* Flaky tests */}
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
-                <div style={{ height: 3, background: 'linear-gradient(90deg, var(--amber), var(--skip))' }} />
-                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>⚠ Flaky Tests</span>
-                  {(stats?.flakyTests.length ?? 0) > 0 && (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)', background: 'rgba(251,191,36,0.12)', padding: '1px 7px', borderRadius: 100 }}>
-                      {stats!.flakyTests.length}
-                    </span>
-                  )}
-                </div>
-                <div style={{ padding: '8px 0' }}>
-                  <FlakyTestTable tests={stats?.flakyTests ?? []} />
-                </div>
-              </div>
-
-              {/* Email config */}
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
-                <div style={{ height: 3, background: 'var(--cool-accent)' }} />
-                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                  📧 Email Reports
-                </div>
-                <div style={{ padding: '14px 16px' }}>
-                  <EmailConfig projectId={projectId ?? ''} />
-                </div>
-              </div>
+          {/* Flaky tests */}
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+            <div style={{ height: 3, background: 'linear-gradient(90deg, var(--amber), var(--skip))' }} />
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>⚠ Flaky Tests</span>
+              {(stats?.flakyTests.length ?? 0) > 0 && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)', background: 'rgba(251,191,36,0.12)', padding: '1px 7px', borderRadius: 100 }}>
+                  {stats!.flakyTests.length}
+                </span>
+              )}
+            </div>
+            <div style={{ padding: '8px 0' }}>
+              <FlakyTestTable tests={stats?.flakyTests ?? []} />
             </div>
           </div>
+
+        </div>
+
+        {/* ── Run history table ─────────────────────────────────────────────── */}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+          <div style={{ height: 3, background: 'var(--warm-accent)' }} />
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Run History</span>
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{runsData?.total ?? 0} total</span>
+          </div>
+          <div style={{ padding: '12px 16px' }}>
+            <RunHistoryTable
+              projectId={projectId}
+              runs={runs}
+              onExport={handleExport}
+              initialExpandedRunId={deepLinkedRunId}
+            />
+          </div>
+          {totalPages > 1 && (
+            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+                style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text-dim)', cursor: page <= 1 ? 'not-allowed' : 'pointer', fontSize: 11 }}
+              >
+                ← Prev
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: '26px' }}>Page {page} / {totalPages}</span>
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+                style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text-dim)', cursor: page >= totalPages ? 'not-allowed' : 'pointer', fontSize: 11 }}
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
