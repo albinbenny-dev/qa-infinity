@@ -917,6 +917,7 @@ const server = http.createServer(async (req, res) => {
         }
         clearTimeout(killTimer);
         clearInterval(heartbeatTimer);
+        releaseVnc();
         cleanupRunDir();
       });
 
@@ -937,6 +938,7 @@ const server = http.createServer(async (req, res) => {
         procDone = true;
         clearTimeout(killTimer);
         clearInterval(heartbeatTimer);
+        releaseVnc();
         cleanupRunDir();
         const reportData = parseRobotXmlReport(xmlOutputPath);
         // Build a compact error snippet from the last N lines that contain 'FAIL', 'Error', or 'Exception'
@@ -977,6 +979,7 @@ const server = http.createServer(async (req, res) => {
       proc.on('error', (err) => {
         clearTimeout(killTimer);
         clearInterval(heartbeatTimer);
+        releaseVnc();
         sendLine({ type: 'done', exitCode: 1, reportData: null, error: err.message });
         res.end();
       });
