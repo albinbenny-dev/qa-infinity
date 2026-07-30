@@ -529,10 +529,11 @@ export default function Execution() {
   }
 
   async function handleStopRun() {
-    if (!activeRunId || isStopping) return;
+    const runToCancel = watchedRunId ?? activeRunId;
+    if (!runToCancel || isStopping) return;
     setIsStopping(true);
     try {
-      await cancelRun.mutateAsync(activeRunId);
+      await cancelRun.mutateAsync(runToCancel);
       toast('Run cancelled');
     } catch (err) {
       toast.error((err as Error)?.message ?? 'Failed to cancel run');

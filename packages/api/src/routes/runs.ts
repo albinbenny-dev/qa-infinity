@@ -337,6 +337,7 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
         status: 'PENDING',
         triggerType: 'SCHEDULED',
         parallelWorkers: schedule.parallelWorkers,
+        createdByUserId: req.user.id,
       },
     });
 

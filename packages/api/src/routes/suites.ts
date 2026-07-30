@@ -238,7 +238,7 @@ router.post('/:suiteId/run', (async (req, res) => {
   const runName = name ?? `Suite: ${suite.name}`;
 
   const run = await prisma.run.create({
-    data: { projectId, runSeq, name: runName, environment, status: 'PENDING', triggerType: 'SUITE', parallelWorkers },
+    data: { projectId, runSeq, name: runName, environment, status: 'PENDING', triggerType: 'SUITE', parallelWorkers, createdByUserId: req.user.id },
   });
 
   await addRunJob({

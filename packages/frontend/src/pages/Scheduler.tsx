@@ -12,6 +12,7 @@ import {
   useRunNow,
   useRuns,
   useCreateRun,
+  useCancelRun,
 } from '../hooks/useRuns';
 import { useSuites, useCreateSuite, useUpdateSuite, useDeleteSuite } from '../hooks/useSuites';
 import { useScripts } from '../hooks/useScripts';
@@ -184,6 +185,10 @@ const TRIGGER_META: Record<string, { label: string; color: string; bg: string }>
 // ── Active run progress card ───────────────────────────────────────────────
 
 function ActiveRunCard({ run }: { run: RunListItem }) {
+  const { activeProject } = useProjectStore();
+  const cancelRun = useCancelRun(activeProject?.id ?? '');
+  const [cancelling, setCancelling] = useState(false);
+
   const passed  = run.results.filter(r => r.status === 'PASSED').length;
   const failed  = run.results.filter(r => r.status === 'FAILED').length;
   const skipped = run.results.filter(r => r.status === 'SKIPPED').length;
@@ -192,6 +197,19 @@ function ActiveRunCard({ run }: { run: RunListItem }) {
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
   const isRunning = run.status === 'RUNNING';
   const trigMeta = TRIGGER_META[run.triggerType] ?? TRIGGER_META.MANUAL;
+
+  async function handleCancel() {
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      await cancelRun.mutateAsync(run.id);
+      toast.success('Run cancelled');
+    } catch {
+      toast.error('Failed to cancel run');
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   return (
     <div style={{
@@ -218,6 +236,20 @@ function ActiveRunCard({ run }: { run: RunListItem }) {
               background: isRunning ? 'rgba(37,99,171,0.12)' : 'rgba(255,179,71,0.12)',
               color: isRunning ? 'var(--cyan)' : 'var(--skip)',
             }}>{isRunning ? '● Running' : '⏳ Pending'}</span>
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              title="Cancel run"
+              style={{
+                padding: '2px 8px', borderRadius: 100, fontSize: 9, fontWeight: 700,
+                textTransform: 'uppercase', cursor: cancelling ? 'not-allowed' : 'pointer',
+                border: '1px solid rgba(220,38,38,0.4)',
+                background: 'rgba(220,38,38,0.08)', color: 'var(--fail)',
+                opacity: cancelling ? 0.5 : 1,
+              }}
+            >
+              {cancelling ? 'Stopping…' : '■ Stop'}
+            </button>
           </div>
         </div>
         {total > 0 ? (
