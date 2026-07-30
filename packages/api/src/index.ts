@@ -253,6 +253,22 @@ httpServer.listen(PORT, () => {
       console.warn('[qa-api] Startup cleanup failed (non-fatal):', (err as Error).message);
     }
 
+    // Ensure at least one SUPER_ADMIN exists — if none, promote the oldest user.
+    // Guards against fresh deployments where the first user registered before the
+    // userCount=0 check could fire (e.g. two users registered simultaneously).
+    try {
+      const superAdminCount = await prisma.user.count({ where: { globalRole: 'SUPER_ADMIN' } });
+      if (superAdminCount === 0) {
+        const oldest = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' } });
+        if (oldest) {
+          await prisma.user.update({ where: { id: oldest.id }, data: { globalRole: 'SUPER_ADMIN' } });
+          console.log(`[qa-api] No SUPER_ADMIN found — promoted ${oldest.email} on startup`);
+        }
+      }
+    } catch (err) {
+      console.warn('[qa-api] Super-admin check failed (non-fatal):', (err as Error).message);
+    }
+
     // Sync skill files to disk before workers start (they read skills from files)
     await syncSkillFiles();
 
