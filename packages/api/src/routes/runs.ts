@@ -15,7 +15,7 @@ import { findScriptPath, saveScript } from '../services/scriptFileService.js';
 const CreateRunSchema = z.object({
   testCaseIds: z.array(z.string().cuid()).min(1),
   environment: z.string().min(1),
-  parallelWorkers: z.number().int().min(1).max(16).default(2),
+  parallelWorkers: z.number().int().min(1).max(16).optional(), // falls back to project.defaultManualWorkers
   headless: z.boolean().default(true),
   browser: z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
   name: z.string().max(200).optional(),
@@ -24,7 +24,7 @@ const CreateRunSchema = z.object({
 const CreateGroupRunSchema = z.object({
   useCaseTag: z.string().min(1),
   environment: z.string().min(1),
-  parallelWorkers: z.number().int().min(1).max(16).default(2),
+  parallelWorkers: z.number().int().min(1).max(16).optional(), // falls back to project.defaultManualWorkers
   headless: z.boolean().default(true),
   browser: z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
 });
@@ -336,6 +336,7 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
         environment: schedule.environment,
         status: 'PENDING',
         triggerType: 'SCHEDULED',
+        parallelWorkers: schedule.parallelWorkers,
       },
     });
 
@@ -385,7 +386,8 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
       return;
     }
-    const { testCaseIds, environment, parallelWorkers, headless, browser, name } = parsed.data;
+    const { testCaseIds, environment, headless, browser, name } = parsed.data;
+    const parallelWorkers = parsed.data.parallelWorkers ?? req.project.defaultManualWorkers ?? 2;
 
     if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
 
@@ -405,6 +407,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
         status: 'PENDING',
         triggerType: 'MANUAL',
         createdByUserId: req.user.id,
+        parallelWorkers,
       },
     });
 
@@ -465,6 +468,7 @@ router.post('/individual/:testCaseId', async (req: Request, res: Response, next:
         status: 'PENDING',
         triggerType: 'INDIVIDUAL',
         createdByUserId: req.user.id,
+        parallelWorkers: 1,
       },
     });
 
@@ -497,7 +501,8 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
       res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
       return;
     }
-    const { useCaseTag, environment, parallelWorkers, headless, browser } = parsed.data;
+    const { useCaseTag, environment, headless, browser } = parsed.data;
+    const parallelWorkers = parsed.data.parallelWorkers ?? req.project.defaultManualWorkers ?? 2;
 
     if (!await checkRunRateLimit(req.project.id, req.user.id, res)) return;
 
@@ -535,6 +540,7 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
         status: 'PENDING',
         triggerType: 'GROUP',
         createdByUserId: req.user.id,
+        parallelWorkers,
       },
     });
 
@@ -630,6 +636,8 @@ router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunct
     const envConfig = await getEnvConfig(req.project.id, run.environment);
     const retryRunSeq = await nextRunSeq();
 
+    const retryWorkers = run.parallelWorkers ?? req.project.defaultManualWorkers ?? 2;
+
     const newRun = await prisma.run.create({
       data: {
         projectId: req.project.id,
@@ -639,6 +647,7 @@ router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunct
         status: 'PENDING',
         triggerType: 'MANUAL',
         createdByUserId: req.user.id,
+        parallelWorkers: retryWorkers,
       },
     });
 
@@ -654,7 +663,7 @@ router.post('/:runId/retry', async (req: Request, res: Response, next: NextFunct
       envBaseUrl: envConfig.baseUrl,
       envUsername: envConfig.username,
       envPassword: envConfig.password,
-      parallelWorkers: 2,
+      parallelWorkers: retryWorkers,
       headless: true,
       browser: 'chromium',
       triggerType: 'MANUAL',

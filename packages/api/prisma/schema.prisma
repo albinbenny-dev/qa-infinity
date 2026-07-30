@@ -40,6 +40,11 @@ model Project {
 
   patternMemory   String?          // JSON: PatternMemory — auto-learned from verified scripts
 
+  // Per-run-type parallelism defaults (configurable in Project Settings → Run Defaults)
+  defaultManualWorkers    Int @default(2)
+  defaultSuiteWorkers     Int @default(2)
+  defaultSchedulerWorkers Int @default(2)
+
   members         ProjectMember[]
   envConfigs      EnvConfig[]
   requirementDocs RequirementDoc[]
@@ -199,6 +204,7 @@ model Run {
   startedAt         DateTime?
   completedAt       DateTime?
   triggerType       String    @default("MANUAL")   // "MANUAL" | "SCHEDULED" | "INDIVIDUAL" | "GROUP" | "HEAL_RERUN"
+  parallelWorkers   Int       @default(2)
   createdAt         DateTime  @default(now())
   createdByUserId   String?                        // null for scheduled/heal runs; set to req.user.id for manual runs
   project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)

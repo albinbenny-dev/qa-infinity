@@ -29,6 +29,9 @@ export const UpdateProjectSchema = z.object({
   baseUrl: z.string().max(500).optional().or(z.literal('')),
   color: z.string().min(1).max(200).optional(),
   reqLibraryPath: z.string().max(500).optional().nullable(),
+  defaultManualWorkers:    z.number().int().min(1).max(16).optional(),
+  defaultSuiteWorkers:     z.number().int().min(1).max(16).optional(),
+  defaultSchedulerWorkers: z.number().int().min(1).max(16).optional(),
 });
 
 export const DeleteProjectSchema = z.object({

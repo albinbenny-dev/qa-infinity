@@ -25,6 +25,9 @@ export interface Project {
   createdBy: string;
   /** The authenticated user's role in this project (injected by GET /projects) */
   myRole?: ProjectRole | null;
+  defaultManualWorkers?: number;
+  defaultSuiteWorkers?: number;
+  defaultSchedulerWorkers?: number;
   _count?: {
     testCases: number;
     members: number;

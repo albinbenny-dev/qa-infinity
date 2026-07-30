@@ -41,7 +41,7 @@ const UpdateSuiteSchema = z.object({
 
 const RunSuiteSchema = z.object({
   environment:     z.string().optional(),
-  parallelWorkers: z.number().int().min(1).max(16).default(2),
+  parallelWorkers: z.number().int().min(1).max(16).optional(), // falls back to project.defaultSuiteWorkers
   headless:        z.boolean().default(true),
   browser:         z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
   name:            z.string().max(200).optional(),
@@ -173,7 +173,8 @@ router.post('/:suiteId/run', (async (req, res) => {
 
   const parsed = RunSuiteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
-  const { parallelWorkers, headless, browser, name } = parsed.data;
+  const { headless, browser, name } = parsed.data;
+  const parallelWorkers = parsed.data.parallelWorkers ?? req.project.defaultSuiteWorkers ?? 2;
 
   const suite = await prisma.suite.findFirst({ where: { id: suiteId, projectId } });
   if (!suite) return res.status(404).json({ error: 'Suite not found' });
@@ -237,7 +238,7 @@ router.post('/:suiteId/run', (async (req, res) => {
   const runName = name ?? `Suite: ${suite.name}`;
 
   const run = await prisma.run.create({
-    data: { projectId, runSeq, name: runName, environment, status: 'PENDING', triggerType: 'SUITE' },
+    data: { projectId, runSeq, name: runName, environment, status: 'PENDING', triggerType: 'SUITE', parallelWorkers },
   });
 
   await addRunJob({

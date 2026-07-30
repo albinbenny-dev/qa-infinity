@@ -83,12 +83,26 @@ export function registerSchedule(schedule: ScheduleRow): void {
       const slug = project?.slug ?? schedule.projectId;
 
       // Resolve script paths using the same logic as suite runs (handles linkedScriptId + disk write)
-      const pairs: { tcId: string; path: string }[] = [];
+      const rawPairs: { tcId: string; path: string }[] = [];
       const skippedTcIds: string[] = [];
       for (const tcId of testCaseIds) {
         const p = await resolveScriptPath(slug, schedule.projectId, tcId);
-        if (p) pairs.push({ tcId, path: p });
+        if (p) rawPairs.push({ tcId, path: p });
         else skippedTcIds.push(tcId);
+      }
+
+      // Deduplicate by scriptPath — same script linked to multiple TCs runs only once
+      const seenPaths = new Map<string, string>(); // path → rep tcId
+      const scriptPairs: { tcId: string; path: string }[] = [];
+      const mirrorMap: Record<string, string[]> = {};
+      for (const p of rawPairs) {
+        const rep = seenPaths.get(p.path);
+        if (rep) {
+          mirrorMap[rep] = [...(mirrorMap[rep] ?? []), p.tcId];
+        } else {
+          seenPaths.set(p.path, p.tcId);
+          scriptPairs.push(p);
+        }
       }
 
       const envConfig = await prisma.envConfig.findFirst({
@@ -107,6 +121,7 @@ export function registerSchedule(schedule: ScheduleRow): void {
           environment: schedule.environment,
           status: 'PENDING',
           triggerType: 'SCHEDULED',
+          parallelWorkers: schedule.parallelWorkers,
         },
       });
 
@@ -114,9 +129,10 @@ export function registerSchedule(schedule: ScheduleRow): void {
         runId: run.id,
         runSeq,
         projectId: schedule.projectId,
-        testCaseIds: pairs.map((p) => p.tcId),
-        scriptPaths: pairs.map((p) => p.path),
+        testCaseIds: scriptPairs.map((p) => p.tcId),
+        scriptPaths: scriptPairs.map((p) => p.path),
         skippedTcIds,
+        mirroredTcIds: mirrorMap,
         environment: schedule.environment,
         envBaseUrl: envConfig?.baseUrl ?? schedule.project?.baseUrl ?? '',
         envUsername: envConfig?.username ?? '',

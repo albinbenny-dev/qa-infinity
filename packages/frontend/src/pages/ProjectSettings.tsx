@@ -2039,6 +2039,115 @@ function UIScannerTab() {
   );
 }
 
+// ── ExecutionTab ───────────────────────────────────────────────────────────
+
+function ExecutionTab() {
+  const { activeProject } = useProjectStore();
+  const updateProject = useUpdateProject();
+
+  const [manualWorkers,    setManualWorkers]    = useState(activeProject?.defaultManualWorkers    ?? 2);
+  const [suiteWorkers,     setSuiteWorkers]     = useState(activeProject?.defaultSuiteWorkers     ?? 2);
+  const [schedulerWorkers, setSchedulerWorkers] = useState(activeProject?.defaultSchedulerWorkers ?? 2);
+
+  const clamp = (v: number) => Math.max(1, Math.min(16, v));
+
+  const handleSave = async () => {
+    try {
+      await updateProject.mutateAsync({
+        defaultManualWorkers:    manualWorkers,
+        defaultSuiteWorkers:     suiteWorkers,
+        defaultSchedulerWorkers: schedulerWorkers,
+      });
+      toast.success('Run defaults saved');
+    } catch {
+      toast.error('Failed to save run defaults');
+    }
+  };
+
+  const rows: { label: string; desc: string; value: number; set: (n: number) => void }[] = [
+    { label: 'Manual Run',    desc: 'Tests run directly from the Executions page', value: manualWorkers,    set: setManualWorkers },
+    { label: 'Suite Run',     desc: 'Tests run via a Test Suite',                  value: suiteWorkers,     set: setSuiteWorkers },
+    { label: 'Scheduled Run', desc: 'Tests triggered automatically by a Schedule', value: schedulerWorkers, set: setSchedulerWorkers },
+  ];
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      <h2 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text)', marginBottom: '6px' }}>
+        Parallel Workers
+      </h2>
+      <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '24px' }}>
+        Default number of parallel workers for each run type (1–16). Can be overridden per run.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '28px' }}>
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '14px 18px',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: '10px',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text)' }}>{row.label}</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' }}>{row.desc}</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                onClick={() => row.set(clamp(row.value - 1))}
+                disabled={row.value <= 1}
+                style={{
+                  width: '30px', height: '30px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface-raised)',
+                  color: 'var(--text)', cursor: row.value <= 1 ? 'not-allowed' : 'pointer',
+                  fontSize: '18px', lineHeight: 1, opacity: row.value <= 1 ? 0.4 : 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >−</button>
+              <span style={{
+                width: '32px', textAlign: 'center',
+                fontSize: '16px', fontWeight: 600, color: 'var(--text)',
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {row.value}
+              </span>
+              <button
+                onClick={() => row.set(clamp(row.value + 1))}
+                disabled={row.value >= 16}
+                style={{
+                  width: '30px', height: '30px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface-raised)',
+                  color: 'var(--text)', cursor: row.value >= 16 ? 'not-allowed' : 'pointer',
+                  fontSize: '18px', lineHeight: 1, opacity: row.value >= 16 ? 0.4 : 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >+</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={handleSave}
+        disabled={updateProject.isPending}
+        style={{
+          padding: '8px 20px', borderRadius: '8px',
+          background: 'var(--accent)', color: '#fff',
+          border: 'none', cursor: updateProject.isPending ? 'not-allowed' : 'pointer',
+          fontSize: '14px', fontWeight: 500, opacity: updateProject.isPending ? 0.6 : 1,
+        }}
+      >
+        {updateProject.isPending ? 'Saving…' : 'Save Defaults'}
+      </button>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 const TABS = [
   { value: 'details',     label: '🏗 Details' },
@@ -2046,6 +2155,7 @@ const TABS = [
   { value: 'members',     label: '👥 Members' },
   { value: 'req-library', label: '📁 Req Library' },
   { value: 'scanner',     label: '🔍 UI Scanner' },
+  { value: 'execution',   label: '⚡ Run Defaults' },
   { value: 'danger',      label: '⚠ Danger Zone' },
 ];
 
@@ -2136,6 +2246,9 @@ export default function ProjectSettings() {
           </Tabs.Content>
           <Tabs.Content value="scanner">
             <UIScannerTab />
+          </Tabs.Content>
+          <Tabs.Content value="execution">
+            <ExecutionTab />
           </Tabs.Content>
           <Tabs.Content value="danger">
             <DangerZoneTab />

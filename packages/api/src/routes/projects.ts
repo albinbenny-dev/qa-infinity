@@ -219,7 +219,8 @@ projectRouter.put(
         return;
       }
 
-      const { name, description, baseUrl, color, reqLibraryPath } = parsed.data;
+      const { name, description, baseUrl, color, reqLibraryPath,
+              defaultManualWorkers, defaultSuiteWorkers, defaultSchedulerWorkers } = parsed.data;
 
       const updated = await prisma.project.update({
         where: { id: req.project.id },
@@ -229,6 +230,9 @@ projectRouter.put(
           ...(baseUrl !== undefined && { baseUrl: baseUrl || null }),
           ...(color !== undefined && { color }),
           ...(reqLibraryPath !== undefined && { reqLibraryPath }),
+          ...(defaultManualWorkers    !== undefined && { defaultManualWorkers }),
+          ...(defaultSuiteWorkers     !== undefined && { defaultSuiteWorkers }),
+          ...(defaultSchedulerWorkers !== undefined && { defaultSchedulerWorkers }),
         },
       });
 

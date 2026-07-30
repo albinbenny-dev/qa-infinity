@@ -1005,7 +1005,7 @@ const server = http.createServer(async (req, res) => {
       `--config=${CONFIG_FILE}`,
       '--reporter=list',
       '--reporter=json',
-      `--workers=${workers}`,
+      '--workers=1',
       `--project=${browser}`,
       '--headed',
     ];

@@ -36,7 +36,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 768M
+          memory: 512M
         reservations:
           cpus: '0.1'
           memory: 256M
@@ -116,7 +116,7 @@ services:
       resources:
         limits:
           cpus: '0.75'
-          memory: 2048M
+          memory: 1024M
         reservations:
           cpus: '0.25'
           memory: 512M
@@ -136,7 +136,8 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Kolkata
-    shm_size: '2gb'    # Chrome/Selenium needs real shared memory; Docker's 64MB default crashes it
+    shm_size: '3gb'    # Chrome/Selenium needs real shared memory; Docker's 64MB default crashes it
+    init: true         # Use tini as PID 1 to reap zombie processes from Chrome/Selenium workers
     depends_on:
       qa-api:
         condition: service_healthy
@@ -151,7 +152,7 @@ services:
       resources:
         limits:
           cpus: '0.75'
-          memory: 2G
+          memory: 3G
         reservations:
           cpus: '0.25'
           memory: 512M
