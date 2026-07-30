@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { Minimize2, Maximize2 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
 import type { Project } from '../../types';
@@ -10,7 +11,7 @@ function projectColor(p: Project): string {
 }
 
 export default function BrandBanner() {
-  const { theme, toggleTheme, activeProject, projects } = useProjectStore();
+  const { theme, toggleTheme, density, toggleDensity, activeProject, projects } = useProjectStore();
   const navigate = useNavigate();
   const isLight = theme === 'light';
   const [query, setQuery] = useState('');
@@ -103,8 +104,17 @@ export default function BrandBanner() {
         )}
       </div>
 
-      {/* Right: theme toggle + logo */}
+      {/* Right: density toggle + theme toggle + logo */}
       <div className="bb-right">
+        <button
+          className="density-toggle"
+          onClick={toggleDensity}
+          title={density === 'compact' ? 'Switch to normal view' : 'Switch to compact view'}
+          type="button"
+          aria-label={density === 'compact' ? 'Switch to normal view' : 'Switch to compact view'}
+        >
+          {density === 'compact' ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
+        </button>
         <button
           className="theme-toggle"
           data-testid="theme-toggle"

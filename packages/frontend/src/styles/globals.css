@@ -43,6 +43,7 @@
   --6d-orange-deep:#D9601A;
   --6d-gold:       #FFB347;
   --6d-banner: linear-gradient(90deg, #14124a 0%, #1e1b4b 35%, #4338ca 100%);
+  --banner-h: 64px;
   --warm-accent: linear-gradient(90deg, #2dd4bf, #0F766E);
   --cool-accent: linear-gradient(90deg, #4338ca, #1e1b4b);
 
@@ -415,7 +416,7 @@
     position: fixed;
     top: 0; left: 0; right: 0;
     z-index: 1000;
-    height: 64px;
+    height: var(--banner-h);
     background: var(--6d-banner);
     display: flex;
     align-items: center;
@@ -674,6 +675,36 @@
     color: #fff;
     box-shadow: 0 2px 6px rgba(129,140,248,0.4);
   }
+
+  /* ── Density toggle ── */
+  .density-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.8);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .density-toggle:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  [data-density="compact"] .density-toggle {
+    background: rgba(129,140,248,0.2);
+    border-color: rgba(129,140,248,0.5);
+    color: #c4b5fd;
+  }
+
+  /* ── Compact density overrides ── */
+  [data-density="compact"] { --banner-h: 48px; }
+  [data-density="compact"] body { font-size: 13px; }
+  [data-density="compact"] .brand-banner-top { padding: 0 16px; gap: 16px; }
+  [data-density="compact"] .bb-icon { width: 28px; height: 28px; border-radius: 7px; font-size: 16px; }
+  [data-density="compact"] .bb-subtitle { display: none; }
+  [data-density="compact"] .bb-title { font-size: 16px; }
+  [data-density="compact"] .bb-logo { height: 22px; }
+  [data-density="compact"] .stat-card { padding: 10px 14px; }
 
   /* ── Page header ── */
   .page-eyebrow {

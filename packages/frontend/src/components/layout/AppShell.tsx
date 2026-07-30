@@ -37,8 +37,8 @@ export default function AppShell() {
       {/* Layout below banner */}
       <div
         style={{
-          marginTop: '64px',
-          height: 'calc(100vh - 64px)',
+          marginTop: 'var(--banner-h)',
+          height: 'calc(100vh - var(--banner-h))',
           display: 'flex',
           overflow: 'hidden',
         }}
