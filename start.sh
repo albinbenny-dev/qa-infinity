@@ -152,11 +152,10 @@ fi
 if $BUILD || $is_first_run; then
   if $is_first_run; then
     step "First run — building Docker images (this takes ~3-5 minutes)"
-    $COMPOSE build qa-api qa-runner qa-ui
   else
-    step "Building Docker images (--no-cache)"
-    $COMPOSE build --no-cache qa-api qa-runner qa-ui
+    step "Rebuilding Docker images (layer cache preserved)"
   fi
+  $COMPOSE build qa-api qa-runner qa-ui
   ok "Images built"
 else
   step "Using existing images (run with --build to rebuild)"

@@ -145,11 +145,10 @@ $isFirstRun = [string]::IsNullOrWhiteSpace($imageId)
 if ($Build -or $isFirstRun) {
     if ($isFirstRun) {
         Write-Step "First run — building Docker images (this takes ~3-5 minutes)"
-        Compose build qa-api qa-runner qa-ui
     } else {
-        Write-Step "Building Docker images (--no-cache)"
-        Compose build '--no-cache' qa-api qa-runner qa-ui
+        Write-Step "Rebuilding Docker images (layer cache preserved)"
     }
+    Compose build qa-api qa-runner qa-ui
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Docker build failed. Check the output above."
         Pop-Location; exit 1
