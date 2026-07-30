@@ -293,7 +293,7 @@ export default function Execution() {
     const onMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current) return;
       const delta = dragStartXRef.current - e.clientX;
-      const next = Math.max(280, Math.min(700, dragStartWidthRef.current + delta));
+      const next = Math.max(280, Math.min(Math.round(window.innerWidth * 0.75), dragStartWidthRef.current + delta));
       logPanelWidthRef.current = next;
       // Direct DOM update — no React re-render during drag
       const panel = document.getElementById('qa-log-panel');
