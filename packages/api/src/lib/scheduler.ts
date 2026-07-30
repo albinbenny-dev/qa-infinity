@@ -1,6 +1,34 @@
 import cron from 'node-cron';
 import { prisma } from './prisma.js';
 import { addRunJob } from './queue.js';
+import { findScriptPath, saveScript } from '../services/scriptFileService.js';
+
+const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
+
+async function resolveScriptPath(slug: string, projectId: string, tcId: string): Promise<string | null> {
+  // 1. Agent-generated script
+  let script = await prisma.script.findFirst({
+    where: { projectId, testCaseId: tcId },
+    select: { filename: true, content: true, useCaseFolder: true, testCase: { select: { useCaseTag: true } } },
+  });
+  // 2. Manually linked script
+  if (!script) {
+    const tc = await prisma.testCase.findUnique({
+      where: { id: tcId },
+      select: { linkedScript: { select: { filename: true, content: true, useCaseFolder: true } } },
+    });
+    script = tc?.linkedScript ? { ...tc.linkedScript, testCase: null } : null;
+  }
+  if (!script) return null;
+  const found = findScriptPath(slug, script.filename);
+  if (found) return found;
+  if (script.content) {
+    const useCase = script.useCaseFolder ?? (script.testCase as { useCaseTag?: string } | null)?.useCaseTag ?? null;
+    saveScript(slug, script.filename, script.content, useCase);
+    return findScriptPath(slug, script.filename) ?? `${SCRIPTS_ROOT}/${slug}/scripts/${script.filename}`;
+  }
+  return null;
+}
 
 const jobs = new Map<string, cron.ScheduledTask>();
 
@@ -8,7 +36,7 @@ export async function loadSchedules(): Promise<void> {
   try {
     const schedules = await prisma.schedule.findMany({
       where: { isActive: true },
-      include: { project: { select: { baseUrl: true } } },
+      include: { project: { select: { baseUrl: true, slug: true } } },
     });
     for (const schedule of schedules) {
       registerSchedule(schedule);
@@ -27,7 +55,7 @@ interface ScheduleRow {
   testCaseIds: string;
   environment: string;
   parallelWorkers: number;
-  project?: { baseUrl?: string | null } | null;
+  project?: { baseUrl?: string | null; slug?: string | null } | null;
 }
 
 export function registerSchedule(schedule: ScheduleRow): void {
@@ -47,14 +75,21 @@ export function registerSchedule(schedule: ScheduleRow): void {
       const testCaseIds: string[] = JSON.parse(schedule.testCaseIds);
       if (testCaseIds.length === 0) return;
 
-      const scripts = await prisma.script.findMany({
-        where: { projectId: schedule.projectId, testCaseId: { in: testCaseIds } },
-        select: { filename: true, testCaseId: true },
+      // Fetch project slug for resolveScriptPath
+      const project = await prisma.project.findUnique({
+        where: { id: schedule.projectId },
+        select: { slug: true, baseUrl: true },
       });
+      const slug = project?.slug ?? schedule.projectId;
 
-      const scriptedIds = new Set(scripts.map((s) => s.testCaseId).filter(Boolean) as string[]);
-      const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
-      const scriptedTcIds = testCaseIds.filter((id) => scriptedIds.has(id));
+      // Resolve script paths using the same logic as suite runs (handles linkedScriptId + disk write)
+      const pairs: { tcId: string; path: string }[] = [];
+      const skippedTcIds: string[] = [];
+      for (const tcId of testCaseIds) {
+        const p = await resolveScriptPath(slug, schedule.projectId, tcId);
+        if (p) pairs.push({ tcId, path: p });
+        else skippedTcIds.push(tcId);
+      }
 
       const envConfig = await prisma.envConfig.findFirst({
         where: { projectId: schedule.projectId, name: schedule.environment },
@@ -79,11 +114,8 @@ export function registerSchedule(schedule: ScheduleRow): void {
         runId: run.id,
         runSeq,
         projectId: schedule.projectId,
-        testCaseIds: scriptedTcIds,
-        scriptPaths: scriptedTcIds.map((id) => {
-          const s = scripts.find((sc) => sc.testCaseId === id);
-          return `/scripts/${schedule.projectId}/${s!.filename}`;
-        }),
+        testCaseIds: pairs.map((p) => p.tcId),
+        scriptPaths: pairs.map((p) => p.path),
         skippedTcIds,
         environment: schedule.environment,
         envBaseUrl: envConfig?.baseUrl ?? schedule.project?.baseUrl ?? '',
