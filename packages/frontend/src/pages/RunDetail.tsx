@@ -2,10 +2,11 @@ import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ListChecks, CheckCircle2, XCircle, MinusCircle, TrendingUp, type LucideIcon } from 'lucide-react';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
-import { useReportRun } from '../hooks/useReports';
+import { useReportRun, useRunTrend } from '../hooks/useReports';
 import { useProject } from '../hooks/useProjects';
 import { useProjectStore } from '../stores/projectStore';
 import { api } from '../lib/api';
+import type { RunTrendPoint } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,7 @@ function fmtSpan(start?: string | null, end?: string | null): string {
   return fmtMs(new Date(end).getTime() - new Date(start).getTime());
 }
 
-// ── Clickable stat tile ────────────────────────────────────────────────────
+// ── Stat tile ──────────────────────────────────────────────────────────────
 
 interface StatTileProps {
   label:       string;
@@ -78,7 +79,7 @@ function StatTile({ label, value, accent, valueColor, icon: Icon, active, onClic
   );
 }
 
-// ── Use-case group header ──────────────────────────────────────────────────
+// ── Group header ───────────────────────────────────────────────────────────
 
 type Result = ReturnType<typeof useReportRun>['data'] extends { results: (infer R)[] } | undefined ? R : never;
 
@@ -95,79 +96,63 @@ function GroupHeader({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderPr
   const failed  = groupResults.filter(r => r.status === 'FAILED').length;
   const skipped = groupResults.filter(r => r.status === 'SKIPPED').length;
   const pct     = total > 0 ? Math.round((passed / total) * 100) : 0;
-
   const accentColor = failed > 0 ? 'var(--fail)' : 'var(--pass)';
 
   return (
     <div
       onClick={onToggle}
       style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '9px 14px 9px 0',
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '9px 14px',
         cursor: 'pointer',
         borderLeft: `3px solid ${accentColor}`,
-        paddingLeft: 12,
         background: 'var(--surface2)',
         borderBottom: isOpen ? '1px solid var(--border)' : 'none',
       }}
     >
-      {/* chevron */}
-      <span style={{ fontSize: 8, color: 'var(--text-dim)', width: 8, flexShrink: 0 }}>
-        {isOpen ? '▼' : '▶'}
-      </span>
+      <span style={{ fontSize: 8, color: 'var(--text-dim)', flexShrink: 0 }}>{isOpen ? '▼' : '▶'}</span>
 
-      {/* name */}
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', flexShrink: 0 }}>
         {groupKey}
       </span>
 
-      {/* TC count */}
+      {/* Total TCs */}
       <span style={{
-        fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 100,
-        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', color: 'var(--text-dim)',
+        fontSize: 10.5, fontWeight: 600, color: 'var(--text-dim)',
+        padding: '1px 8px', borderRadius: 100,
+        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)',
         flexShrink: 0,
       }}>
         {total} TC{total !== 1 ? 's' : ''}
       </span>
 
-      {/* progress bar */}
-      <div style={{ flex: 1, minWidth: 50, maxWidth: 140 }}>
-        <div style={{ height: 5, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
-          <div style={{
-            height: '100%', borderRadius: 3, width: `${pct}%`,
-            background: 'var(--pass)', transition: 'width 0.3s ease',
-          }} />
+      {/* Progress bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 100px', minWidth: 80, maxWidth: 180 }}>
+        <div style={{ flex: 1, height: 5, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+          <div style={{ height: '100%', borderRadius: 2, width: `${pct}%`, background: 'var(--pass)', transition: 'width 0.3s' }} />
         </div>
-        <div style={{ fontSize: 9.5, color: 'var(--text-dim)', marginTop: 2 }}>{pct}% pass</div>
+        <span style={{ fontSize: 10, color: 'var(--text-dim)', minWidth: 28, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
       </div>
 
-      {/* counts */}
-      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center', marginLeft: 'auto' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--pass)', display: 'flex', alignItems: 'center', gap: 2 }}>
-          <span>✓</span><span>{passed}</span>
+      {/* Labeled pass/fail counts — pushed right */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginLeft: 'auto', flexShrink: 0 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--pass)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span>✓</span><span>{passed} Passed</span>
         </span>
-        {failed > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fail)', display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span>✗</span><span>{failed}</span>
-          </span>
-        )}
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: failed > 0 ? 'var(--fail)' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span>✗</span><span>{failed} Failed</span>
+        </span>
         {skipped > 0 && (
-          <span style={{ fontSize: 11, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span>⊙</span><span>{skipped}</span>
-          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>⊙ {skipped} Skipped</span>
         )}
       </div>
     </div>
   );
 }
 
-// ── Result row ─────────────────────────────────────────────────────────────
+// ── Result row (table row) ─────────────────────────────────────────────────
 
 function ResultRow({ r }: { r: Result }) {
-  const err = r.errorMessage
-    ? (r.errorMessage.length > 72 ? r.errorMessage.slice(0, 69) + '…' : r.errorMessage)
-    : null;
-
   const statusBg = r.status === 'PASSED'  ? 'rgba(42,157,143,0.1)'
     : r.status === 'FAILED'   ? 'rgba(220,38,38,0.1)'
     : r.status === 'SKIPPED'  ? 'rgba(251,191,36,0.1)'
@@ -178,56 +163,170 @@ function ResultRow({ r }: { r: Result }) {
     : 'rgba(107,114,128,0.2)';
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: 10,
-      padding: '8px 14px',
-      borderBottom: '1px solid var(--border)',
+    <tr style={{
       background: r.status === 'FAILED' ? 'rgba(220,38,38,0.025)' : 'transparent',
+      borderBottom: '1px solid var(--border)',
     }}>
-      {/* TC info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-dim)', flexShrink: 0 }}>
-            {r.testCase.tcId}
-          </span>
-          <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {r.testCase.title}
-          </span>
+      {/* TC ID */}
+      <td style={{ padding: '8px 8px 8px 14px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+          {r.testCase.tcId}
+        </span>
+      </td>
+
+      {/* Title + error */}
+      <td style={{ padding: '8px 10px', verticalAlign: 'top' }}>
+        <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500, lineHeight: 1.4 }}>
+          {r.testCase.title}
         </div>
-        {err && (
-          <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>
-            {err}
+        {r.errorMessage && (
+          <div style={{
+            fontSize: 10.5, color: 'var(--text-dim)', marginTop: 3, lineHeight: 1.45,
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          } as React.CSSProperties}>
+            {r.errorMessage}
           </div>
         )}
+      </td>
+
+      {/* Duration */}
+      <td style={{ padding: '8px 10px', textAlign: 'right', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtMs(r.duration)}
+        </span>
+      </td>
+
+      {/* Status */}
+      <td style={{ padding: '8px 14px 8px 8px', textAlign: 'center', verticalAlign: 'middle' }}>
+        <span style={{
+          display: 'inline-block',
+          fontSize: 9.5, fontWeight: 700, padding: '2px 9px', borderRadius: 100,
+          color: STATUS_COLOR[r.status] ?? 'var(--text-dim)',
+          background: statusBg, border: `1px solid ${statusBorder}`,
+          whiteSpace: 'nowrap',
+        }}>
+          {r.status}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+// ── Regression trend chart ─────────────────────────────────────────────────
+
+function TrendChart({ trend }: { trend: RunTrendPoint[] | undefined }) {
+  const pts = useMemo(() => (trend ?? []).slice(-20), [trend]);
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 10, color: 'var(--text-dim)', fontWeight: 600,
+    textTransform: 'uppercase', letterSpacing: '0.07em',
+  };
+
+  if (!trend || pts.length < 2) {
+    return (
+      <div style={{
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+        padding: '14px 18px', boxShadow: 'var(--shadow-card)',
+        display: 'flex', flexDirection: 'column', height: '100%',
+      }}>
+        <div style={labelStyle}>Regression Trend</div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Not enough run data yet</span>
+        </div>
+      </div>
+    );
+  }
+
+  const VW = 300, VH = 80;
+  const rates = pts.map(p => {
+    const tot = p.passed + p.failed + p.skipped;
+    return tot > 0 ? p.passed / tot : 0;
+  });
+
+  const n = rates.length;
+  const getX = (i: number) => (i / (n - 1)) * (VW - 20) + 10;
+  const getY = (v: number) => VH - 6 - v * (VH - 14);
+
+  const linePoints  = rates.map((v, i) => `${getX(i)},${getY(v)}`).join(' ');
+  const areaPoints  = `${getX(0)},${VH} ` + rates.map((v, i) => `${getX(i)},${getY(v)}`).join(' ') + ` ${getX(n - 1)},${VH}`;
+
+  const latestRate  = rates[n - 1] ?? 0;
+  const prevRate    = rates[n - 2] ?? latestRate;
+  const delta       = latestRate - prevRate;
+  const arrow       = delta > 0.01 ? '↑' : delta < -0.01 ? '↓' : '→';
+  const arrowColor  = delta > 0.01 ? 'var(--pass)' : delta < -0.01 ? 'var(--fail)' : 'var(--text-dim)';
+
+  return (
+    <div style={{
+      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+      padding: '14px 18px', boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={labelStyle}>Regression Trend</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+          <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+            {Math.round(latestRate * 100)}%
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: arrowColor }}>{arrow}</span>
+        </div>
       </div>
 
-      {/* duration */}
-      <span style={{
-        fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)',
-        flexShrink: 0, paddingTop: 1, minWidth: 54, textAlign: 'right',
-        fontVariantNumeric: 'tabular-nums',
-      }}>
-        {fmtMs(r.duration)}
-      </span>
+      {/* SVG sparkline */}
+      <svg width="100%" viewBox={`0 0 ${VW} ${VH}`} style={{ display: 'block', overflow: 'visible' }}>
+        {/* Guide lines */}
+        {[0, 0.5, 1].map(v => (
+          <line key={v}
+            x1={10} x2={VW - 10} y1={getY(v)} y2={getY(v)}
+            stroke="var(--border)" strokeWidth={0.6}
+            strokeDasharray={v === 0.5 ? '3,3' : undefined}
+          />
+        ))}
+        {/* Y-axis labels */}
+        <text x={2}    y={getY(1)   + 4} fontSize={7} fill="var(--text-dim)">100%</text>
+        <text x={2}    y={getY(0.5) + 4} fontSize={7} fill="var(--text-dim)">50%</text>
+        <text x={5}    y={getY(0)   - 2} fontSize={7} fill="var(--text-dim)">0%</text>
 
-      {/* status pill */}
-      <span style={{
-        fontSize: 9.5, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
-        color: STATUS_COLOR[r.status] ?? 'var(--text-dim)',
-        background: statusBg, border: `1px solid ${statusBorder}`,
-        flexShrink: 0, whiteSpace: 'nowrap', minWidth: 62, textAlign: 'center',
-      }}>
-        {r.status}
-      </span>
+        {/* Area fill */}
+        <polygon points={areaPoints} fill="rgba(6,182,212,0.07)" />
+
+        {/* Fail area — region above (100-passRate) */}
+        <polygon
+          points={`${getX(0)},0 ` + rates.map((v, i) => `${getX(i)},${getY(v)}`).join(' ') + ` ${getX(n - 1)},0`}
+          fill="rgba(220,38,38,0.04)"
+        />
+
+        {/* Pass line */}
+        <polyline points={linePoints} fill="none" stroke="var(--cyan)" strokeWidth={1.8} strokeLinejoin="round" />
+
+        {/* Dots — highlight last 3 */}
+        {rates.map((v, i) => {
+          const isLast = i === n - 1;
+          return (
+            <circle key={i}
+              cx={getX(i)} cy={getY(v)} r={isLast ? 3.5 : 2}
+              fill={isLast ? 'var(--cyan)' : 'var(--surface)'}
+              stroke="var(--cyan)" strokeWidth={1.5}
+            />
+          );
+        })}
+      </svg>
+
+      <div style={{ fontSize: 9.5, color: 'var(--text-dim)', marginTop: 6 }}>
+        Last {pts.length} day{pts.length !== 1 ? 's' : ''} — pass rate per day
+      </div>
     </div>
   );
 }
 
-// ── Run stats strip ────────────────────────────────────────────────────────
+// ── RunStats strip ─────────────────────────────────────────────────────────
 
 function RunStats({ results, startedAt, completedAt }: {
-  results:     Result[];
-  startedAt?:  string | null;
+  results:      Result[];
+  startedAt?:   string | null;
   completedAt?: string | null;
 }) {
   const totalDur = fmtSpan(startedAt, completedAt);
@@ -252,7 +351,7 @@ function RunStats({ results, startedAt, completedAt }: {
   return (
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
-      padding: '13px 18px', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start',
+      padding: '14px 18px', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start',
       boxShadow: 'var(--shadow-card)',
     }}>
       {/* time stats */}
@@ -277,17 +376,12 @@ function RunStats({ results, startedAt, completedAt }: {
             <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>No timing data</span>
           )}
           {top5.map((r, i) => {
-            const maxMs = top5[0]?.duration ?? 1;
-            const pct   = Math.round(((r.duration ?? 0) / maxMs) * 100);
-            // Subtle, muted bar colors instead of vivid red/cyan
-            const barColor = r.status === 'FAILED'
-              ? 'rgba(220,38,38,0.42)'
-              : 'rgba(37,99,171,0.5)';
+            const maxMs    = top5[0]?.duration ?? 1;
+            const pct      = Math.round(((r.duration ?? 0) / maxMs) * 100);
+            const barColor = r.status === 'FAILED' ? 'rgba(220,38,38,0.42)' : 'rgba(37,99,171,0.5)';
             return (
               <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 9, color: 'var(--text-dim)', width: 10, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                  {i + 1}
-                </span>
+                <span style={{ fontSize: 9, color: 'var(--text-dim)', width: 10, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{i + 1}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden', marginBottom: 3 }}>
                     <div style={{ height: '100%', borderRadius: 2, width: `${pct}%`, background: barColor }} />
@@ -316,13 +410,20 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 6, color: 'var(--text)', fontSize: 12, padding: '5px 10px', outline: 'none',
 };
 
+const colHeadStyle: React.CSSProperties = {
+  fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em',
+  color: 'var(--text-dim)', padding: '5px 10px', borderBottom: '1px solid var(--border)',
+  background: 'rgba(255,255,255,0.015)',
+};
+
 export default function RunDetail() {
   const { slug, runId } = useParams<{ slug: string; runId: string }>();
   const navigate = useNavigate();
   const { data: project } = useProject(slug);
   const projectId = project?.id;
   const { activeProject } = useProjectStore();
-  const { data: run, isLoading } = useReportRun(projectId, runId ?? null);
+  const { data: run, isLoading }  = useReportRun(projectId, runId ?? null);
+  const { data: trend }            = useRunTrend(projectId, 30);
 
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch]             = useState('');
@@ -378,8 +479,8 @@ export default function RunDetail() {
     try {
       const res = await api.get(`/projects/${projectId}/reports/runs/${runId}/export`, { responseType: 'blob' });
       const url = URL.createObjectURL(new Blob([res.data as BlobPart]));
-      const a = document.createElement('a');
-      a.href = url;
+      const a   = document.createElement('a');
+      a.href     = url;
       a.download = `run-report-${String(run?.runSeq ?? '').padStart(4, '0')}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
@@ -389,7 +490,8 @@ export default function RunDetail() {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+    /* Let <main overflowY:auto> in AppShell handle the page scroll — no overflow:hidden here */
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <Topbar
         breadcrumbs={[
           { label: 'All Projects', href: '/projects' },
@@ -406,79 +508,81 @@ export default function RunDetail() {
       />
 
       {isLoading ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 13 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 13, padding: 60 }}>
           Loading run details…
         </div>
       ) : !run ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 13 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 13, padding: 60 }}>
           Run not found.
         </div>
       ) : (
-        /* Two-panel layout: static summary top, scrollable TC list below */
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 24px 32px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-          {/* ── Static summary panel ───────────────────────────────── */}
-          <div style={{ flexShrink: 0, padding: '16px 24px 14px', display: 'flex', flexDirection: 'column', gap: 14, borderBottom: '1px solid var(--border)' }}>
+          {/* Run title */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: STATUS_COLOR[run.status] ?? 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{run.name}</span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+              #{String(run.runSeq).padStart(4, '0')} · {run.environment} · {new Date(run.createdAt).toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
 
-            {/* Run title */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: STATUS_COLOR[run.status] ?? 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
-              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{run.name}</span>
-              <span style={{ fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                #{String(run.runSeq).padStart(4, '0')} · {run.environment} · {new Date(run.createdAt).toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </span>
+          {/* Stat tiles */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <StatTile label="Total"     value={total}          icon={ListChecks}   accent="var(--cyan)"          valueColor="var(--cyan)"  onClick={() => toggleStatusFilter('')} />
+            <StatTile label="Passed"    value={passed}         icon={CheckCircle2} accent="var(--pass)"          valueColor="var(--pass)"  active={statusFilter === 'PASSED'}  onClick={() => toggleStatusFilter('PASSED')} />
+            <StatTile label="Failed"    value={failed}         icon={XCircle}      accent="var(--fail)"          valueColor="var(--fail)"  active={statusFilter === 'FAILED'}  onClick={() => toggleStatusFilter('FAILED')} />
+            <StatTile label="Skipped"   value={skipped}        icon={MinusCircle}  accent="var(--amber)"         valueColor="var(--amber)" active={statusFilter === 'SKIPPED'} onClick={() => toggleStatusFilter('SKIPPED')} />
+            <StatTile label="Pass Rate" value={`${passRate}%`} icon={TrendingUp}   accent="rgba(37,99,171,0.8)"  valueColor="#F47B20" />
+          </div>
+
+          {/* RunStats + Trend chart side by side */}
+          <div style={{ display: 'flex', gap: 14, alignItems: 'stretch' }}>
+            <div style={{ flex: 3, minWidth: 0 }}>
+              <RunStats results={results} startedAt={run.startedAt} completedAt={run.completedAt} />
             </div>
-
-            {/* Stat tiles */}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <StatTile label="Total"     value={total}          icon={ListChecks}   accent="var(--cyan)"          valueColor="var(--cyan)"  onClick={() => toggleStatusFilter('')} />
-              <StatTile label="Passed"    value={passed}         icon={CheckCircle2} accent="var(--pass)"          valueColor="var(--pass)"  active={statusFilter === 'PASSED'}  onClick={() => toggleStatusFilter('PASSED')} />
-              <StatTile label="Failed"    value={failed}         icon={XCircle}      accent="var(--fail)"          valueColor="var(--fail)"  active={statusFilter === 'FAILED'}  onClick={() => toggleStatusFilter('FAILED')} />
-              <StatTile label="Skipped"   value={skipped}        icon={MinusCircle}  accent="var(--amber)"         valueColor="var(--amber)" active={statusFilter === 'SKIPPED'} onClick={() => toggleStatusFilter('SKIPPED')} />
-              <StatTile label="Pass Rate" value={`${passRate}%`} icon={TrendingUp}   accent="rgba(37,99,171,0.8)"  valueColor="#F47B20" />
-            </div>
-
-            {/* Run stats strip */}
-            <RunStats results={results} startedAt={run.startedAt} completedAt={run.completedAt} />
-
-            {/* Search + export toolbar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search test cases…"
-                style={{ ...inputStyle, minWidth: 200 }}
-              />
-              <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                {filtered.length} result{filtered.length !== 1 ? 's' : ''}
-                {statusFilter ? ` · ${statusFilter.toLowerCase()}` : ''}
-              </span>
-              <div style={{ flex: 1 }} />
-              <button
-                onClick={handleExport}
-                disabled={exporting}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-                  background: 'rgba(42,157,143,0.1)', color: 'var(--pass)',
-                  border: '1px solid rgba(42,157,143,0.3)',
-                  cursor: exporting ? 'not-allowed' : 'pointer',
-                  opacity: exporting ? 0.6 : 1,
-                }}
-              >
-                {exporting ? '⏳ Exporting…' : '⬇ Download Excel'}
-              </button>
+            <div style={{ flex: 2, minWidth: 220 }}>
+              <TrendChart trend={trend} />
             </div>
           </div>
 
-          {/* ── Scrollable TC results ───────────────────────────────── */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 24px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {groups.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, paddingTop: 40 }}>
-                No results match the current filters.
-              </div>
-            ) : (
-              groups.map(([groupKey, groupResults]) => {
+          {/* Search + export toolbar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search test cases…"
+              style={{ ...inputStyle, minWidth: 200 }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+              {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+              {statusFilter ? ` · ${statusFilter.toLowerCase()}` : ''}
+            </span>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+                background: 'rgba(42,157,143,0.1)', color: 'var(--pass)',
+                border: '1px solid rgba(42,157,143,0.3)',
+                cursor: exporting ? 'not-allowed' : 'pointer',
+                opacity: exporting ? 0.6 : 1,
+              }}
+            >
+              {exporting ? '⏳ Exporting…' : '⬇ Download Excel'}
+            </button>
+          </div>
+
+          {/* Group cards */}
+          {groups.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, padding: '40px 0' }}>
+              No results match the current filters.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {groups.map(([groupKey, groupResults]) => {
                 const isOpen = activeExpanded.has(groupKey);
                 return (
                   <div
@@ -498,26 +602,34 @@ export default function RunDetail() {
                       onToggle={() => toggleGroup(groupKey)}
                     />
                     {isOpen && (
-                      <div>
-                        {/* column header */}
-                        <div style={{
-                          display: 'flex', alignItems: 'center', gap: 10,
-                          padding: '5px 14px',
-                          background: 'rgba(255,255,255,0.015)',
-                          borderBottom: '1px solid var(--border)',
-                        }}>
-                          <span style={{ flex: 1, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', opacity: 0.7 }}>Test Case</span>
-                          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', opacity: 0.7, minWidth: 54, textAlign: 'right' }}>Duration</span>
-                          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', opacity: 0.7, minWidth: 62, textAlign: 'center' }}>Status</span>
-                        </div>
-                        {groupResults.map(r => <ResultRow key={r.id} r={r} />)}
+                      /* Individual card scroll — max height so card doesn't grow unbounded */
+                      <div style={{ maxHeight: 380, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                          <colgroup>
+                            <col style={{ width: 108 }} />
+                            <col />
+                            <col style={{ width: 82 }} />
+                            <col style={{ width: 96 }} />
+                          </colgroup>
+                          <thead>
+                            <tr>
+                              <th style={{ ...colHeadStyle, textAlign: 'left', paddingLeft: 14 }}>TC ID</th>
+                              <th style={{ ...colHeadStyle, textAlign: 'left' }}>Test Case</th>
+                              <th style={{ ...colHeadStyle, textAlign: 'right' }}>Duration</th>
+                              <th style={{ ...colHeadStyle, textAlign: 'center', paddingRight: 14 }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groupResults.map(r => <ResultRow key={r.id} r={r} />)}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </div>
                 );
-              })
-            )}
-          </div>
+              })}
+            </div>
+          )}
 
         </div>
       )}
