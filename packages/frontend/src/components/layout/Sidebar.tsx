@@ -140,15 +140,18 @@ export default function Sidebar({ slug }: SidebarProps) {
       </div>
 
       {/* ── Nav groups ──────────────────────────────────────────────────── */}
-      <nav style={{ flex: 1, padding: '8px 6px', display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', overflowX: 'hidden' }}>
+      {/* No paddingTop on nav — the sticky toggle provides it, so there's
+          no gap above it where scrolling icons could bleed through */}
+      <nav style={{ flex: 1, padding: '0 6px 8px', display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', overflowX: 'hidden' }}>
 
-        {/* Sticky expand toggle — sits above all nav items */}
+        {/* Sticky expand toggle — bleeds to full nav width via negative margins */}
         <div style={{
           position: 'sticky', top: 0, zIndex: 2,
           background: 'var(--surface)',
-          paddingBottom: 4,
-          marginBottom: 2,
+          margin: '0 -6px',          /* undo nav side-padding so bg covers edge-to-edge */
+          padding: '6px 6px 5px',    /* restore visual spacing */
           borderBottom: '1px solid var(--border)',
+          marginBottom: 4,
         }}>
           <ExpandToggle expanded={expanded} onToggle={() => setExpanded(e => !e)} />
         </div>
@@ -245,13 +248,12 @@ function ExpandToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () 
       onMouseLeave={() => setHover(false)}
       title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
       style={{
-        marginTop: 6,
         display: 'flex', alignItems: 'center',
         justifyContent: expanded ? 'flex-start' : 'center',
         gap: 6,
         width: '100%',
-        padding: expanded ? '5px 10px' : '5px 0',
-        borderRadius: 7, border: '1px solid var(--border)', cursor: 'pointer',
+        padding: expanded ? '3px 8px' : '3px 0',
+        borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
         background: hover ? 'rgba(255,255,255,0.05)' : 'transparent',
         color: hover ? 'var(--text)' : 'var(--text-dim)',
         fontSize: 10, fontWeight: 500,
