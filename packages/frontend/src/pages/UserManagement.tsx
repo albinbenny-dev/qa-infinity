@@ -175,6 +175,7 @@ type PermRow = {
 const PERMISSIONS: PermRow[] = [
   // Platform
   { section: 'Platform',  feature: 'User Management',   SUPER_ADMIN: true,  ADMIN: false, SUPER_USER: false, STANDARD_USER: false },
+  { section: 'Platform',  feature: 'Run Monitor',        SUPER_ADMIN: true,  ADMIN: false, SUPER_USER: false, STANDARD_USER: false },
   { section: 'Platform',  feature: 'All Projects',       SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: false, STANDARD_USER: false },
   { section: 'Platform',  feature: 'AI Usage',           SUPER_ADMIN: true,  ADMIN: true,  SUPER_USER: true,  STANDARD_USER: true  },
   // Overview

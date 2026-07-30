@@ -17,6 +17,7 @@ import Scheduler from './pages/Scheduler';
 import Chat from './pages/Chat';
 import Usage from './pages/Usage';
 import UserManagement from './pages/UserManagement';
+import RunMonitor from './pages/RunMonitor';
 import Skills from './pages/Skills';
 import CopyExport from './pages/CopyExport';
 import { isAuthenticated } from './lib/auth';
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
           <Route path="/usage"                       element={<AiRoute element={<Usage />} />} />
           <Route path="/admin/users"                 element={<UserManagement />} />
+          <Route path="/admin/runs"                  element={<RunMonitor />} />
         </Route>
 
         {/* Root redirect */}

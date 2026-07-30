@@ -369,6 +369,77 @@ router.get('/agents', requireSuperAdmin as RequestHandler, async (_req: Request,
   } catch (err) { next(err); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// RUN MONITOR (SUPER_ADMIN only) — cross-project execution overview
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /admin/runs/overview — every project with its active run (if any) and last 5 runs
+router.get('/runs/overview', requireSuperAdmin as RequestHandler, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const projects = await prisma.project.findMany({
+      select: { id: true, name: true, slug: true, color: true, _count: { select: { runs: true } } },
+      orderBy: { name: 'asc' },
+    });
+
+    const rows = await Promise.all(projects.map(async (p) => {
+      const [activeRun, recentRuns] = await Promise.all([
+        prisma.run.findFirst({
+          where: { projectId: p.id, status: { in: ['RUNNING', 'PENDING'] } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true, runSeq: true, name: true, status: true,
+            environment: true, triggerType: true, startedAt: true, createdAt: true,
+          },
+        }),
+        prisma.run.findMany({
+          where: { projectId: p.id },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true, runSeq: true, name: true, status: true,
+            environment: true, triggerType: true,
+            startedAt: true, completedAt: true, createdAt: true,
+            _count: { select: { results: true } },
+            results: { select: { status: true } },
+          },
+        }),
+      ]);
+
+      return {
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        color: p.color,
+        totalRuns: p._count.runs,
+        activeRun,
+        recentRuns: recentRuns.map((r) => ({
+          id: r.id,
+          runSeq: r.runSeq,
+          name: r.name,
+          status: r.status,
+          environment: r.environment,
+          triggerType: r.triggerType,
+          startedAt: r.startedAt,
+          completedAt: r.completedAt,
+          createdAt: r.createdAt,
+          passed: r.results.filter((x) => x.status === 'PASSED').length,
+          failed: r.results.filter((x) => x.status === 'FAILED').length,
+          total: r._count.results,
+        })),
+      };
+    }));
+
+    // Projects with an active execution surface first; rest alphabetically.
+    rows.sort((a, b) => {
+      if (!!a.activeRun !== !!b.activeRun) return a.activeRun ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const activeCount = rows.filter((r) => r.activeRun).length;
+    res.json({ activeCount, totalProjects: rows.length, projects: rows });
+  } catch (err) { next(err); }
+});
+
 // ── PATCH /admin/agents/:agentName ────────────────────────────────────────
 // Enable or disable a specific agent. Body: { enabled: boolean }
 

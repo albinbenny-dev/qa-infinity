@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard, ClipboardList, Brain, PenLine, Code2,
   Play, Clock, RefreshCw, BarChart2, MessageSquare,
-  Upload, Settings, Globe, CreditCard, User, LogOut,
+  Upload, Settings, Globe, CreditCard, User, LogOut, Activity,
   ChevronsRight, ChevronsLeft,
   type LucideIcon,
 } from 'lucide-react';
@@ -197,7 +197,10 @@ export default function Sidebar({ slug }: SidebarProps) {
             <TileItem label="AI Usage" fullLabel="AI Usage" icon={CreditCard} active={location.pathname === '/usage'} path="/usage" title="AI Usage" expanded={expanded} />
           )}
           {currentUser?.globalRole === 'SUPER_ADMIN' && (
-            <TileItem label="Users" fullLabel="User Management" icon={User} active={location.pathname === '/admin/users'} path="/admin/users" title="User Management" expanded={expanded} />
+            <>
+              <TileItem label="Monitor" fullLabel="Run Monitor" icon={Activity} active={location.pathname === '/admin/runs'} path="/admin/runs" title="Run Monitor" expanded={expanded} />
+              <TileItem label="Users" fullLabel="User Management" icon={User} active={location.pathname === '/admin/users'} path="/admin/users" title="User Management" expanded={expanded} />
+            </>
           )}
         </div>
 
