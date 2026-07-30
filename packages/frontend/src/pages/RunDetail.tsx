@@ -294,6 +294,7 @@ function TrendChart({ trend }: { trend: RunTrendPoint[] | undefined }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
       padding: '14px 18px', boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column',
+      flex: 1,
     }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -386,7 +387,7 @@ function RunStats({ results, startedAt, completedAt }: {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
       padding: '14px 18px', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start',
-      boxShadow: 'var(--shadow-card)',
+      boxShadow: 'var(--shadow-card)', flex: 1,
     }}>
       {/* time stats */}
       <div style={{ display: 'flex', gap: 22, flexShrink: 0 }}>
@@ -577,10 +578,10 @@ export default function RunDetail() {
 
           {/* RunStats + Trend chart side by side */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'stretch' }}>
-            <div style={{ flex: 3, minWidth: 0 }}>
+            <div style={{ flex: 3, minWidth: 0, display: 'flex' }}>
               <RunStats results={results} startedAt={run.startedAt} completedAt={run.completedAt} />
             </div>
-            <div style={{ flex: 2, minWidth: 220 }}>
+            <div style={{ flex: 2, minWidth: 220, display: 'flex' }}>
               <TrendChart trend={trend} />
             </div>
           </div>
