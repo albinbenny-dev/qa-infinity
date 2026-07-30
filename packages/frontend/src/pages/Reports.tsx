@@ -309,7 +309,7 @@ export default function Reports() {
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Run History</span>
             <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{runsData?.total ?? 0} total</span>
           </div>
-          <div style={{ padding: '12px 16px', maxHeight: 1800, overflow: 'auto' }}>
+          <div style={{ padding: '12px 16px' }}>
             <RunHistoryTable
               projectId={projectId}
               runs={runs}
