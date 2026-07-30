@@ -2271,20 +2271,31 @@ export default function Scripts() {
   // ── Project Files tab ─────────────────────────────────────────────────────
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
   const [fileTreeLoading, setFileTreeLoading] = useState(false);
+  const [fileTreeError, setFileTreeError] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   // '' means the project root — the last-clicked folder is where Upload/New Folder land
   const [selectedFolder, setSelectedFolder] = useState('');
 
   async function loadFileTree() {
+    if (!projectId) return;
     setFileTreeLoading(true);
+    setFileTreeError(false);
     try {
       const { data } = await api.get(`/projects/${projectId}/scripts/file-tree`);
       setFileTree(data);
       // Auto-expand top-level dirs
       setExpandedDirs(new Set((data as FileTreeNode[]).filter(n => n.type === 'dir').map(n => n.path)));
-    } catch { /* silent */ }
+    } catch {
+      setFileTreeError(true);
+    }
     setFileTreeLoading(false);
   }
+
+  // Reload tree when projectId becomes available while on the projectFiles tab
+  useEffect(() => {
+    if (leftTab === 'projectFiles' && projectId) loadFileTree();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, leftTab]);
 
   function toggleDir(p: string) {
     setExpandedDirs(prev => {
@@ -3698,6 +3709,11 @@ export default function Scripts() {
                   )
                 ) : fileTreeLoading ? (
                   <div style={{ padding: 16, color: 'var(--text-dim)', fontSize: 12, textAlign: 'center' }}>Loading…</div>
+                ) : fileTreeError ? (
+                  <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                    Failed to load files.{' '}
+                    <span onClick={loadFileTree} style={{ color: 'var(--cyan)', cursor: 'pointer', textDecoration: 'underline' }}>Retry</span>
+                  </div>
                 ) : fileTree.length === 0 ? (
                   <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
                     No files yet.<br />
