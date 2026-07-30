@@ -158,7 +158,7 @@ export default function Sidebar({ slug }: SidebarProps) {
 
         {navGroups.map((group, gi) => (
           <div key={gi} style={{
-            background: 'rgba(255,255,255,0.025)',
+            background: 'var(--surface2)',
             borderRadius: 9, padding: '3px',
             display: 'flex', flexDirection: 'column', gap: 1,
           }}>
@@ -187,7 +187,7 @@ export default function Sidebar({ slug }: SidebarProps) {
 
         {/* All Projects + utils — always visible regardless of active project */}
         <div style={{
-          background: 'rgba(255,255,255,0.025)',
+          background: 'var(--surface2)',
           borderRadius: 9, padding: '3px',
           display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4,
         }}>

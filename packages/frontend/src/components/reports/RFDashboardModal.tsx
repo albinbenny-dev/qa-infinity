@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { api } from '../../lib/api';
 import { useRfSummary, useRfSteps, type RfSummaryResult, type RfKeyword } from '../../hooks/useReports';
+import { useProjectStore } from '../../stores/projectStore';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -224,6 +226,9 @@ function KeywordRow({ kw }: { kw: RfKeyword }) {
 
 export default function RFDashboardModal({ open, onClose, projectId, run }: Props) {
   const [filter, setFilter] = useState<'failed' | 'all'>('all');
+  const navigate = useNavigate();
+  const { projects } = useProjectStore();
+  const projectSlug = projects.find(p => p.id === projectId)?.slug;
 
   const { data: summary, isLoading, error } = useRfSummary(projectId, run?.id ?? null);
 
@@ -465,6 +470,21 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
             >
               ⬇ Excel Report
             </button>
+            {projectSlug && run && (
+              <Dialog.Close asChild>
+                <button
+                  onClick={() => navigate(`/projects/${projectSlug}/reports/runs/${run.id}`)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600,
+                    padding: '6px 13px', borderRadius: 6,
+                    background: 'transparent', color: 'var(--text-mid)',
+                    border: '1px solid var(--border2)', cursor: 'pointer',
+                  }}
+                >
+                  ↗ View Full Report
+                </button>
+              </Dialog.Close>
+            )}
             {rfScriptCount > 0 && (
               <button
                 onClick={downloadAllLogs}
