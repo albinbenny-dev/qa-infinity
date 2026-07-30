@@ -585,8 +585,8 @@ export default function Dashboard() {
                       ✓ No flaky tests detected.
                     </div>
                   ) : (
-                    <div style={{ padding: '4px 0 8px' }}>
-                      {stats!.flakyTests.slice(0, 5).map((t) => {
+                    <div style={{ padding: '4px 0 8px', maxHeight: 340, overflowY: 'auto' }}>
+                      {stats!.flakyTests.map((t) => {
                         const total = t.passCount + t.failCount;
                         const flakiness = total > 0 ? Math.round((t.failCount / total) * 100) : 0;
                         return (
