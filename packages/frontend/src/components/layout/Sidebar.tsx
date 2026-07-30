@@ -5,6 +5,7 @@ import {
   LayoutDashboard, ClipboardList, Brain, PenLine, Code2,
   Play, Clock, RefreshCw, BarChart2, MessageSquare,
   Upload, Settings, Globe, CreditCard, User, LogOut,
+  ChevronsRight, ChevronsLeft,
   type LucideIcon,
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
@@ -15,27 +16,29 @@ import { useHealStats } from '../../hooks/useHeals';
 import { useSchedules } from '../../hooks/useRuns';
 import { useRBAC } from '../../hooks/useRBAC';
 import { useAppConfig } from '../../context/AppConfig';
+
 interface SidebarProps { slug?: string }
 
-const W = 74; // sidebar width px
+const W_COLLAPSED = 74;
+const W_EXPANDED  = 182;
 
 // ── Icon map ───────────────────────────────────────────────────────────────
 const ICON_MAP: Record<string, LucideIcon> = {
-  dashboard:  LayoutDashboard,
-  tcLibrary:  ClipboardList,
-  skills:     Brain,
-  writer:     PenLine,
-  scripts:    Code2,
-  execution:  Play,
-  scheduler:  Clock,
-  healing:    RefreshCw,
-  reports:    BarChart2,
-  chat:       MessageSquare,
-  export:     Upload,
-  settings:   Settings,
+  dashboard:   LayoutDashboard,
+  tcLibrary:   ClipboardList,
+  skills:      Brain,
+  writer:      PenLine,
+  scripts:     Code2,
+  execution:   Play,
+  scheduler:   Clock,
+  healing:     RefreshCw,
+  reports:     BarChart2,
+  chat:        MessageSquare,
+  export:      Upload,
+  settings:    Settings,
   allProjects: Globe,
-  usage:      CreditCard,
-  userMgmt:   User,
+  usage:       CreditCard,
+  userMgmt:    User,
 };
 
 export default function Sidebar({ slug }: SidebarProps) {
@@ -45,6 +48,9 @@ export default function Sidebar({ slug }: SidebarProps) {
   const { activeProject, projects, currentUser, setCurrentUser } = useProjectStore();
   const { mode: chatMode, toggle: toggleChat } = useChatSidebarStore();
   const [logoutHover, setLogoutHover] = useState(false);
+  const [expanded, setExpanded]       = useState(false);
+
+  const W = expanded ? W_EXPANDED : W_COLLAPSED;
 
   function handleLogout() {
     clearAuth();
@@ -86,14 +92,14 @@ export default function Sidebar({ slug }: SidebarProps) {
     },
     {
       items: [
-        { label: 'Reports',      shortLabel: 'Reports', path: `/projects/${slug}/reports`, iconKey: 'reports' },
+        { label: 'Reports',  shortLabel: 'Reports', path: `/projects/${slug}/reports`, iconKey: 'reports' },
         ...(!isRunner ? [{ label: 'Chat Agent', shortLabel: 'Chat', path: `/projects/${slug}/chat`, iconKey: 'chat', aiLabel: true, onClick: () => toggleChat() }] : []),
       ],
     },
     {
       items: [
-        { label: 'Export',   shortLabel: 'Export',    path: `/projects/${slug}/copy-export`, iconKey: 'export' },
-        { label: 'Settings', shortLabel: 'Settings',  path: `/projects/${slug}/settings`,    iconKey: 'settings' },
+        { label: 'Export',   shortLabel: 'Export',   path: `/projects/${slug}/copy-export`, iconKey: 'export' },
+        { label: 'Settings', shortLabel: 'Settings', path: `/projects/${slug}/settings`,    iconKey: 'settings' },
       ],
     },
   ] : [];
@@ -112,6 +118,7 @@ export default function Sidebar({ slug }: SidebarProps) {
       borderRight: '1px solid var(--border)',
       display: 'flex', flexDirection: 'column',
       height: '100%', overflow: 'hidden',
+      transition: 'width 0.18s ease, min-width 0.18s ease',
     }}>
 
       {/* ── Project avatar ──────────────────────────────────────────────── */}
@@ -133,7 +140,7 @@ export default function Sidebar({ slug }: SidebarProps) {
       </div>
 
       {/* ── Nav groups ──────────────────────────────────────────────────── */}
-      <nav style={{ flex: 1, padding: '8px 6px', display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto' }}>
+      <nav style={{ flex: 1, padding: '8px 6px', display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', overflowX: 'hidden' }}>
         {navGroups.map((group, gi) => (
           <div key={gi} style={{
             background: 'rgba(255,255,255,0.025)',
@@ -147,6 +154,7 @@ export default function Sidebar({ slug }: SidebarProps) {
                 <TileItem
                   key={item.path}
                   label={item.shortLabel}
+                  fullLabel={item.label}
                   icon={Icon}
                   active={active}
                   badge={item.badge}
@@ -155,6 +163,7 @@ export default function Sidebar({ slug }: SidebarProps) {
                   title={item.label}
                   onClick={item.onClick}
                   path={item.onClick ? undefined : item.path}
+                  expanded={expanded}
                 />
               );
             })}
@@ -167,15 +176,18 @@ export default function Sidebar({ slug }: SidebarProps) {
           borderRadius: 9, padding: '3px',
           display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4,
         }}>
-          <TileItem label="Projects" icon={Globe} active={location.pathname === '/projects'} path="/projects"
-            title="All Projects" badge={projects.length || undefined} badgeVariant="blue" />
+          <TileItem label="Projects"  fullLabel="All Projects"     icon={Globe}       active={location.pathname === '/projects'} path="/projects"
+            title="All Projects" badge={projects.length || undefined} badgeVariant="blue" expanded={expanded} />
           {!isRunner && (
-            <TileItem label="AI Usage" icon={CreditCard} active={location.pathname === '/usage'} path="/usage" title="AI Usage" />
+            <TileItem label="AI Usage" fullLabel="AI Usage" icon={CreditCard} active={location.pathname === '/usage'} path="/usage" title="AI Usage" expanded={expanded} />
           )}
           {currentUser?.globalRole === 'SUPER_ADMIN' && (
-            <TileItem label="Users" icon={User} active={location.pathname === '/admin/users'} path="/admin/users" title="User Management" />
+            <TileItem label="Users" fullLabel="User Management" icon={User} active={location.pathname === '/admin/users'} path="/admin/users" title="User Management" expanded={expanded} />
           )}
         </div>
+
+        {/* Expand / collapse toggle */}
+        <ExpandToggle expanded={expanded} onToggle={() => setExpanded(e => !e)} />
       </nav>
 
       {/* ── User avatar + logout ─────────────────────────────────────────── */}
@@ -212,32 +224,72 @@ export default function Sidebar({ slug }: SidebarProps) {
   );
 }
 
+// ── Expand toggle button ───────────────────────────────────────────────────
+
+function ExpandToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onToggle}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+      style={{
+        marginTop: 6,
+        display: 'flex', alignItems: 'center',
+        justifyContent: expanded ? 'flex-start' : 'center',
+        gap: 6,
+        width: '100%',
+        padding: expanded ? '5px 10px' : '5px 0',
+        borderRadius: 7, border: '1px solid var(--border)', cursor: 'pointer',
+        background: hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        color: hover ? 'var(--text)' : 'var(--text-dim)',
+        fontSize: 10, fontWeight: 500,
+        transition: 'color 0.12s, background 0.12s',
+        fontFamily: 'var(--font-ui)',
+        whiteSpace: 'nowrap', overflow: 'hidden',
+      }}
+    >
+      {expanded
+        ? <><ChevronsLeft size={13} /><span>Collapse</span></>
+        : <ChevronsRight size={13} />
+      }
+    </button>
+  );
+}
+
 // ── TileItem ───────────────────────────────────────────────────────────────
 
 function TileItem({
-  label, icon: Icon, active, badge, badgeVariant, aiLabel, title, onClick, path,
+  label, fullLabel, icon: Icon, active, badge, badgeVariant, aiLabel, title, onClick, path, expanded,
 }: {
-  label: string; icon: LucideIcon; active: boolean;
+  label: string; fullLabel?: string; icon: LucideIcon; active: boolean;
   badge?: number; badgeVariant?: string; aiLabel?: boolean;
-  title: string; onClick?: () => void; path?: string;
+  title: string; onClick?: () => void; path?: string; expanded?: boolean;
 }) {
   const [hover, setHover] = useState(false);
 
   const style: React.CSSProperties = {
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-    gap: 3, padding: '7px 4px 6px', borderRadius: 7, cursor: 'pointer',
+    display: 'flex',
+    flexDirection: expanded ? 'row' : 'column',
+    alignItems: 'center',
+    justifyContent: expanded ? 'flex-start' : 'center',
+    gap: expanded ? 8 : 3,
+    padding: expanded ? '6px 10px' : '7px 4px 6px',
+    borderRadius: 7, cursor: 'pointer',
     background: active ? 'rgba(6,182,212,0.12)' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
     color: active ? 'var(--cyan)' : hover ? 'var(--text)' : 'var(--text-dim)',
     transition: 'background 0.12s, color 0.12s',
     textDecoration: 'none', border: 'none', fontFamily: 'var(--font-ui)',
     position: 'relative', width: '100%', boxSizing: 'border-box',
+    whiteSpace: 'nowrap', overflow: 'hidden',
   };
 
   const inner = (
     <>
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', flexShrink: 0 }}>
         <Icon size={17} strokeWidth={active ? 2 : 1.75} />
-        {/* Badge dot */}
+        {/* Badge count */}
         {badge !== undefined && badge > 0 && (
           <span style={{
             position: 'absolute', top: -3, right: -4,
@@ -252,7 +304,7 @@ function TileItem({
           </span>
         )}
         {/* AI dot */}
-        {aiLabel && (
+        {aiLabel && !badge && (
           <span style={{
             position: 'absolute', top: -3, right: -4,
             width: 6, height: 6, borderRadius: '50%',
@@ -262,12 +314,16 @@ function TileItem({
         )}
       </div>
       <span style={{
-        fontSize: 9, fontWeight: active ? 600 : 500, lineHeight: 1.2,
-        textAlign: 'center', letterSpacing: 0.1,
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        maxWidth: 58,
+        fontSize: expanded ? 11 : 9,
+        fontWeight: active ? 600 : 500,
+        lineHeight: 1.2,
+        textAlign: expanded ? 'left' : 'center',
+        letterSpacing: 0.1,
+        overflow: 'hidden', textOverflow: 'ellipsis',
+        maxWidth: expanded ? undefined : 58,
+        flex: expanded ? 1 : undefined,
       }}>
-        {label}
+        {expanded ? (fullLabel ?? title) : label}
       </span>
     </>
   );

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { ListChecks, CheckCircle2, XCircle, MinusCircle, TrendingUp, type LucideIcon } from 'lucide-react';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import { useReportRun } from '../hooks/useReports';
 import { useProject } from '../hooks/useProjects';
@@ -33,15 +34,18 @@ function fmtSpan(start?: string | null, end?: string | null): string {
 // ── Clickable stat tile ────────────────────────────────────────────────────
 
 interface StatTileProps {
-  label:    string;
-  value:    string | number;
-  accent:   string;
-  active?:  boolean;
-  onClick?: () => void;
+  label:       string;
+  value:       string | number;
+  accent:      string;
+  valueColor?: string;
+  icon:        LucideIcon;
+  active?:     boolean;
+  onClick?:    () => void;
 }
 
-function StatTile({ label, value, accent, active, onClick }: StatTileProps) {
+function StatTile({ label, value, accent, valueColor, icon: Icon, active, onClick }: StatTileProps) {
   const [hov, setHov] = useState(false);
+  const color = valueColor ?? accent;
   return (
     <div
       onClick={onClick}
@@ -58,8 +62,11 @@ function StatTile({ label, value, accent, active, onClick }: StatTileProps) {
         userSelect: 'none',
       }}
     >
-      <div style={{ fontSize: 26, fontWeight: 800, color: '#F47B20', lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Icon size={17} strokeWidth={2} color={color} style={{ flexShrink: 0 }} />
+        <div style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 5 }}>
         {label}
       </div>
       {onClick && (
@@ -424,11 +431,11 @@ export default function RunDetail() {
 
             {/* Stat tiles */}
             <div style={{ display: 'flex', gap: 10 }}>
-              <StatTile label="Total"     value={total}          accent="var(--cyan)" onClick={() => toggleStatusFilter('')} />
-              <StatTile label="Passed"    value={passed}         accent="var(--pass)"  active={statusFilter === 'PASSED'}  onClick={() => toggleStatusFilter('PASSED')} />
-              <StatTile label="Failed"    value={failed}         accent="var(--fail)"  active={statusFilter === 'FAILED'}  onClick={() => toggleStatusFilter('FAILED')} />
-              <StatTile label="Skipped"   value={skipped}        accent="var(--amber)" active={statusFilter === 'SKIPPED'} onClick={() => toggleStatusFilter('SKIPPED')} />
-              <StatTile label="Pass Rate" value={`${passRate}%`} accent="rgba(37,99,171,0.8)" />
+              <StatTile label="Total"     value={total}          icon={ListChecks}   accent="var(--cyan)"          valueColor="var(--cyan)"  onClick={() => toggleStatusFilter('')} />
+              <StatTile label="Passed"    value={passed}         icon={CheckCircle2} accent="var(--pass)"          valueColor="var(--pass)"  active={statusFilter === 'PASSED'}  onClick={() => toggleStatusFilter('PASSED')} />
+              <StatTile label="Failed"    value={failed}         icon={XCircle}      accent="var(--fail)"          valueColor="var(--fail)"  active={statusFilter === 'FAILED'}  onClick={() => toggleStatusFilter('FAILED')} />
+              <StatTile label="Skipped"   value={skipped}        icon={MinusCircle}  accent="var(--amber)"         valueColor="var(--amber)" active={statusFilter === 'SKIPPED'} onClick={() => toggleStatusFilter('SKIPPED')} />
+              <StatTile label="Pass Rate" value={`${passRate}%`} icon={TrendingUp}   accent="rgba(37,99,171,0.8)"  valueColor="#F47B20" />
             </div>
 
             {/* Run stats strip */}
