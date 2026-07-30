@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ListChecks, CheckCircle2, XCircle, MinusCircle, TrendingUp, type LucideIcon } from 'lucide-react';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
@@ -79,18 +79,20 @@ function StatTile({ label, value, accent, valueColor, icon: Icon, active, onClic
   );
 }
 
-// ── Group header ───────────────────────────────────────────────────────────
+// ── Type alias ─────────────────────────────────────────────────────────────
 
 type Result = ReturnType<typeof useReportRun>['data'] extends { results: (infer R)[] } | undefined ? R : never;
 
-interface GroupHeaderProps {
+// ── Group header row (renders as <tr> inside the flat table) ───────────────
+
+interface GroupHeaderRowProps {
   groupKey:     string;
   groupResults: Result[];
   isOpen:       boolean;
   onToggle:     () => void;
 }
 
-function GroupHeader({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderProps) {
+function GroupHeaderRow({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderRowProps) {
   const total   = groupResults.length;
   const passed  = groupResults.filter(r => r.status === 'PASSED').length;
   const failed  = groupResults.filter(r => r.status === 'FAILED').length;
@@ -99,54 +101,77 @@ function GroupHeader({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderPr
   const accentColor = failed > 0 ? 'var(--fail)' : 'var(--pass)';
 
   return (
-    <div
-      onClick={onToggle}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-        padding: '9px 14px',
-        cursor: 'pointer',
-        borderLeft: `3px solid ${accentColor}`,
-        background: 'var(--surface2)',
-        borderBottom: isOpen ? '1px solid var(--border)' : 'none',
-      }}
-    >
-      <span style={{ fontSize: 8, color: 'var(--text-dim)', flexShrink: 0 }}>{isOpen ? '▼' : '▶'}</span>
+    <tr onClick={onToggle} style={{ cursor: 'pointer' }}>
+      <td
+        colSpan={4}
+        style={{
+          padding: '8px 14px',
+          background: 'var(--surface2)',
+          borderLeft: `3px solid ${accentColor}`,
+          borderBottom: '1px solid var(--border)',
+          borderTop: '1px solid var(--border)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', minWidth: 0 }}>
+          {/* Chevron */}
+          <span style={{ fontSize: 8, color: 'var(--text-dim)', flexShrink: 0, width: 8 }}>
+            {isOpen ? '▼' : '▶'}
+          </span>
 
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', flexShrink: 0 }}>
-        {groupKey}
-      </span>
+          {/* Use-case name */}
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', flexShrink: 0, marginRight: 2 }}>
+            {groupKey}
+          </span>
 
-      {/* Total TCs */}
-      <span style={{
-        fontSize: 10.5, fontWeight: 600, color: 'var(--text-dim)',
-        padding: '1px 8px', borderRadius: 100,
-        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)',
-        flexShrink: 0,
-      }}>
-        {total} TC{total !== 1 ? 's' : ''}
-      </span>
+          {/* Divider */}
+          <div style={{ width: 1, height: 13, background: 'var(--border)', flexShrink: 0 }} />
 
-      {/* Progress bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 100px', minWidth: 80, maxWidth: 180 }}>
-        <div style={{ flex: 1, height: 5, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
-          <div style={{ height: '100%', borderRadius: 2, width: `${pct}%`, background: 'var(--pass)', transition: 'width 0.3s' }} />
+          {/* Total TCs pill */}
+          <span style={{
+            fontSize: 10.5, fontWeight: 600, color: 'var(--text-dim)',
+            padding: '1px 7px', borderRadius: 100,
+            background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)',
+            flexShrink: 0,
+          }}>
+            {total} TC{total !== 1 ? 's' : ''}
+          </span>
+
+          {/* Passed count */}
+          <span style={{
+            fontSize: 11.5, fontWeight: 700, color: 'var(--pass)',
+            flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3,
+          }}>
+            ✓ {passed} Passed
+          </span>
+
+          {/* Failed count */}
+          <span style={{
+            fontSize: 11.5, fontWeight: 700,
+            color: failed > 0 ? 'var(--fail)' : 'var(--text-dim)',
+            flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3,
+          }}>
+            ✗ {failed} Failed
+          </span>
+
+          {/* Skipped (only when > 0) */}
+          {skipped > 0 && (
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', flexShrink: 0 }}>
+              ⊙ {skipped} Skipped
+            </span>
+          )}
+
+          {/* Progress bar (left-aligned after the stats) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: 140, flexShrink: 0 }}>
+            <div style={{ flex: 1, height: 5, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', borderRadius: 2, width: `${pct}%`, background: 'var(--pass)', transition: 'width 0.3s' }} />
+            </div>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', minWidth: 28, fontVariantNumeric: 'tabular-nums' }}>
+              {pct}%
+            </span>
+          </div>
         </div>
-        <span style={{ fontSize: 10, color: 'var(--text-dim)', minWidth: 28, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
-      </div>
-
-      {/* Labeled pass/fail counts — pushed right */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginLeft: 'auto', flexShrink: 0 }}>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--pass)', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span>✓</span><span>{passed} Passed</span>
-        </span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: failed > 0 ? 'var(--fail)' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span>✗</span><span>{failed} Failed</span>
-        </span>
-        {skipped > 0 && (
-          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>⊙ {skipped} Skipped</span>
-        )}
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
@@ -168,7 +193,7 @@ function ResultRow({ r }: { r: Result }) {
       borderBottom: '1px solid var(--border)',
     }}>
       {/* TC ID */}
-      <td style={{ padding: '8px 8px 8px 14px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+      <td style={{ padding: '8px 8px 8px 17px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
           {r.testCase.tcId}
         </span>
@@ -215,7 +240,7 @@ function ResultRow({ r }: { r: Result }) {
   );
 }
 
-// ── Regression trend chart ─────────────────────────────────────────────────
+// ── Regression trend chart — bar chart design ──────────────────────────────
 
 function TrendChart({ trend }: { trend: RunTrendPoint[] | undefined }) {
   const pts = useMemo(() => (trend ?? []).slice(-20), [trend]);
@@ -224,6 +249,8 @@ function TrendChart({ trend }: { trend: RunTrendPoint[] | undefined }) {
     fontSize: 10, color: 'var(--text-dim)', fontWeight: 600,
     textTransform: 'uppercase', letterSpacing: '0.07em',
   };
+
+  const CHART_H = 68;
 
   if (!trend || pts.length < 2) {
     return (
@@ -240,24 +267,28 @@ function TrendChart({ trend }: { trend: RunTrendPoint[] | undefined }) {
     );
   }
 
-  const VW = 300, VH = 80;
+  const n = pts.length;
   const rates = pts.map(p => {
     const tot = p.passed + p.failed + p.skipped;
     return tot > 0 ? p.passed / tot : 0;
   });
 
-  const n = rates.length;
-  const getX = (i: number) => (i / (n - 1)) * (VW - 20) + 10;
-  const getY = (v: number) => VH - 6 - v * (VH - 14);
+  const latestRate = rates[n - 1] ?? 0;
+  const prevRate   = rates[n - 2] ?? latestRate;
+  const delta      = latestRate - prevRate;
+  const trendUp    = delta > 0.01;
+  const trendDown  = delta < -0.01;
 
-  const linePoints  = rates.map((v, i) => `${getX(i)},${getY(v)}`).join(' ');
-  const areaPoints  = `${getX(0)},${VH} ` + rates.map((v, i) => `${getX(i)},${getY(v)}`).join(' ') + ` ${getX(n - 1)},${VH}`;
+  // RGB triplets for bar colors (CSS vars can't be used in rgba())
+  function barRgb(rate: number): string {
+    if (rate >= 0.8) return '42,157,143';  // --pass
+    if (rate >= 0.5) return '251,191,36';  // --amber
+    return '220,38,38';                    // --fail
+  }
 
-  const latestRate  = rates[n - 1] ?? 0;
-  const prevRate    = rates[n - 2] ?? latestRate;
-  const delta       = latestRate - prevRate;
-  const arrow       = delta > 0.01 ? '↑' : delta < -0.01 ? '↓' : '→';
-  const arrowColor  = delta > 0.01 ? 'var(--pass)' : delta < -0.01 ? 'var(--fail)' : 'var(--text-dim)';
+  const fmt = (d: string) => new Date(d).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const firstStr  = pts[0]?.date  ? fmt(pts[0].date)      : '';
+  const latestStr = pts[n-1]?.date ? fmt(pts[n-1].date) : 'Today';
 
   return (
     <div style={{
@@ -265,58 +296,61 @@ function TrendChart({ trend }: { trend: RunTrendPoint[] | undefined }) {
       padding: '14px 18px', boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column',
     }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={labelStyle}>Regression Trend</div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-          <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={labelStyle}>Regression Trend</div>
+          <div style={{ fontSize: 9, color: 'var(--text-dim)', marginTop: 2 }}>
+            Last {n} day{n !== 1 ? 's' : ''}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{
+            fontSize: 20, fontWeight: 800, lineHeight: 1,
+            color: `rgb(${barRgb(latestRate)})`,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
             {Math.round(latestRate * 100)}%
-          </span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: arrowColor }}>{arrow}</span>
+          </div>
+          <div style={{
+            fontSize: 9.5, marginTop: 3,
+            color: trendUp ? 'var(--pass)' : trendDown ? 'var(--fail)' : 'var(--text-dim)',
+          }}>
+            {trendUp ? '↑ improving' : trendDown ? '↓ regressing' : '→ stable'}
+          </div>
         </div>
       </div>
 
-      {/* SVG sparkline */}
-      <svg width="100%" viewBox={`0 0 ${VW} ${VH}`} style={{ display: 'block', overflow: 'visible' }}>
-        {/* Guide lines */}
-        {[0, 0.5, 1].map(v => (
-          <line key={v}
-            x1={10} x2={VW - 10} y1={getY(v)} y2={getY(v)}
-            stroke="var(--border)" strokeWidth={0.6}
-            strokeDasharray={v === 0.5 ? '3,3' : undefined}
-          />
-        ))}
-        {/* Y-axis labels */}
-        <text x={2}    y={getY(1)   + 4} fontSize={7} fill="var(--text-dim)">100%</text>
-        <text x={2}    y={getY(0.5) + 4} fontSize={7} fill="var(--text-dim)">50%</text>
-        <text x={5}    y={getY(0)   - 2} fontSize={7} fill="var(--text-dim)">0%</text>
-
-        {/* Area fill */}
-        <polygon points={areaPoints} fill="rgba(6,182,212,0.07)" />
-
-        {/* Fail area — region above (100-passRate) */}
-        <polygon
-          points={`${getX(0)},0 ` + rates.map((v, i) => `${getX(i)},${getY(v)}`).join(' ') + ` ${getX(n - 1)},0`}
-          fill="rgba(220,38,38,0.04)"
-        />
-
-        {/* Pass line */}
-        <polyline points={linePoints} fill="none" stroke="var(--cyan)" strokeWidth={1.8} strokeLinejoin="round" />
-
-        {/* Dots — highlight last 3 */}
-        {rates.map((v, i) => {
-          const isLast = i === n - 1;
+      {/* Bar chart */}
+      <div style={{ height: CHART_H, display: 'flex', alignItems: 'flex-end', gap: 2 }}>
+        {rates.map((rate, i) => {
+          const isLatest = i === n - 1;
+          const rgb      = barRgb(rate);
+          const h        = Math.max(3, Math.round(rate * CHART_H));
+          const total    = (pts[i]?.passed ?? 0) + (pts[i]?.failed ?? 0) + (pts[i]?.skipped ?? 0);
+          const dateStr  = pts[i]?.date ? fmt(pts[i].date) : '';
           return (
-            <circle key={i}
-              cx={getX(i)} cy={getY(v)} r={isLast ? 3.5 : 2}
-              fill={isLast ? 'var(--cyan)' : 'var(--surface)'}
-              stroke="var(--cyan)" strokeWidth={1.5}
+            <div
+              key={i}
+              title={`${dateStr}: ${Math.round(rate * 100)}% pass (${pts[i]?.passed ?? 0}/${total})`}
+              style={{
+                flex: 1, height: h,
+                background: `rgba(${rgb}, ${isLatest ? 0.88 : 0.36})`,
+                borderRadius: '2px 2px 0 0',
+                transition: 'height 0.4s ease',
+                boxShadow: isLatest ? `inset 0 0 0 1px rgba(${rgb}, 0.7)` : 'none',
+              }}
             />
           );
         })}
-      </svg>
+      </div>
 
-      <div style={{ fontSize: 9.5, color: 'var(--text-dim)', marginTop: 6 }}>
-        Last {pts.length} day{pts.length !== 1 ? 's' : ''} — pass rate per day
+      {/* Axis line */}
+      <div style={{ height: 1, background: 'var(--border)', marginTop: 1 }} />
+
+      {/* Date labels */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
+        <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>{firstStr}</span>
+        <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>{latestStr}</span>
       </div>
     </div>
   );
@@ -467,6 +501,11 @@ export default function RunDetail() {
     setStatusFilter(prev => prev === s ? '' : s);
   }
 
+  const allExpanded = groups.length > 0 && groups.every(([k]) => activeExpanded.has(k));
+
+  function expandAll()  { setExpandedGroups(new Set(groups.map(([k]) => k))); }
+  function collapseAll(){ setExpandedGroups(new Set()); }
+
   const total    = results.length;
   const passed   = results.filter(r => r.status === 'PASSED').length;
   const failed   = results.filter(r => r.status === 'FAILED').length;
@@ -546,7 +585,7 @@ export default function RunDetail() {
             </div>
           </div>
 
-          {/* Search + export toolbar */}
+          {/* Search + expand-collapse + export toolbar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <input
               value={search}
@@ -559,6 +598,20 @@ export default function RunDetail() {
               {statusFilter ? ` · ${statusFilter.toLowerCase()}` : ''}
             </span>
             <div style={{ flex: 1 }} />
+            {/* Expand / Collapse All */}
+            <button
+              onClick={allExpanded ? collapseAll : expandAll}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+                background: 'rgba(255,255,255,0.04)', color: 'var(--text-dim)',
+                border: '1px solid var(--border)',
+                cursor: 'pointer',
+              }}
+            >
+              {allExpanded ? '⊟ Collapse All' : '⊞ Expand All'}
+            </button>
+            {/* Download Excel */}
             <button
               onClick={handleExport}
               disabled={exporting}
@@ -575,59 +628,51 @@ export default function RunDetail() {
             </button>
           </div>
 
-          {/* Group cards */}
+          {/* Single flat table — all groups in one table, group headers as section rows */}
           {groups.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, padding: '40px 0' }}>
               No results match the current filters.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {groups.map(([groupKey, groupResults]) => {
-                const isOpen = activeExpanded.has(groupKey);
-                return (
-                  <div
-                    key={groupKey}
-                    style={{
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 10,
-                      overflow: 'hidden',
-                      boxShadow: 'var(--shadow-card)',
-                    }}
-                  >
-                    <GroupHeader
-                      groupKey={groupKey}
-                      groupResults={groupResults}
-                      isOpen={isOpen}
-                      onToggle={() => toggleGroup(groupKey)}
-                    />
-                    {isOpen && (
-                      /* Individual card scroll — max height so card doesn't grow unbounded */
-                      <div style={{ maxHeight: 380, overflowY: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-                          <colgroup>
-                            <col style={{ width: 108 }} />
-                            <col />
-                            <col style={{ width: 82 }} />
-                            <col style={{ width: 96 }} />
-                          </colgroup>
-                          <thead>
-                            <tr>
-                              <th style={{ ...colHeadStyle, textAlign: 'left', paddingLeft: 14 }}>TC ID</th>
-                              <th style={{ ...colHeadStyle, textAlign: 'left' }}>Test Case</th>
-                              <th style={{ ...colHeadStyle, textAlign: 'right' }}>Duration</th>
-                              <th style={{ ...colHeadStyle, textAlign: 'center', paddingRight: 14 }}>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {groupResults.map(r => <ResultRow key={r.id} r={r} />)}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+            <div style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              overflow: 'hidden',
+              boxShadow: 'var(--shadow-card)',
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                <colgroup>
+                  <col style={{ width: 108 }} />
+                  <col />
+                  <col style={{ width: 82 }} />
+                  <col style={{ width: 96 }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th style={{ ...colHeadStyle, textAlign: 'left', paddingLeft: 17 }}>TC ID</th>
+                    <th style={{ ...colHeadStyle, textAlign: 'left' }}>Test Case</th>
+                    <th style={{ ...colHeadStyle, textAlign: 'right' }}>Duration</th>
+                    <th style={{ ...colHeadStyle, textAlign: 'center', paddingRight: 14 }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map(([groupKey, groupResults]) => {
+                    const isOpen = activeExpanded.has(groupKey);
+                    return (
+                      <Fragment key={groupKey}>
+                        <GroupHeaderRow
+                          groupKey={groupKey}
+                          groupResults={groupResults}
+                          isOpen={isOpen}
+                          onToggle={() => toggleGroup(groupKey)}
+                        />
+                        {isOpen && groupResults.map(r => <ResultRow key={r.id} r={r} />)}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 
