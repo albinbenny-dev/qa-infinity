@@ -252,15 +252,17 @@ router.post('/google', async (req: Request, res: Response) => {
 
     if (!user) {
       const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+      const userCount = await prisma.user.count();
+      const globalRole = userCount === 0 ? 'SUPER_ADMIN' : 'STANDARD_USER';
       user = await prisma.user.create({
         data: {
           email,
           name:         gPayload.name ?? email.split('@')[0],
           passwordHash, // unusable — SSO users authenticate via Google
-          globalRole:   'STANDARD_USER',
+          globalRole,
         },
       });
-      console.log(`[auth/google] New user registered via SSO: ${email}`);
+      console.log(`[auth/google] New user registered via SSO: ${email} (${globalRole})`);
     }
 
     // ── 4. Issue QA Infinity JWT ─────────────────────────────────────────────
