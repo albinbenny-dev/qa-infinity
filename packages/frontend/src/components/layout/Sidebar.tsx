@@ -161,23 +161,21 @@ export default function Sidebar({ slug }: SidebarProps) {
           </div>
         ))}
 
-        {/* All Projects + utils — below groups */}
-        {slug && (
-          <div style={{
-            background: 'rgba(255,255,255,0.025)',
-            borderRadius: 9, padding: '3px',
-            display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4,
-          }}>
-            <TileItem label="Projects" icon={Globe} active={location.pathname === '/projects'} path="/projects"
-              title="All Projects" badge={projects.length || undefined} badgeVariant="blue" />
-            {!isRunner && (
-              <TileItem label="AI Usage" icon={CreditCard} active={location.pathname === '/usage'} path="/usage" title="AI Usage" />
-            )}
-            {currentUser?.globalRole === 'SUPER_ADMIN' && (
-              <TileItem label="Users" icon={User} active={location.pathname === '/admin/users'} path="/admin/users" title="User Management" />
-            )}
-          </div>
-        )}
+        {/* All Projects + utils — always visible regardless of active project */}
+        <div style={{
+          background: 'rgba(255,255,255,0.025)',
+          borderRadius: 9, padding: '3px',
+          display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4,
+        }}>
+          <TileItem label="Projects" icon={Globe} active={location.pathname === '/projects'} path="/projects"
+            title="All Projects" badge={projects.length || undefined} badgeVariant="blue" />
+          {!isRunner && (
+            <TileItem label="AI Usage" icon={CreditCard} active={location.pathname === '/usage'} path="/usage" title="AI Usage" />
+          )}
+          {currentUser?.globalRole === 'SUPER_ADMIN' && (
+            <TileItem label="Users" icon={User} active={location.pathname === '/admin/users'} path="/admin/users" title="User Management" />
+          )}
+        </div>
       </nav>
 
       {/* ── User avatar + logout ─────────────────────────────────────────── */}
