@@ -9,12 +9,12 @@ import { api } from '../lib/api';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
-  PASSED: 'var(--pass)',
-  FAILED: 'var(--fail)',
-  RUNNING: 'var(--cyan)',
-  PENDING: 'var(--amber)',
+  PASSED:    'var(--pass)',
+  FAILED:    'var(--fail)',
+  RUNNING:   'var(--cyan)',
+  PENDING:   'var(--amber)',
   CANCELLED: 'var(--text-dim)',
-  SKIPPED: 'var(--skip)',
+  SKIPPED:   'var(--skip)',
 };
 
 function fmtMs(ms: number | null | undefined): string {
@@ -33,36 +33,38 @@ function fmtSpan(start?: string | null, end?: string | null): string {
 // ── Clickable stat tile ────────────────────────────────────────────────────
 
 interface StatTileProps {
-  label: string;
-  value: string | number;
-  accent: string;
-  active?: boolean;
+  label:    string;
+  value:    string | number;
+  accent:   string;
+  active?:  boolean;
   onClick?: () => void;
 }
 
 function StatTile({ label, value, accent, active, onClick }: StatTileProps) {
+  const [hov, setHov] = useState(false);
   return (
     <div
       onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       style={{
-        background: active ? 'var(--surface2)' : 'var(--surface)',
-        border: `1px solid ${active ? 'rgba(37,99,171,0.6)' : 'var(--border)'}`,
-        borderRadius: 10, padding: '14px 16px', flex: 1,
-        position: 'relative', overflow: 'hidden',
-        boxShadow: active ? '0 0 0 2px rgba(37,99,171,0.15)' : 'var(--shadow-card)',
+        background: active ? 'var(--surface2)' : hov && onClick ? 'var(--surface2)' : 'var(--surface)',
+        border: `1px solid ${active ? accent : 'var(--border)'}`,
+        borderTop: `3px solid ${accent}`,
+        borderRadius: 10, padding: '12px 16px', flex: 1,
+        boxShadow: active ? `0 0 0 2px ${accent}22` : 'var(--shadow-card)',
         cursor: onClick ? 'pointer' : 'default',
-        transition: 'border-color 0.15s, box-shadow 0.15s',
+        transition: 'border-color 0.15s, background 0.12s',
         userSelect: 'none',
       }}
     >
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: accent }} />
-      <div style={{ fontSize: 28, fontWeight: 800, color: '#F47B20', lineHeight: 1, marginTop: 4 }}>{value}</div>
-      <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginTop: 3 }}>
+      <div style={{ fontSize: 26, fontWeight: 800, color: '#F47B20', lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>
         {label}
       </div>
       {onClick && (
-        <div style={{ position: 'absolute', bottom: 5, right: 8, fontSize: 9, color: active ? 'var(--cyan)' : 'var(--text-dim)', opacity: 0.8 }}>
-          {active ? '✕ clear' : 'filter'}
+        <div style={{ fontSize: 9, color: active ? accent : 'var(--text-dim)', opacity: 0.75, marginTop: 2 }}>
+          {active ? '✕ clear filter' : 'click to filter'}
         </div>
       )}
     </div>
@@ -74,10 +76,10 @@ function StatTile({ label, value, accent, active, onClick }: StatTileProps) {
 type Result = ReturnType<typeof useReportRun>['data'] extends { results: (infer R)[] } | undefined ? R : never;
 
 interface GroupHeaderProps {
-  groupKey: string;
+  groupKey:     string;
   groupResults: Result[];
-  isOpen: boolean;
-  onToggle: () => void;
+  isOpen:       boolean;
+  onToggle:     () => void;
 }
 
 function GroupHeader({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderProps) {
@@ -87,66 +89,63 @@ function GroupHeader({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderPr
   const skipped = groupResults.filter(r => r.status === 'SKIPPED').length;
   const pct     = total > 0 ? Math.round((passed / total) * 100) : 0;
 
-  const barColor = failed > 0
-    ? 'linear-gradient(90deg, var(--pass) 0%, var(--fail) 100%)'
-    : 'var(--pass)';
+  const accentColor = failed > 0 ? 'var(--fail)' : 'var(--pass)';
 
   return (
     <div
       onClick={onToggle}
       style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '11px 16px', borderBottom: '1px solid var(--border)',
-        cursor: 'pointer', background: 'var(--surface2)',
-        transition: 'background 0.12s',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '9px 14px 9px 0',
+        cursor: 'pointer',
+        borderLeft: `3px solid ${accentColor}`,
+        paddingLeft: 12,
+        background: 'var(--surface2)',
+        borderBottom: isOpen ? '1px solid var(--border)' : 'none',
       }}
     >
       {/* chevron */}
-      <span style={{ fontSize: 9, color: 'var(--cyan)', width: 10, flexShrink: 0 }}>
+      <span style={{ fontSize: 8, color: 'var(--text-dim)', width: 8, flexShrink: 0 }}>
         {isOpen ? '▼' : '▶'}
       </span>
 
-      {/* use case name */}
-      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', flex: '0 0 auto', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      {/* name */}
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {groupKey}
       </span>
 
-      {/* TC count pill */}
+      {/* TC count */}
       <span style={{
-        fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
-        background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-dim)',
+        fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 100,
+        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', color: 'var(--text-dim)',
         flexShrink: 0,
       }}>
         {total} TC{total !== 1 ? 's' : ''}
       </span>
 
-      {/* progress bar — fills remaining space */}
-      <div style={{ flex: 1, minWidth: 60, maxWidth: 200 }}>
-        <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+      {/* progress bar */}
+      <div style={{ flex: 1, minWidth: 50, maxWidth: 140 }}>
+        <div style={{ height: 5, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
           <div style={{
-            height: '100%', borderRadius: 3,
-            width: `${pct}%`,
-            background: barColor,
-            transition: 'width 0.3s ease',
+            height: '100%', borderRadius: 3, width: `${pct}%`,
+            background: 'var(--pass)', transition: 'width 0.3s ease',
           }} />
         </div>
-        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
-          {pct}% pass
-        </div>
+        <div style={{ fontSize: 9.5, color: 'var(--text-dim)', marginTop: 2 }}>{pct}% pass</div>
       </div>
 
-      {/* stats */}
-      <div style={{ display: 'flex', gap: 10, flexShrink: 0, alignItems: 'center' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--pass)', display: 'flex', alignItems: 'center', gap: 3 }}>
+      {/* counts */}
+      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center', marginLeft: 'auto' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--pass)', display: 'flex', alignItems: 'center', gap: 2 }}>
           <span>✓</span><span>{passed}</span>
         </span>
         {failed > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fail)', display: 'flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fail)', display: 'flex', alignItems: 'center', gap: 2 }}>
             <span>✗</span><span>{failed}</span>
           </span>
         )}
         {skipped > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 2 }}>
             <span>⊙</span><span>{skipped}</span>
           </span>
         )}
@@ -158,55 +157,70 @@ function GroupHeader({ groupKey, groupResults, isOpen, onToggle }: GroupHeaderPr
 // ── Result row ─────────────────────────────────────────────────────────────
 
 function ResultRow({ r }: { r: Result }) {
-  const rowBg = r.status === 'FAILED'
-    ? 'rgba(220,38,38,0.04)'
-    : r.status === 'SKIPPED'
-    ? 'rgba(251,191,36,0.04)'
-    : 'transparent';
-  const dur = fmtMs(r.duration);
   const err = r.errorMessage
-    ? (r.errorMessage.length > 80 ? r.errorMessage.slice(0, 77) + '…' : r.errorMessage)
+    ? (r.errorMessage.length > 72 ? r.errorMessage.slice(0, 69) + '…' : r.errorMessage)
     : null;
 
+  const statusBg = r.status === 'PASSED'  ? 'rgba(42,157,143,0.1)'
+    : r.status === 'FAILED'   ? 'rgba(220,38,38,0.1)'
+    : r.status === 'SKIPPED'  ? 'rgba(251,191,36,0.1)'
+    : 'rgba(107,114,128,0.1)';
+  const statusBorder = r.status === 'PASSED'  ? 'rgba(42,157,143,0.3)'
+    : r.status === 'FAILED'   ? 'rgba(220,38,38,0.3)'
+    : r.status === 'SKIPPED'  ? 'rgba(251,191,36,0.3)'
+    : 'rgba(107,114,128,0.2)';
+
   return (
-    <tr style={{ background: rowBg, borderBottom: '1px solid var(--border)' }}>
-      <td style={{ padding: '8px 14px', fontSize: 12, maxWidth: 380 }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginRight: 6 }}>
-          {r.testCase.tcId}
-        </span>
-        <span style={{ color: 'var(--text)' }}>{r.testCase.title}</span>
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '8px 14px',
+      borderBottom: '1px solid var(--border)',
+      background: r.status === 'FAILED' ? 'rgba(220,38,38,0.025)' : 'transparent',
+    }}>
+      {/* TC info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-dim)', flexShrink: 0 }}>
+            {r.testCase.tcId}
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {r.testCase.title}
+          </span>
+        </div>
         {err && (
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2, lineHeight: 1.4 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>
             {err}
           </div>
         )}
-      </td>
-      <td style={{ padding: '8px 14px', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', whiteSpace: 'nowrap', textAlign: 'right' }}>
-        {dur}
-      </td>
-      <td style={{ padding: '8px 14px', textAlign: 'center' }}>
-        <span style={{
-          fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
-          color: STATUS_COLOR[r.status] ?? 'var(--text-dim)',
-          background: r.status === 'PASSED' ? 'rgba(42,157,143,0.1)'
-            : r.status === 'FAILED' ? 'rgba(220,38,38,0.1)'
-            : r.status === 'SKIPPED' ? 'rgba(251,191,36,0.1)'
-            : 'rgba(107,114,128,0.1)',
-          border: `1px solid ${STATUS_COLOR[r.status] ?? 'var(--border)'}`,
-          opacity: 0.9,
-        }}>
-          {r.status}
-        </span>
-      </td>
-    </tr>
+      </div>
+
+      {/* duration */}
+      <span style={{
+        fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)',
+        flexShrink: 0, paddingTop: 1, minWidth: 54, textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {fmtMs(r.duration)}
+      </span>
+
+      {/* status pill */}
+      <span style={{
+        fontSize: 9.5, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
+        color: STATUS_COLOR[r.status] ?? 'var(--text-dim)',
+        background: statusBg, border: `1px solid ${statusBorder}`,
+        flexShrink: 0, whiteSpace: 'nowrap', minWidth: 62, textAlign: 'center',
+      }}>
+        {r.status}
+      </span>
+    </div>
   );
 }
 
 // ── Run stats strip ────────────────────────────────────────────────────────
 
 function RunStats({ results, startedAt, completedAt }: {
-  results: Result[];
-  startedAt?: string | null;
+  results:     Result[];
+  startedAt?:  string | null;
   completedAt?: string | null;
 }) {
   const totalDur = fmtSpan(startedAt, completedAt);
@@ -223,54 +237,56 @@ function RunStats({ results, startedAt, completedAt }: {
     [results],
   );
 
+  const labelStyle: React.CSSProperties = {
+    fontSize: 10, color: 'var(--text-dim)', fontWeight: 600,
+    textTransform: 'uppercase', letterSpacing: '0.07em',
+  };
+
   return (
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
-      padding: '14px 18px', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start',
+      padding: '13px 18px', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start',
       boxShadow: 'var(--shadow-card)',
     }}>
       {/* time stats */}
-      <div style={{ display: 'flex', gap: 20, flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: 22, flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total Duration</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{totalDur}</div>
+          <div style={labelStyle}>Total Duration</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{totalDur}</div>
         </div>
         <div>
-          <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Avg per Test</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{avgMs != null ? fmtMs(avgMs) : '—'}</div>
+          <div style={labelStyle}>Avg per Test</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{avgMs != null ? fmtMs(avgMs) : '—'}</div>
         </div>
       </div>
 
-      {/* divider */}
       <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
 
       {/* top 5 slowest */}
-      <div style={{ flex: 1, minWidth: 260 }}>
-        <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-          Top 5 Slowest Tests
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ flex: 1, minWidth: 240 }}>
+        <div style={{ ...labelStyle, marginBottom: 8 }}>Top 5 Slowest Tests</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {top5.length === 0 && (
             <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>No timing data</span>
           )}
           {top5.map((r, i) => {
             const maxMs = top5[0]?.duration ?? 1;
             const pct   = Math.round(((r.duration ?? 0) / maxMs) * 100);
+            // Subtle, muted bar colors instead of vivid red/cyan
+            const barColor = r.status === 'FAILED'
+              ? 'rgba(220,38,38,0.42)'
+              : 'rgba(37,99,171,0.5)';
             return (
               <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 9, color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums', width: 10, flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: 'var(--text-dim)', width: 10, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                   {i + 1}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden', marginBottom: 2 }}>
-                    <div style={{
-                      height: '100%', borderRadius: 2,
-                      width: `${pct}%`,
-                      background: r.status === 'FAILED' ? 'var(--fail)' : 'var(--cyan)',
-                    }} />
+                  <div style={{ height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden', marginBottom: 3 }}>
+                    <div style={{ height: '100%', borderRadius: 2, width: `${pct}%`, background: barColor }} />
                   </div>
                   <span style={{ fontSize: 11, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginRight: 4 }}>{r.testCase.tcId}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-dim)', marginRight: 4 }}>{r.testCase.tcId}</span>
                     {r.testCase.title}
                   </span>
                 </div>
@@ -289,13 +305,8 @@ function RunStats({ results, startedAt, completedAt }: {
 // ── Page ───────────────────────────────────────────────────────────────────
 
 const inputStyle: React.CSSProperties = {
-  background: 'var(--surface2)',
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-  color: 'var(--text)',
-  fontSize: 12,
-  padding: '5px 10px',
-  outline: 'none',
+  background: 'var(--surface2)', border: '1px solid var(--border)',
+  borderRadius: 6, color: 'var(--text)', fontSize: 12, padding: '5px 10px', outline: 'none',
 };
 
 export default function RunDetail() {
@@ -335,7 +346,6 @@ export default function RunDetail() {
   }, [filtered]);
 
   const groups = Array.from(groupedMap.entries());
-
   const defaultExpanded = useMemo(() => new Set(Array.from(groupedMap.keys())), [groupedMap]);
   const activeExpanded  = expandedGroups ?? defaultExpanded;
 
@@ -350,9 +360,9 @@ export default function RunDetail() {
   }
 
   const total    = results.length;
-  const passed   = results.filter((r) => r.status === 'PASSED').length;
-  const failed   = results.filter((r) => r.status === 'FAILED').length;
-  const skipped  = results.filter((r) => r.status === 'SKIPPED').length;
+  const passed   = results.filter(r => r.status === 'PASSED').length;
+  const failed   = results.filter(r => r.status === 'FAILED').length;
+  const skipped  = results.filter(r => r.status === 'SKIPPED').length;
   const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
   async function handleExport() {
@@ -366,21 +376,13 @@ export default function RunDetail() {
       a.download = `run-report-${String(run?.runSeq ?? '').padStart(4, '0')}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      /* silent — user can retry */
-    } finally {
+    } catch { /* silent */ } finally {
       setExporting(false);
     }
   }
 
-  const colHeader: React.CSSProperties = {
-    fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
-    color: 'var(--text-dim)', padding: '8px 14px', borderBottom: '1px solid var(--border)',
-    textAlign: 'left', background: 'var(--surface2)',
-  };
-
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <Topbar
         breadcrumbs={[
           { label: 'All Projects', href: '/projects' },
@@ -389,45 +391,54 @@ export default function RunDetail() {
           { label: `#${String(run?.runSeq ?? 0).padStart(4, '0')} ${run?.name ?? ''}` },
         ]}
         actions={
-          <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/reports`)} style={{ background: 'rgba(37,99,171,0.1)', color: 'var(--cyan)', border: '1px solid rgba(37,99,171,0.25)' }}>
+          <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/reports`)}
+            style={{ background: 'rgba(37,99,171,0.1)', color: 'var(--cyan)', border: '1px solid rgba(37,99,171,0.25)' }}>
             ← Back
           </TbBtn>
         }
       />
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-        {isLoading ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 13, paddingTop: 60 }}>Loading run details…</div>
-        ) : !run ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 13, paddingTop: 60 }}>Run not found.</div>
-        ) : (
-          <>
-            {/* Run header */}
+      {isLoading ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 13 }}>
+          Loading run details…
+        </div>
+      ) : !run ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: 13 }}>
+          Run not found.
+        </div>
+      ) : (
+        /* Two-panel layout: static summary top, scrollable TC list below */
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+          {/* ── Static summary panel ───────────────────────────────── */}
+          <div style={{ flexShrink: 0, padding: '16px 24px 14px', display: 'flex', flexDirection: 'column', gap: 14, borderBottom: '1px solid var(--border)' }}>
+
+            {/* Run title */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: STATUS_COLOR[run.status] ?? 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
-              <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{run.name}</span>
-              <span style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: STATUS_COLOR[run.status] ?? 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{run.name}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
                 #{String(run.runSeq).padStart(4, '0')} · {run.environment} · {new Date(run.createdAt).toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
 
-            {/* Clickable stat tiles */}
-            <div style={{ display: 'flex', gap: 12 }}>
-              <StatTile label="Total"     value={total}        accent="linear-gradient(90deg, var(--cyan), #2563AB)"      onClick={() => toggleStatusFilter('')} />
-              <StatTile label="Passed"    value={passed}       accent="linear-gradient(90deg, var(--pass), #1a7a6e)"      active={statusFilter === 'PASSED'}   onClick={() => toggleStatusFilter('PASSED')} />
-              <StatTile label="Failed"    value={failed}       accent="linear-gradient(90deg, var(--fail), #b91c1c)"      active={statusFilter === 'FAILED'}   onClick={() => toggleStatusFilter('FAILED')} />
-              <StatTile label="Skipped"   value={skipped}      accent="linear-gradient(90deg, var(--amber), #D97706)"     active={statusFilter === 'SKIPPED'}  onClick={() => toggleStatusFilter('SKIPPED')} />
-              <StatTile label="Pass Rate" value={`${passRate}%`} accent="linear-gradient(90deg, var(--skip), #D9601A)" />
+            {/* Stat tiles */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <StatTile label="Total"     value={total}          accent="var(--cyan)" onClick={() => toggleStatusFilter('')} />
+              <StatTile label="Passed"    value={passed}         accent="var(--pass)"  active={statusFilter === 'PASSED'}  onClick={() => toggleStatusFilter('PASSED')} />
+              <StatTile label="Failed"    value={failed}         accent="var(--fail)"  active={statusFilter === 'FAILED'}  onClick={() => toggleStatusFilter('FAILED')} />
+              <StatTile label="Skipped"   value={skipped}        accent="var(--amber)" active={statusFilter === 'SKIPPED'} onClick={() => toggleStatusFilter('SKIPPED')} />
+              <StatTile label="Pass Rate" value={`${passRate}%`} accent="rgba(37,99,171,0.8)" />
             </div>
 
-            {/* Run stats (duration + top 5 slowest) */}
+            {/* Run stats strip */}
             <RunStats results={results} startedAt={run.startedAt} completedAt={run.completedAt} />
 
             {/* Search + export toolbar */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <input
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={e => setSearch(e.target.value)}
                 placeholder="Search test cases…"
                 style={{ ...inputStyle, minWidth: 200 }}
               />
@@ -451,48 +462,58 @@ export default function RunDetail() {
                 {exporting ? '⏳ Exporting…' : '⬇ Download Excel'}
               </button>
             </div>
+          </div>
 
-            {/* Results grouped by use case */}
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
-              {groups.length === 0 ? (
-                <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
-                  No results match the current filters.
-                </div>
-              ) : (
-                groups.map(([groupKey, groupResults]) => {
-                  const isOpen = activeExpanded.has(groupKey);
-                  return (
-                    <div key={groupKey}>
-                      <GroupHeader
-                        groupKey={groupKey}
-                        groupResults={groupResults}
-                        isOpen={isOpen}
-                        onToggle={() => toggleGroup(groupKey)}
-                      />
-                      {isOpen && (
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 400 }}>
-                            <thead>
-                              <tr>
-                                <th style={colHeader}>Test Case</th>
-                                <th style={{ ...colHeader, width: 80, textAlign: 'right' }}>Duration</th>
-                                <th style={{ ...colHeader, width: 100, textAlign: 'center' }}>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {groupResults.map((r) => <ResultRow key={r.id} r={r} />)}
-                            </tbody>
-                          </table>
+          {/* ── Scrollable TC results ───────────────────────────────── */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 24px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {groups.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, paddingTop: 40 }}>
+                No results match the current filters.
+              </div>
+            ) : (
+              groups.map(([groupKey, groupResults]) => {
+                const isOpen = activeExpanded.has(groupKey);
+                return (
+                  <div
+                    key={groupKey}
+                    style={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 10,
+                      overflow: 'hidden',
+                      boxShadow: 'var(--shadow-card)',
+                    }}
+                  >
+                    <GroupHeader
+                      groupKey={groupKey}
+                      groupResults={groupResults}
+                      isOpen={isOpen}
+                      onToggle={() => toggleGroup(groupKey)}
+                    />
+                    {isOpen && (
+                      <div>
+                        {/* column header */}
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '5px 14px',
+                          background: 'rgba(255,255,255,0.015)',
+                          borderBottom: '1px solid var(--border)',
+                        }}>
+                          <span style={{ flex: 1, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', opacity: 0.7 }}>Test Case</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', opacity: 0.7, minWidth: 54, textAlign: 'right' }}>Duration</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', opacity: 0.7, minWidth: 62, textAlign: 'center' }}>Status</span>
                         </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </>
-        )}
-      </div>
+                        {groupResults.map(r => <ResultRow key={r.id} r={r} />)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
