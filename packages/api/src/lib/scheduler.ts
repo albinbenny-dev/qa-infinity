@@ -105,6 +105,21 @@ export function registerSchedule(schedule: ScheduleRow): void {
         }
       }
 
+      // Skip this firing if a run for this schedule is still active
+      const activeRun = await prisma.run.findFirst({
+        where: {
+          projectId: schedule.projectId,
+          name: { contains: schedule.name },
+          triggerType: 'SCHEDULED',
+          status: { in: ['PENDING', 'RUNNING'] },
+        },
+        select: { id: true, runSeq: true },
+      });
+      if (activeRun) {
+        console.log(`[scheduler] Skipping "${schedule.name}" — RUN-${String(activeRun.runSeq).padStart(4, '0')} still active`);
+        return;
+      }
+
       const envConfig = await prisma.envConfig.findFirst({
         where: { projectId: schedule.projectId, name: schedule.environment },
         select: { baseUrl: true, username: true, password: true },

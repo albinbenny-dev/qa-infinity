@@ -2,9 +2,10 @@
 # ==============================================================================
 # QA Infinity — Linux/Remote Server Startup Script
 #
-# First time:  ./start.sh         (sets up .env, builds images, starts stack)
-# After that:  ./start.sh         (starts existing stack — fast)
+# First time:  ./start.sh          (sets up .env, builds images, starts stack)
+# After that:  ./start.sh          (starts existing stack — fast)
 #              ./start.sh --build  (force-rebuild images after code changes)
+#              ./start.sh --reset  (cancel all active/stuck runs, then start)
 #              ./start.sh --stop   (stop all containers)
 #              ./start.sh --logs   (tail live logs)
 # ==============================================================================
@@ -15,12 +16,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD=false
 STOP=false
 LOGS=false
+RESET=false
 
 for arg in "$@"; do
   case "$arg" in
-    --build) BUILD=true ;;
-    --stop)  STOP=true  ;;
-    --logs)  LOGS=true  ;;
+    --build) BUILD=true  ;;
+    --stop)  STOP=true   ;;
+    --logs)  LOGS=true   ;;
+    --reset) RESET=true  ;;
   esac
 done
 
@@ -161,10 +164,25 @@ else
 fi
 
 # ==============================================================================
+# STEP 3.5 — Inject FORCE_CANCEL_RUNS for --reset mode
+# ==============================================================================
+if $RESET; then
+  step "Reset mode — cancelling all active runs on startup"
+  # Inject the one-shot flag into .env (qa-api reads it via env_file)
+  sed -i '/^FORCE_CANCEL_RUNS=/d' "$SCRIPT_DIR/.env"
+  echo "FORCE_CANCEL_RUNS=true" >> "$SCRIPT_DIR/.env"
+  warn "FORCE_CANCEL_RUNS=true added to .env — will be removed after startup"
+fi
+
+# ==============================================================================
 # STEP 4 — Start the stack
 # ==============================================================================
 step "Starting QA Infinity stack"
 $COMPOSE up -d
+if $RESET; then
+  # Force-recreate the API container so it picks up the updated .env
+  $COMPOSE up -d --force-recreate qa-api
+fi
 
 # ==============================================================================
 # STEP 5 — Wait for API health
@@ -180,6 +198,18 @@ for i in $(seq 1 24); do
   fi
   echo "    Waiting... ($((i * 5))s)"
 done
+
+# ==============================================================================
+# STEP 5.5 — Remove one-shot reset flag
+# ==============================================================================
+if $RESET; then
+  sed -i '/^FORCE_CANCEL_RUNS=/d' "$SCRIPT_DIR/.env"
+  if $healthy; then
+    ok "FORCE_CANCEL_RUNS removed from .env — reset complete"
+  else
+    warn "API did not start cleanly; FORCE_CANCEL_RUNS removed anyway (check logs)"
+  fi
+fi
 
 # ==============================================================================
 # STEP 6 — Summary

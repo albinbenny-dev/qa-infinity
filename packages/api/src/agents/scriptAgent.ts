@@ -478,9 +478,12 @@ Declare \${HEADLESS} in *** Variables *** with default \${TRUE}.
 
 ### Screenshot and Video Recording — REQUIRED
 Every generated script MUST capture a screenshot and video for run history. You MUST:
-1. Configure video in New Context — ALWAYS include \`recordVideo={'dir': '\${OUTPUTDIR}'}\`:
-     Set Browser Timeout    30s
+1. Configure video in EVERY New Context call — ALWAYS include \`recordVideo={'dir': '\${OUTPUTDIR}'}\`.
+   This applies whether the script has one context or multiple (multi-user/multi-role flows):
      New Context    ignoreHTTPSErrors=True    recordVideo={'dir': '\${OUTPUTDIR}'}
+   For multi-context scripts (e.g. user A creates, user B approves, user A verifies), every
+   New Context call must carry the same recordVideo argument — one video file is produced per
+   context and the run history will bundle them into a ZIP automatically.
 2. Take a screenshot at the end of EVERY test — add \`Take Screenshot\` as the FIRST line of the
    teardown keyword (before Close Browser), so it captures the final page state on both pass and fail:
      Close Test Session

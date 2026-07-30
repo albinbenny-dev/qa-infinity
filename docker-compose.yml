@@ -136,7 +136,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Kolkata
-    shm_size: '3gb'    # Chrome/Selenium needs real shared memory; Docker's 64MB default crashes it
+    shm_size: '256m'   # Chrome uses /tmp via --disable-dev-shm-usage; 256m covers Selenium fallback needs
     init: true         # Use tini as PID 1 to reap zombie processes from Chrome/Selenium workers
     depends_on:
       qa-api:
@@ -151,10 +151,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.75'
-          memory: 3G
+          cpus: '1.5'
+          memory: 2G
         reservations:
-          cpus: '0.25'
+          cpus: '0.5'
           memory: 512M
     networks:
       - qa-net

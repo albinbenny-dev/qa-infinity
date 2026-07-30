@@ -242,12 +242,28 @@ httpServer.listen(PORT, () => {
   // a terminal status to exit instead of re-executing, e.g. the healing loop).
   void (async () => {
     try {
-      const cleaned = await prisma.run.updateMany({
-        where: { status: { in: ['PENDING', 'RUNNING'] } },
-        data: { status: 'CANCELLED', completedAt: new Date() },
-      });
-      if (cleaned.count > 0) {
-        console.log(`[qa-api] Startup cleanup: cancelled ${cleaned.count} interrupted run(s)`);
+      if (process.env.FORCE_CANCEL_RUNS === 'true') {
+        // Emergency reset: cancel ALL active runs so they can be restarted manually.
+        // Set FORCE_CANCEL_RUNS=true in docker-compose or the startup command when
+        // stale runs have piled up and need a clean slate. Remove the flag afterwards.
+        const forceCleaned = await prisma.run.updateMany({
+          where: { status: { in: ['PENDING', 'RUNNING'] } },
+          data: { status: 'CANCELLED', completedAt: new Date() },
+        });
+        if (forceCleaned.count > 0) {
+          console.log(`[qa-api] FORCE_CANCEL_RUNS=true: cancelled ${forceCleaned.count} run(s) — remove this flag after restart`);
+        }
+      } else {
+        // Normal restart: cancel only PENDING runs (never started; BullMQ jobs gone).
+        // RUNNING runs are left as RUNNING — BullMQ stall detection re-queues them
+        // after ~30 s and the worker resume logic skips already-completed TCs.
+        const pendingCleaned = await prisma.run.updateMany({
+          where: { status: 'PENDING' },
+          data: { status: 'CANCELLED', completedAt: new Date() },
+        });
+        if (pendingCleaned.count > 0) {
+          console.log(`[qa-api] Startup cleanup: cancelled ${pendingCleaned.count} pending run(s); active runs will resume via BullMQ stall retry`);
+        }
       }
     } catch (err) {
       console.warn('[qa-api] Startup cleanup failed (non-fatal):', (err as Error).message);

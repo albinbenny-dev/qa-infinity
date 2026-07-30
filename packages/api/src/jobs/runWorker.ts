@@ -83,30 +83,44 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     fs.mkdirSync(artifactsDir, { recursive: true });
   } catch { /* ignore */ }
 
-  // ── 1. Mark run as RUNNING ───────────────────────────────────────────────
-  await prisma.run.update({
-    where: { id: runId },
+  // ── 1. Resume detection: snapshot existing results before touching the run ─
+  // Must happen before the guard so we preserve the checkpoint state even if
+  // another instance tries to claim the same run concurrently.
+  const existingResults = await prisma.runResult.findMany({
+    where: { runId },
+    select: { id: true, testCaseId: true, status: true },
+  });
+  const completedTcIds = new Set(
+    existingResults.filter(r => r.status === 'PASSED' || r.status === 'FAILED').map(r => r.testCaseId),
+  );
+  const existingResultsByTcId = new Map(existingResults.map(r => [r.testCaseId, r.status]));
+  const isResuming = completedTcIds.size > 0;
+
+  // ── 2. Atomic guard: only claim runs that are still in a startable state ──
+  // updateMany with a conditional where-clause means that if startup cleanup (or
+  // a user cancel) already moved the run to a terminal state, guard.count === 0
+  // and we bail without touching RunResults — preserving any completed TC work.
+  const guard = await prisma.run.updateMany({
+    where: { id: runId, status: { in: ['PENDING', 'RUNNING'] } },
     data: { status: 'RUNNING', startedAt: new Date() },
   });
-
-  emitToRun(runId, 'run:start', { total: total + skippedTcIds.length, environment, parallelWorkers, browser, headless: false });
-  emitLog(runId, 'info',
-    `▶ Starting run · ${total} script${total !== 1 ? 's' : ''}${skippedTcIds.length > 0 ? ` · ${skippedTcIds.length} skipped (no script)` : ''} · ${parallelWorkers} workers · ${browser} · headed`
-  );
-
-  // ── 2. Check for cancellation / already-terminal state ──────────────────
-  // A stalled BullMQ job may be retried after a server restart. If the run is
-  // already in a terminal state (CANCELLED by startup cleanup, or previously
-  // completed), exit immediately so the heal loop doesn't restart.
-  const currentRun = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
-  if (
-    currentRun?.status === 'CANCELLED' ||
-    currentRun?.status === 'PASSED' ||
-    currentRun?.status === 'FAILED'
-  ) {
-    emitLog(runId, 'warn', `■ Run already in terminal state (${currentRun.status}) — skipping`);
+  if (guard.count === 0) {
+    const terminalRun = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
+    emitLog(runId, 'warn', `■ Run already in terminal state (${terminalRun?.status ?? 'unknown'}) — skipping`);
     emitToRun(runId, 'run:complete', { passed: 0, failed: 0, skipped: 0, duration: 0 });
     return;
+  }
+
+  const resumeSkipCount = testCaseIds.filter(id => completedTcIds.has(id)).length;
+  emitToRun(runId, 'run:start', { total: total + skippedTcIds.length, environment, parallelWorkers, browser, headless: false });
+  if (isResuming) {
+    emitLog(runId, 'info',
+      `↻ Resuming run · ${resumeSkipCount} TC(s) already completed · ${scriptPaths.length - resumeSkipCount} remaining · ${parallelWorkers} workers · ${browser} · headed`,
+    );
+  } else {
+    emitLog(runId, 'info',
+      `▶ Starting run · ${total} script${total !== 1 ? 's' : ''}${skippedTcIds.length > 0 ? ` · ${skippedTcIds.length} skipped (no script)` : ''} · ${parallelWorkers} workers · ${browser} · headed`,
+    );
   }
 
   // ── 2b. Build readable TC id lookup (for artifact dir naming) ─────────────
@@ -118,64 +132,75 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   });
   const tcReadableId = new Map<string, string>(tcRecords.map((t) => [t.id, t.tcId]));
 
-  // ── 3. Initialise RunResult records ─────────────────────────────────────
-  // Delete any rows left from a previous (failed/retried) attempt so each execution
-  // starts with exactly one row per test case.
-  await prisma.runResult.deleteMany({ where: { runId } });
+  // ── 3. Initialise RunResult records (resume-aware) ───────────────────────
+  if (!isResuming) {
+    // Fresh run — clear any stale orphans and create all RunResult rows from scratch
+    await prisma.runResult.deleteMany({ where: { runId } });
 
-  // Fetch scripts up-front so RunResults are linked — healService requires scriptId
-  // Primary lookup: TC.linkedScriptId (the TC Library link, N TCs → 1 script)
-  const tcIdToScriptId = new Map<string, string>();
-  const linkedTcRecords = await prisma.testCase.findMany({
-    where: { id: { in: testCaseIds }, linkedScriptId: { not: null } },
-    select: { id: true, linkedScriptId: true },
-  });
-  for (const tc of linkedTcRecords) {
-    if (tc.linkedScriptId) tcIdToScriptId.set(tc.id, tc.linkedScriptId);
-  }
-  // Fallback: Script.testCaseId ownership for TCs not covered above
-  const unresolved = testCaseIds.filter(id => !tcIdToScriptId.has(id));
-  if (unresolved.length > 0) {
-    const scriptRecords = await prisma.script.findMany({
-      where: { testCaseId: { in: unresolved }, projectId },
-      select: { id: true, testCaseId: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    for (const s of scriptRecords) {
-      if (s.testCaseId && !tcIdToScriptId.has(s.testCaseId)) {
-        tcIdToScriptId.set(s.testCaseId, s.id);
-      }
-    }
-  }
-
-  for (const tcId of testCaseIds) {
-    await prisma.runResult.create({
-      data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: tcIdToScriptId.get(tcId) },
-    });
-  }
-
-  // Create PENDING RunResults for mirror TCs (share same script as their representative)
-  if (allMirrorTcIds.length > 0) {
-    const mirrorTcRecords = await prisma.testCase.findMany({
-      where: { id: { in: allMirrorTcIds } },
+    // Fetch scripts up-front so RunResults are linked — healService requires scriptId
+    // Primary lookup: TC.linkedScriptId (the TC Library link, N TCs → 1 script)
+    const tcIdToScriptId = new Map<string, string>();
+    const linkedTcRecords = await prisma.testCase.findMany({
+      where: { id: { in: testCaseIds }, linkedScriptId: { not: null } },
       select: { id: true, linkedScriptId: true },
     });
-    const mirrorScriptId = new Map<string, string>();
-    for (const m of mirrorTcRecords) { if (m.linkedScriptId) mirrorScriptId.set(m.id, m.linkedScriptId); }
-    for (const tcId of allMirrorTcIds) {
+    for (const tc of linkedTcRecords) {
+      if (tc.linkedScriptId) tcIdToScriptId.set(tc.id, tc.linkedScriptId);
+    }
+    // Fallback: Script.testCaseId ownership for TCs not covered above
+    const unresolved = testCaseIds.filter(id => !tcIdToScriptId.has(id));
+    if (unresolved.length > 0) {
+      const scriptRecords = await prisma.script.findMany({
+        where: { testCaseId: { in: unresolved }, projectId },
+        select: { id: true, testCaseId: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+      for (const s of scriptRecords) {
+        if (s.testCaseId && !tcIdToScriptId.has(s.testCaseId)) {
+          tcIdToScriptId.set(s.testCaseId, s.id);
+        }
+      }
+    }
+
+    for (const tcId of testCaseIds) {
       await prisma.runResult.create({
-        data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: mirrorScriptId.get(tcId) },
+        data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: tcIdToScriptId.get(tcId) },
       });
     }
-  }
 
-  // Create SKIPPED RunResults for TCs with no automation script
-  if (skippedTcIds.length > 0) {
-    for (const tcId of skippedTcIds) {
-      await prisma.runResult.create({
-        data: { runId, testCaseId: tcId, status: 'SKIPPED', errorMessage: 'No automation script — test case skipped' },
+    // Create PENDING RunResults for mirror TCs (share same script as their representative)
+    if (allMirrorTcIds.length > 0) {
+      const mirrorTcRecords = await prisma.testCase.findMany({
+        where: { id: { in: allMirrorTcIds } },
+        select: { id: true, linkedScriptId: true },
       });
-      emitLog(runId, 'warn', `⊙ ${tcReadableId.get(tcId) ?? tcId} SKIPPED — no automation script`);
+      const mirrorScriptId = new Map<string, string>();
+      for (const m of mirrorTcRecords) { if (m.linkedScriptId) mirrorScriptId.set(m.id, m.linkedScriptId); }
+      for (const tcId of allMirrorTcIds) {
+        await prisma.runResult.create({
+          data: { runId, testCaseId: tcId, status: 'PENDING', scriptId: mirrorScriptId.get(tcId) },
+        });
+      }
+    }
+
+    // Create SKIPPED RunResults for TCs with no automation script
+    if (skippedTcIds.length > 0) {
+      for (const tcId of skippedTcIds) {
+        await prisma.runResult.create({
+          data: { runId, testCaseId: tcId, status: 'SKIPPED', errorMessage: 'No automation script — test case skipped' },
+        });
+        emitLog(runId, 'warn', `⊙ ${tcReadableId.get(tcId) ?? tcId} SKIPPED — no automation script`);
+      }
+    }
+  } else {
+    // Resuming an interrupted run — reset any mid-flight RUNNING rows back to PENDING
+    // (the runner process died while executing them; they need to re-run from scratch)
+    const resetResult = await prisma.runResult.updateMany({
+      where: { runId, status: 'RUNNING' },
+      data: { status: 'PENDING' },
+    });
+    if (resetResult.count > 0) {
+      emitLog(runId, 'info', `↺ Reset ${resetResult.count} mid-flight TC(s) to PENDING for re-execution`);
     }
   }
 
@@ -189,8 +214,9 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   );
 
   const startTime = Date.now();
-  let totalPassed = 0;
-  let totalFailed = 0;
+  // Seed counters from checkpoint — on fresh runs existingResults is empty so these are 0.
+  let totalPassed = existingResults.filter(r => r.status === 'PASSED').length;
+  let totalFailed = existingResults.filter(r => r.status === 'FAILED').length;
   let totalSkipped = skippedTcIds.length;
 
   // One AbortController for the entire run. The cancel watcher below aborts it
@@ -231,6 +257,22 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       if (!cancelNotice.beforeStart) {
         cancelNotice.beforeStart = true;
         emitLog(runId, 'warn', '■ Run cancelled — skipping remaining scripts');
+      }
+      return;
+    }
+
+    // Skip TCs that already completed (PASSED or FAILED) in the interrupted execution
+    if (completedTcIds.has(testCaseId)) {
+      const prevStatus = existingResultsByTcId.get(testCaseId) ?? 'PASSED';
+      emitToRun(runId, 'run:progress', { testCaseId, status: prevStatus, index: i, total });
+      const mirrors = mirroredTcIds[testCaseId] ?? [];
+      for (const mirrorTcId of mirrors) {
+        emitToRun(runId, 'run:progress', {
+          testCaseId: mirrorTcId,
+          status: existingResultsByTcId.get(mirrorTcId) ?? prevStatus,
+          index: i,
+          total,
+        });
       }
       return;
     }

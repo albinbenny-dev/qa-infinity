@@ -80,4 +80,4 @@ EXPOSE 6080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -f http://localhost:5001/health || exit 1
 
-CMD ["node", "packages/runner/src/index.js"]
+CMD ["node", "--max-old-space-size=512", "packages/runner/src/index.js"]

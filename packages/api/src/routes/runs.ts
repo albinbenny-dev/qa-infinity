@@ -325,6 +325,23 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
     const scriptedIds = new Set([...resolved.map((r) => r.testCaseId), ...Object.values(mirrorMap).flat()]);
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
 
+    // Reject if this schedule already has an active run in progress
+    const activeSched = await prisma.run.findFirst({
+      where: {
+        projectId: req.project.id,
+        name: { contains: schedule.name },
+        triggerType: 'SCHEDULED',
+        status: { in: ['PENDING', 'RUNNING'] },
+      },
+      select: { id: true, runSeq: true },
+    });
+    if (activeSched) {
+      res.status(409).json({
+        error: `Schedule "${schedule.name}" already has an active run in progress (RUN-${String(activeSched.runSeq).padStart(4, '0')}). Wait for it to complete or cancel it before starting another.`,
+      });
+      return;
+    }
+
     const envConfig = await getEnvConfig(req.project.id, schedule.environment);
     const runSeqSch = await nextRunSeq();
 
@@ -528,6 +545,23 @@ router.post('/group', async (req: Request, res: Response, next: NextFunction) =>
     const { pairs: resolved, mirrorMap } = await resolveScriptPaths(req.project.id, testCaseIds);
     const scriptedIds = new Set([...resolved.map((r) => r.testCaseId), ...Object.values(mirrorMap).flat()]);
     const skippedTcIds = testCaseIds.filter((id) => !scriptedIds.has(id));
+
+    // Reject if this suite (useCaseTag) is already executing in this project
+    const activeGroup = await prisma.run.findFirst({
+      where: {
+        projectId: req.project.id,
+        name: `Group: ${useCaseTag}`,
+        triggerType: 'GROUP',
+        status: { in: ['PENDING', 'RUNNING'] },
+      },
+      select: { id: true, runSeq: true },
+    });
+    if (activeGroup) {
+      res.status(409).json({
+        error: `Suite "${useCaseTag}" already has an active run in progress (RUN-${String(activeGroup.runSeq).padStart(4, '0')}). Wait for it to complete or cancel it before starting another.`,
+      });
+      return;
+    }
 
     const envConfig = await getEnvConfig(req.project.id, environment);
     const runSeqGrp = await nextRunSeq();
