@@ -141,6 +141,18 @@ export default function Sidebar({ slug }: SidebarProps) {
 
       {/* ── Nav groups ──────────────────────────────────────────────────── */}
       <nav style={{ flex: 1, padding: '8px 6px', display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', overflowX: 'hidden' }}>
+
+        {/* Sticky expand toggle — sits above all nav items */}
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 2,
+          background: 'var(--surface)',
+          paddingBottom: 4,
+          marginBottom: 2,
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <ExpandToggle expanded={expanded} onToggle={() => setExpanded(e => !e)} />
+        </div>
+
         {navGroups.map((group, gi) => (
           <div key={gi} style={{
             background: 'rgba(255,255,255,0.025)',
@@ -186,8 +198,6 @@ export default function Sidebar({ slug }: SidebarProps) {
           )}
         </div>
 
-        {/* Expand / collapse toggle */}
-        <ExpandToggle expanded={expanded} onToggle={() => setExpanded(e => !e)} />
       </nav>
 
       {/* ── User avatar + logout ─────────────────────────────────────────── */}
