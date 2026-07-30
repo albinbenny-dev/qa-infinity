@@ -358,7 +358,7 @@ function SuiteHistoryCard({
                 </div>
 
                 {isExpanded && (
-                  <div style={{ background: 'rgba(0,0,0,0.12)' }}>
+                  <div style={{ background: 'rgba(0,0,0,0.025)' }}>
                     {suiteRuns.slice(0, 7).map((run) => {
                       const pass = run.results.filter((r) => r.status === 'PASSED').length;
                       const fail = run.results.filter((r) => r.status === 'FAILED').length;
@@ -370,7 +370,7 @@ function SuiteHistoryCard({
                           key={run.id}
                           onClick={() => navigate(`/projects/${slug}/reports/runs/${run.id}`)}
                           style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px 8px 36px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(6,182,212,0.06)')}
                           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                         >
                           {/* ID + date */}

@@ -540,7 +540,7 @@ export default function RunDetail() {
           { label: `#${String(run?.runSeq ?? 0).padStart(4, '0')} ${run?.name ?? ''}` },
         ]}
         actions={
-          <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/reports`)}
+          <TbBtn variant="ghost" onClick={() => navigate(-1)}
             style={{ background: 'rgba(37,99,171,0.1)', color: 'var(--cyan)', border: '1px solid rgba(37,99,171,0.25)' }}>
             ← Back
           </TbBtn>
