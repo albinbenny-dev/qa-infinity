@@ -1,9 +1,10 @@
 # ==============================================================================
 # QA Infinity - Deploy Script
 #
-# Ships qa-infinity-qa-api + qa-infinity-qa-runner + qa-infinity-qa-ui.
-# Postgres and Redis are pulled directly from Docker Hub on the remote on
-# first boot - nothing to build or transfer for those.
+# Ships qa-infinity-qa-api + qa-infinity-qa-runner + qa-infinity-qa-ui, plus
+# the postgres:16-alpine and redis:7-alpine base images in release/full mode
+# (bundled via docker save/load like everything else) so a genuinely
+# air-gapped remote never needs to reach Docker Hub for anything.
 #
 # Runs alongside other stacks on the same host - different project name,
 # different containers/networks/volumes (all "qa-*"), different ports
@@ -17,6 +18,9 @@
 #   .\deploy.ps1 -SSH my-alias                    # override SSH alias/host
 #   .\deploy.ps1 -CorsOrigin http://10.0.0.5:3100 # set CORS origin for remote server (see below)
 #   .\deploy.ps1 -RemoteComposeCmd 'docker-compose'   # force a specific compose invocation
+#   .\deploy.ps1 -Mode release -StripExtraHosts   # drop this deployment's hardcoded extra_hosts
+#                                                  # entries before shipping - use when handing a
+#                                                  # release to a different team/target environment
 #
 # Modes:
 #   sync (DEFAULT) - Fastest for routine code changes.
@@ -25,9 +29,11 @@
 #     Docker volumes (DB data, artifacts) are completely unaffected.
 #     Transfer: seconds. Build: ~2-3 min (only src layer rebuilds).
 #     Use for: any code change to api or ui.
+#     Requires the remote to reach GitHub + npm/apt registries - NOT for air-gapped targets.
 #
-#   release - Full image build+save+transfer+load. Use for:
+#   release - Full image build+save+transfer+load, including postgres/redis. Use for:
 #     - First-time setup on a new remote (before git is initialised there)
+#     - Any remote with no internet access (air-gapped / client server)
 #     - Runner Dockerfile changes (qa-runner image)
 #     - Dependency (pnpm-lock.yaml) changes
 #     - When sync mode hits an unexpected issue
@@ -39,6 +45,14 @@
 #   The docker-compose.yml reads CORS_ORIGIN from the remote .env (with a
 #   localhost fallback). Set CORS_ORIGIN=http://<server-ip>:3100 in the remote
 #   .env once and it survives every git pull.
+#
+# StripExtraHosts:
+#   docker-compose.yml hardcodes extra_hosts entries for reaching this
+#   deployment's specific target application over an internal network. Pass
+#   this switch when releasing to a different team/environment so their
+#   compose file doesn't carry an internal hostname/IP that's meaningless
+#   (and mildly leaky) on their network. Default deploys (this team's own
+#   remote) leave it off and behave exactly as before.
 # ==============================================================================
 
 param(
@@ -53,7 +67,9 @@ param(
     [string]$CorsOrigin,
     # Left unset by default -> auto-detected against the remote (see PHASE 0).
     # Pass this explicitly only to force a specific one and skip detection.
-    [string]$RemoteComposeCmd
+    [string]$RemoteComposeCmd,
+    # Strip the extra_hosts entries from the packaged docker-compose.yml (release/full only).
+    [switch]$StripExtraHosts
 )
 $RemoteComposeCmdExplicit = $PSBoundParameters.ContainsKey('RemoteComposeCmd')
 
@@ -231,23 +247,34 @@ Log-Ok "Images built"
 
 # ==============================================================================
 # PHASE 2 - Save images to tar files
+# postgres/redis are pulled here (requires internet on THIS machine, not the
+# remote) and bundled the same way as the custom images, so the remote never
+# needs to reach Docker Hub for anything - safe for a fully air-gapped target.
 # ==============================================================================
 Log-Step "Saving images to tar files"
 
 $images = @(
-    @{ name = 'qa-infinity-qa-api';    tar = "$TmpDir\qa-api.tar"    },
-    @{ name = 'qa-infinity-qa-runner'; tar = "$TmpDir\qa-runner.tar" },
-    @{ name = 'qa-infinity-qa-ui';     tar = "$TmpDir\qa-ui.tar"     }
+    @{ name = 'qa-infinity-qa-api:latest';    tar = "$TmpDir\qa-api.tar"    },
+    @{ name = 'qa-infinity-qa-runner:latest'; tar = "$TmpDir\qa-runner.tar" },
+    @{ name = 'qa-infinity-qa-ui:latest';     tar = "$TmpDir\qa-ui.tar"     },
+    @{ name = 'postgres:16-alpine';           tar = "$TmpDir\postgres.tar"; pull = $true },
+    @{ name = 'redis:7-alpine';               tar = "$TmpDir\redis.tar";    pull = $true }
 )
 
 foreach ($img in $images) {
+    if ($img.pull) {
+        Write-Host "    Pulling $($img.name)..." -NoNewline
+        docker pull $img.name | Out-Null
+        if ($LASTEXITCODE -ne 0) { Log-Error "docker pull failed for $($img.name)" }
+        Write-Host " done" -ForegroundColor Gray
+    }
     Write-Host "    Saving $($img.name)..." -NoNewline
-    docker save "$($img.name):latest" -o $img.tar
+    docker save "$($img.name)" -o $img.tar
     if ($LASTEXITCODE -ne 0) { Log-Error "docker save failed for $($img.name)" }
     $sizeMB = [math]::Round((Get-Item $img.tar).Length / 1MB, 1)
     Write-Host " $sizeMB MB" -ForegroundColor Gray
 }
-Log-Ok "All images saved"
+Log-Ok "All images saved (including postgres/redis)"
 
 # ==============================================================================
 # PHASE 3 - Full migration: dump DB (full mode only)
@@ -281,6 +308,20 @@ if ($CorsOrigin) {
     Log-Warn "No -CorsOrigin specified - CORS_ORIGIN remains http://localhost:3100 in compose file."
     Log-Warn "If the API and browser are on different hosts, pass -CorsOrigin http://<server-ip>:3100"
 }
+
+# docker-compose.yml also hardcodes extra_hosts entries pointing at this
+# deployment's specific target application over an internal network -
+# meaningless (and mildly leaky) on a different team's network. Strip them
+# when packaging a release for somewhere else.
+if ($StripExtraHosts) {
+    $beforeLines = ($composeContent -split "`n").Count
+    $composeContent = $composeContent -replace '(?m)^[ \t]*extra_hosts:\r?\n(?:[ \t]*-[ \t]*".*"\r?\n)+', ''
+    $afterLines = ($composeContent -split "`n").Count
+    Log-Ok "Stripped extra_hosts entries from compose file ($($beforeLines - $afterLines) line(s) removed)"
+} else {
+    Log-Warn "extra_hosts entries kept as-is (pass -StripExtraHosts when releasing to a different team/environment)"
+}
+
 Set-Content "$TmpDir\docker-compose.yml" $composeContent
 
 Copy-Item "$PSScriptRoot\.env" "$TmpDir\.env" -Force
