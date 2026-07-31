@@ -18,27 +18,10 @@ import { CSS } from '@dnd-kit/utilities';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const AIRTEL_USE_CASES = [
-  'Primary Sales',
-  'Stock Management',
-  'Dealer Onboarding & KYC',
-  'Sales API',
-  'Secondary Sales',
-  'Distributor API',
-];
-
-const UC_COLORS: Record<string, string> = {
-  'Primary Sales':           'var(--violet)',
-  'Stock Management':        'var(--amber)',
-  'Dealer Onboarding & KYC': 'var(--emerald)',
-  'Sales API':               'var(--cyan)',
-  'Secondary Sales':         'var(--rose)',
-  'Distributor API':         'var(--sky)',
-};
 const UC_COLOR_FALLBACKS = ['var(--violet)', 'var(--cyan)', 'var(--emerald)', 'var(--amber)', 'var(--rose)', 'var(--sky)'];
 
-function getUcColor(name: string, idx: number) {
-  return UC_COLORS[name] ?? UC_COLOR_FALLBACKS[idx % UC_COLOR_FALLBACKS.length];
+function getUcColor(_name: string, idx: number) {
+  return UC_COLOR_FALLBACKS[idx % UC_COLOR_FALLBACKS.length];
 }
 
 const TYPE_CHIP: Record<string, { bg: string; color: string }> = {
@@ -91,7 +74,7 @@ export default function TCListPanel({
   const [typeFilter, setTypeFilter] = useState<'' | 'UI' | 'API' | 'SIT'>('');
   const [statusFilter, setStatusFilter] = useState('scripted');
   const [search, setSearch] = useState('');
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(AIRTEL_USE_CASES));
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   // ── Filtered TCs ─────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -106,11 +89,12 @@ export default function TCListPanel({
     });
   }, [allTCs, typeFilter, statusFilter, search, scriptedTcIds, runningTcIds]);
 
-  // ── Grouped TCs ──────────────────────────────────────────────────────────
+  // ── Grouped TCs — alphabetical by use case; within a group the API already
+  // orders by drag-to-reorder position first, TC-ID as tiebreaker, so `filtered`
+  // arrives pre-sorted and is preserved as-is here ───────────────────────────
   const groups = useMemo(() => {
     const map = new Map<string, TestCase[]>();
-    AIRTEL_USE_CASES.forEach((uc) => map.set(uc, []));
-    useCases.filter((uc) => !AIRTEL_USE_CASES.includes(uc)).forEach((uc) => map.set(uc, []));
+    useCases.forEach((uc) => map.set(uc, []));
     for (const tc of filtered) {
       const key = tc.useCaseTag ?? 'Uncategorised';
       if (!map.has(key)) map.set(key, []);
@@ -118,6 +102,7 @@ export default function TCListPanel({
     }
     return Array.from(map.entries())
       .filter(([, tcs]) => tcs.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, tcs], i) => ({ name, tcs, color: getUcColor(name, i) }));
   }, [filtered, useCases]);
 
@@ -125,7 +110,7 @@ export default function TCListPanel({
   const totalGroups = groups.length;
 
   function toggleGroup(name: string) {
-    setExpandedGroups((prev) => {
+    setCollapsedGroups((prev) => {
       const n = new Set(prev);
       if (n.has(name)) n.delete(name); else n.add(name);
       return n;
@@ -317,7 +302,7 @@ export default function TCListPanel({
               key={group.name}
               group={group}
               groupIndex={gIdx}
-              expanded={expandedGroups.has(group.name)}
+              expanded={!collapsedGroups.has(group.name)}
               selectedIds={selectedIds}
               runningTcIds={runningTcIds}
               scriptedTcIds={scriptedTcIds}

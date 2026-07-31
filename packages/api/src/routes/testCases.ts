@@ -1014,7 +1014,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         // prerequisiteTc include added — Prisma client regenerated inside Docker picks this up
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         include: { prerequisiteTc: { select: { id: true, tcId: true, title: true } } } as any,
-        orderBy: [{ useCaseTag: 'asc' }, { createdAt: 'desc' }],
+        // Custom drag-to-reorder position wins first; tcId only breaks ties for
+        // TCs that have never been dragged (all default to sortOrder 0).
+        orderBy: [{ useCaseTag: 'asc' }, { sortOrder: 'asc' }, { tcId: 'asc' }],
         skip,
         take: limitNum,
       }),

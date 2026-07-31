@@ -203,7 +203,9 @@ export default function TCLibrary() {
     return allTCs;
   }, [allTCs, linkFilter, isLinked]);
 
-  // ── Group TCs by useCaseTag ───────────────────────────────────────────────
+  // ── Group TCs by useCaseTag — alphabetical; within a group the API already
+  // orders by drag-to-reorder position first, TC-ID as tiebreaker, so
+  // `filteredTCs` arrives pre-sorted and is preserved as-is here ────────────
   const groups = useMemo(() => {
     const map = new Map<string, TestCase[]>();
     useCases.forEach((uc) => map.set(uc, []));
@@ -212,11 +214,9 @@ export default function TCLibrary() {
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(tc);
     }
-    return Array.from(map.entries()).map(([name, tcs], i) => ({
-      name,
-      tcs,
-      color: getUcColor(name, i),
-    }));
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, tcs], i) => ({ name, tcs, color: getUcColor(name, i) }));
   }, [filteredTCs, useCases]);
 
   const groupsWithTCs = useMemo(() => groups.filter((g) => g.tcs.length > 0), [groups]);
