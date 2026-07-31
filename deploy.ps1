@@ -14,6 +14,7 @@
 #   .\deploy.ps1                                  # SYNC mode by default - fast code deploy (~3-5 min)
 #   .\deploy.ps1 -Mode release                    # full image build+transfer (first run, or runner changed)
 #   .\deploy.ps1 -Mode full                       # release + DB dump/restore
+#   .\deploy.ps1 -Mode package                    # build+save -> single zip, no SSH/SCP needed
 #   .\deploy.ps1 -Services qa-api                 # sync api only (~90s)
 #   .\deploy.ps1 -SSH my-alias                    # override SSH alias/host
 #   .\deploy.ps1 -CorsOrigin http://10.0.0.5:3100 # set CORS origin for remote server (see below)
@@ -21,6 +22,7 @@
 #   .\deploy.ps1 -Mode release -StripExtraHosts   # drop this deployment's hardcoded extra_hosts
 #                                                  # entries before shipping - use when handing a
 #                                                  # release to a different team/target environment
+#   .\deploy.ps1 -Mode package -CorsOrigin http://10.0.0.5:3100 -StripExtraHosts -OutZip C:\handoff\qa-infinity.zip
 #
 # Modes:
 #   sync (DEFAULT) - Fastest for routine code changes.
@@ -37,14 +39,28 @@
 #     - Runner Dockerfile changes (qa-runner image)
 #     - Dependency (pnpm-lock.yaml) changes
 #     - When sync mode hits an unexpected issue
+#     Requires SSH/SCP access to the target.
 #
 #   full - release + DB dump/restore from local to remote.
 #     Only needed when you have local data to push to an existing remote instance.
+#     Requires SSH/SCP access to the target.
+#
+#   package - Same build+save as release, but NO SSH/SCP at all. Everything
+#     (image tarballs, docker-compose.yml, .env, nginx.conf, backup-db.sh, and
+#     a generated INSTALL.md guide) is zipped into one file you hand to a
+#     team you have no network path to - email, USB, file share, whatever.
+#     Use for: a new team/client with no SSH access from this machine at all.
 #
 # CorsOrigin:
-#   The docker-compose.yml reads CORS_ORIGIN from the remote .env (with a
-#   localhost fallback). Set CORS_ORIGIN=http://<server-ip>:3100 in the remote
-#   .env once and it survives every git pull.
+#   docker-compose.yml reads CORS_ORIGIN from .env (env_file + a localhost
+#   fallback) - it has no hardcoded value of its own. In sync mode, just set
+#   CORS_ORIGIN=http://<server-ip>:3100 in the remote .env once and it survives
+#   every git pull. In release/full/package modes, -CorsOrigin patches
+#   CORS_ORIGIN and APP_URL directly into the .env being shipped, so you don't
+#   have to edit it by hand afterwards. If you don't know the target's address
+#   yet (e.g. packaging for a team you haven't handed off to), leave it unset -
+#   the receiving team sets it in their own .env once they know their server's
+#   IP/hostname (the generated INSTALL.md walks them through it).
 #
 # StripExtraHosts:
 #   docker-compose.yml hardcodes extra_hosts entries for reaching this
@@ -56,7 +72,7 @@
 # ==============================================================================
 
 param(
-    [ValidateSet('sync', 'release', 'full')]
+    [ValidateSet('sync', 'release', 'full', 'package')]
     [string]$Mode = 'sync',
     [string]$SSH  = 'qa-server',
     [string]$RemoteDir = '/data/autoab/qa-infinity',
@@ -69,7 +85,10 @@ param(
     # Pass this explicitly only to force a specific one and skip detection.
     [string]$RemoteComposeCmd,
     # Strip the extra_hosts entries from the packaged docker-compose.yml (release/full only).
-    [switch]$StripExtraHosts
+    [switch]$StripExtraHosts,
+    # -Mode package only: output zip path. Defaults to
+    # .\qa-infinity-offline-<timestamp>.zip in the repo root.
+    [string]$OutZip
 )
 $RemoteComposeCmdExplicit = $PSBoundParameters.ContainsKey('RemoteComposeCmd')
 
@@ -118,7 +137,11 @@ function Read-EnvVar {
 Write-Host ""
 Write-Host "  QA Infinity - Deploy" -ForegroundColor DarkCyan
 Write-Host "  Mode   : $Mode" -ForegroundColor White
-Write-Host "  Target : $SSH  ->  $RemoteDir" -ForegroundColor White
+if ($Mode -eq 'package') {
+    Write-Host "  Output : local zip package (no SSH/SCP)" -ForegroundColor White
+} else {
+    Write-Host "  Target : $SSH  ->  $RemoteDir" -ForegroundColor White
+}
 if ($CorsOrigin) {
     Write-Host "  CORS   : $CorsOrigin" -ForegroundColor White
 }
@@ -211,8 +234,11 @@ if ($Mode -eq 'full') {
 # ==============================================================================
 # PHASE 0 - Detect remote docker compose invocation (fail fast, before
 # spending time building/transferring images, if neither is usable)
+# Skipped entirely in package mode - there is no remote to detect anything on.
 # ==============================================================================
-if ($RemoteComposeCmdExplicit) {
+if ($Mode -eq 'package') {
+    Log-Step "Package mode: no remote involved, skipping compose detection"
+} elseif ($RemoteComposeCmdExplicit) {
     Log-Step "Using explicit -RemoteComposeCmd '$RemoteComposeCmd'"
 } else {
     Log-Step "Detecting docker compose on $SSH (checked as root, since every later call runs under sudo)"
@@ -296,18 +322,7 @@ if ($Mode -eq 'full') {
 # ==============================================================================
 Log-Step "Preparing config files"
 
-# docker-compose.yml - optionally patch CORS_ORIGIN for the remote server.
-# The compose file hardcodes CORS_ORIGIN=http://localhost:3100 for local dev;
-# that breaks cross-origin API requests from the browser when the UI is served
-# from a different host. Pass -CorsOrigin http://<server>:3100 to fix it.
 $composeContent = Get-Content "$PSScriptRoot\docker-compose.yml" -Raw
-if ($CorsOrigin) {
-    $composeContent = $composeContent -replace 'CORS_ORIGIN=http://localhost:3100', "CORS_ORIGIN=$CorsOrigin"
-    Log-Ok "CORS_ORIGIN patched to $CorsOrigin in compose file"
-} else {
-    Log-Warn "No -CorsOrigin specified - CORS_ORIGIN remains http://localhost:3100 in compose file."
-    Log-Warn "If the API and browser are on different hosts, pass -CorsOrigin http://<server-ip>:3100"
-}
 
 # docker-compose.yml also hardcodes extra_hosts entries pointing at this
 # deployment's specific target application over an internal network -
@@ -324,7 +339,25 @@ if ($StripExtraHosts) {
 
 Set-Content "$TmpDir\docker-compose.yml" $composeContent
 
-Copy-Item "$PSScriptRoot\.env" "$TmpDir\.env" -Force
+# CORS_ORIGIN/APP_URL live in .env - docker-compose.yml only forwards them
+# (env_file: .env, plus ${CORS_ORIGIN:-http://localhost:3100} interpolation),
+# it doesn't hardcode a value itself. So -CorsOrigin patches .env, not the
+# compose file.
+$envContent = Get-Content "$PSScriptRoot\.env" -Raw
+if ($CorsOrigin) {
+    foreach ($key in @('CORS_ORIGIN', 'APP_URL')) {
+        if ($envContent -match "(?m)^$key=.*$") {
+            $envContent = $envContent -replace "(?m)^$key=.*$", "$key=$CorsOrigin"
+        } else {
+            $envContent = $envContent.TrimEnd("`r", "`n") + "`r`n$key=$CorsOrigin`r`n"
+        }
+    }
+    Log-Ok "CORS_ORIGIN and APP_URL patched to $CorsOrigin in .env"
+} else {
+    Log-Warn "No -CorsOrigin specified - CORS_ORIGIN/APP_URL are whatever this local .env already has (likely http://localhost:3100)."
+    Log-Warn "If the API and browser will be served from a different host, pass -CorsOrigin http://<server-ip>:3100, or have the receiving team set it in .env themselves once they know their server's address."
+}
+Set-Content "$TmpDir\.env" $envContent -NoNewline
 
 # docker-compose.override.yml is local-dev only (hot-reload bind mounts etc.)
 # and must NEVER be transferred to the remote server.
@@ -340,6 +373,158 @@ if (Test-Path "$PSScriptRoot\scripts\backup-db.sh") {
 }
 
 Log-Ok "Config files ready"
+
+# ==============================================================================
+# PACKAGE MODE - zip everything up and stop. No SSH/SCP, no remote at all.
+# Everything past this point (phases 5-10) is remote-only, so package mode
+# ends here.
+# ==============================================================================
+if ($Mode -eq 'package') {
+    Log-Step "Writing INSTALL.md guide"
+
+    $currentSha = (git -C $PSScriptRoot rev-parse --short HEAD 2>$null)
+    if (-not $currentSha) { $currentSha = '(unknown - not built from a git checkout)' }
+    $buildDate = Get-Date -Format 'yyyy-MM-dd HH:mm'
+    $corsNote = if ($CorsOrigin) { "$CorsOrigin (already patched into .env)" } else { 'NOT set - edit CORS_ORIGIN/APP_URL in .env before starting (see Step 3)' }
+    $extraHostsNote = if ($StripExtraHosts) { 'Stripped - none of this deployment''s internal extra_hosts entries are included.' } else { 'Kept as-is - check docker-compose.yml for extra_hosts entries specific to the original deployment and remove/edit any that don''t apply to your network.' }
+
+    $installGuide = @"
+# QA Infinity - Offline Installation Guide
+
+Built: $buildDate (git $currentSha)
+
+This package is fully self-contained. The target server needs **no internet
+access** - Docker Hub, npm, apt, PyPI etc. are never contacted. It only needs
+Docker Engine + Docker Compose v2 already installed.
+
+## What's in this zip
+
+| File | Purpose |
+|---|---|
+| ``qa-api.tar``, ``qa-runner.tar``, ``qa-ui.tar`` | The three app images, pre-built |
+| ``postgres.tar``, ``redis.tar`` | Base images, pre-pulled |
+| ``docker-compose.yml`` | Stack definition |
+| ``.env`` | Filled-in config - **contains real credentials/secrets, handle like a password file** |
+| ``nginx/nginx.conf`` | Frontend proxy config (if present) |
+| ``scripts/backup-db.sh`` | Nightly DB backup script (if present) |
+
+## Prerequisites on the target server
+
+- Docker Engine + Docker Compose v2 installed. Confirm with:
+  ``docker compose version``
+  (This is the one thing this package doesn't provide - if the server has
+  zero internet, get Docker itself from an offline installer or your IT/imaging
+  process first.)
+- 20 GB free disk (images + Postgres data + artifacts), 8 GB RAM minimum.
+
+## Step 1 - Unpack
+
+Copy this zip to the target server (USB, file share, email - whatever path
+you have) and extract it to its own directory, e.g.:
+
+``````bash
+mkdir -p /opt/qa-infinity && cd /opt/qa-infinity
+unzip qa-infinity-offline-*.zip
+``````
+
+## Step 2 - Load the images
+
+``````bash
+docker load -i qa-api.tar
+docker load -i qa-runner.tar
+docker load -i qa-ui.tar
+docker load -i postgres.tar
+docker load -i redis.tar
+``````
+
+## Step 3 - Review .env and docker-compose.yml
+
+CORS_ORIGIN baked in at build time: $corsNote
+
+extra_hosts entries: $extraHostsNote
+
+Open ``.env`` and check/adjust for this target, at minimum:
+
+- ``POSTGRES_PASSWORD`` / ``JWT_SECRET`` - already filled in; rotate them for
+  a new team/client rather than reusing the source deployment's values.
+- ``ALLOWED_DOMAINS`` - the new team's email domain (or blank to allow any).
+- ``CORS_ORIGIN`` / ``APP_URL`` - ``http://<this-server-ip>:3100``.
+- ``APP_MODE``:
+  - ``runner`` - recommended if this server has no reachable LLM endpoint.
+    Disables AI-dependent routes (Test Writer, Chat Agent, Healing Agent, UI
+    Scanner). Test Case Library, script execution, Scheduler, and Reports all
+    work fully offline regardless of this setting.
+  - ``full`` - only if the server has some reachable LLM endpoint (internal
+    LLM proxy, or genuine internet access to OpenRouter/Anthropic).
+- Leave ``JIRA_*`` / ``SMTP_*`` blank unless those services are reachable
+  from this server.
+
+## Step 4 - Start the stack
+
+``````bash
+cd /opt/qa-infinity
+docker compose up -d
+docker compose ps          # all 5 containers should be healthy
+``````
+
+## Step 5 - Verify
+
+``````bash
+curl -sf http://localhost:4100/health && echo OK
+``````
+
+Then open ``http://<this-server-ip>:3100`` in a browser, register the first
+account (it automatically becomes Super Admin), create a project, and confirm
+a test run executes end-to-end.
+
+## Optional - bootstrap admin account via seed
+
+If ``SEED_ADMIN_EMAIL`` / ``SEED_ADMIN_PASSWORD`` are set in ``.env``:
+
+``````bash
+docker compose exec -T qa-api sh -c 'cd packages/api && pnpm db:seed'
+``````
+
+## Optional - nightly DB backup cron
+
+If ``scripts/backup-db.sh`` is included in this package:
+
+``````bash
+chmod +x scripts/backup-db.sh
+( crontab -l 2>/dev/null | grep -v backup-db.sh
+  echo "0 3 * * * /opt/qa-infinity/scripts/backup-db.sh >>/opt/qa-infinity/backups/cron.log 2>&1" ) | crontab -
+``````
+
+(Adjust the ``/opt/qa-infinity`` path above if you extracted somewhere else.)
+"@
+    Set-Content -Path "$TmpDir\INSTALL.md" -Value $installGuide
+    Log-Ok "INSTALL.md written"
+
+    Log-Step "Building zip package"
+    if (-not $OutZip) {
+        $OutZip = "$PSScriptRoot\qa-infinity-offline-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
+    }
+    if (Test-Path $OutZip) { Remove-Item -Force $OutZip }
+    Compress-Archive -Path "$TmpDir\*" -DestinationPath $OutZip -CompressionLevel Optimal
+    $zipSizeMB = [math]::Round((Get-Item $OutZip).Length / 1MB, 1)
+    Log-Ok "Package written: $OutZip ($zipSizeMB MB)"
+
+    Log-Step "Cleaning up local temp files"
+    Remove-Item -Recurse -Force $TmpDir
+    Log-Ok "Done"
+
+    Pop-Location
+
+    Write-Host ""
+    Write-Host "  Package complete!" -ForegroundColor Green
+    Write-Host "  Zip    : $OutZip" -ForegroundColor White
+    Write-Host "  Guide  : INSTALL.md (inside the zip)" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  [!!] This zip contains .env with real secrets (DB password, JWT" -ForegroundColor Yellow
+    Write-Host "       secret, etc.) - share it over a secure channel, not open chat/email." -ForegroundColor Yellow
+    Write-Host ""
+    exit 0
+}
 
 # ==============================================================================
 # PHASE 5 - Transfer to remote server

@@ -11,8 +11,8 @@ npm, apt, PyPI, or any other registry.
 |---|---|
 | `qa-api.tar`, `qa-runner.tar`, `qa-ui.tar` | The three app images, pre-built |
 | `postgres.tar`, `redis.tar` | Base images, pre-pulled — the target never calls Docker Hub |
-| `docker-compose.yml` | Stack definition (CORS origin patched for their server; `extra_hosts` stripped if built with `-StripExtraHosts`) |
-| `.env` | Filled-in config (see below) |
+| `docker-compose.yml` | Stack definition (`extra_hosts` stripped if built with `-StripExtraHosts`) |
+| `.env` | Filled-in config, incl. `CORS_ORIGIN`/`APP_URL` patched for their server if built with `-CorsOrigin` (see below) |
 | `nginx/nginx.conf` | Frontend proxy config |
 | `scripts/backup-db.sh` (optional) | Nightly DB backup cron, if used |
 
@@ -35,7 +35,8 @@ with an empty one; Docker creates it automatically on first container start.
 
 ## Step 1 — Build and package (on a machine with internet)
 
-From this repo, using the existing deploy script in **release mode**:
+If you have **SSH/SCP access** to their server, use **release mode** — it
+builds, transfers, and starts everything in one shot:
 
 ```powershell
 .\deploy.ps1 -Mode release -SSH <new-team-ssh-alias> -RemoteDir /opt/qa-infinity `
@@ -43,22 +44,38 @@ From this repo, using the existing deploy script in **release mode**:
              -StripExtraHosts
 ```
 
+If there's **no SSH/network path** to their server at all — a new client,
+different network, no VPN — use **package mode** instead. It does the exact
+same build+save, but skips SSH entirely and produces a single zip file (image
+tarballs + config + a generated `INSTALL.md` guide) that you hand over
+however you can — email, USB, file share:
+
+```powershell
+.\deploy.ps1 -Mode package -CorsOrigin http://<their-server-ip>:3100 `
+             -StripExtraHosts -OutZip C:\handoff\qa-infinity.zip
+```
+
 - `-StripExtraHosts` removes this deployment's internal-network `extra_hosts`
   entries — they're specific to the current target application and would be
   meaningless (and unnecessarily revealing) on the new team's network.
-- If there's **no SSH/network path** to their server at all, the script will
-  fail at the SCP transfer step. In that case, run just the build+save
-  portion yourself and hand over the resulting `.deploy-tmp/` folder on
-  removable media instead — see "Manual / no-network-path" below.
+- `-OutZip` is optional; defaults to `.\qa-infinity-offline-<timestamp>.zip`
+  in the repo root.
+- The zip's `.env` carries real secrets from this deployment (DB password,
+  JWT secret) — share it over a secure channel, and tell the receiving team
+  to rotate those values for their own instance rather than reuse them.
 
-This step requires internet **on your machine**, not theirs. It:
+This step requires internet **on your machine**, not theirs. Release mode:
 1. `docker compose build qa-api qa-runner qa-ui`
 2. `docker pull postgres:16-alpine redis:7-alpine`
 3. `docker save` all five images to `.tar` files
-4. Patches `CORS_ORIGIN` (and strips `extra_hosts` if requested) in a copy of `docker-compose.yml`
+4. Patches `CORS_ORIGIN`/`APP_URL` into a copy of `.env` (and strips `extra_hosts` from `docker-compose.yml` if requested)
 5. Transfers everything via SCP
 6. `docker load`s all five images on the remote
 7. `docker compose up -d` (no build — everything's already loaded)
+
+Package mode does steps 1–4 the same way, then zips the result with an
+`INSTALL.md` walking the receiving team through steps 5–7 by hand (no SSH
+involved on either end).
 
 ## Step 2 — Fill in `.env` for the new team
 
@@ -100,11 +117,11 @@ Then open `http://<their-server-ip>:3100` — register the first account (it
 auto-gets Super Admin), create a project, and confirm a test run executes
 end-to-end.
 
-## Manual / no-network-path fallback
+## Manual fallback (only if you can't run deploy.ps1 at all)
 
-If there's no SSH/SCP path to their server at all, do the build+save
-portion by hand instead of using `deploy.ps1`, then carry the result over on
-removable media:
+Prefer `.\deploy.ps1 -Mode package` (see Step 1 above) — it does all of this
+for you and adds the INSTALL.md guide. Fall back to doing it by hand only if
+PowerShell/deploy.ps1 itself isn't usable on your machine:
 
 ```powershell
 docker compose build qa-api qa-runner qa-ui
@@ -118,8 +135,9 @@ docker save postgres:16-alpine           -o postgres.tar
 docker save redis:7-alpine               -o redis.tar
 ```
 
-Copy those five `.tar` files, `docker-compose.yml` (CORS/extra_hosts edited
-by hand the same way `-CorsOrigin`/`-StripExtraHosts` would), `.env`, and
+Copy those five `.tar` files, `docker-compose.yml` (`extra_hosts` edited by
+hand the same way `-StripExtraHosts` would), `.env` (with `CORS_ORIGIN`/
+`APP_URL` edited by hand the same way `-CorsOrigin` would), and
 `nginx/nginx.conf` onto the media. On the target server:
 
 ```bash
