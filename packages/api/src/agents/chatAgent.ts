@@ -82,9 +82,9 @@ interface FailureRow {
 
 // ── System prompt ──────────────────────────────────────────────────────────
 
-const BASE_SYSTEM_PROMPT = `You are a QA assistant for the Airtel Ventas platform.
-You have deep knowledge of the Ventas use cases: Primary Sales, Stock Management,
-Dealer Onboarding & KYC, Sales API, Secondary Sales, Distributor API.
+function buildBasePrompt(projectName?: string): string {
+  const project = projectName ? `the ${projectName} project` : 'this project';
+  return `You are a QA assistant for ${project}.
 
 You can help engineers with the full QA lifecycle using tools:
 - list_test_cases: browse existing TCs by use-case or status
@@ -103,6 +103,7 @@ Rules:
 - If the user asks to run a specific TC that is in DRAFT status, call approve_tc first, then call run_tests — do not ask for permission to approve, just do it.
 - run_tests only queues the run — it executes asynchronously in the background and is NOT done when the tool returns. Never call get_run_summary or get_failed_tests in the same turn right after run_tests; results won't exist yet. After run_tests, just tell the user the run has started and they can check the Execution screen or ask again later for results.
 - Format numbers clearly. Use bullet points for lists.`;
+}
 
 function getToolLabel(name: string, args: Record<string, unknown>): string {
   switch (name) {
@@ -122,8 +123,8 @@ function getToolLabel(name: string, args: Record<string, unknown>): string {
   }
 }
 
-function buildSystemPrompt(memories: string[], skillsText?: string, context?: ChatContext): string {
-  let prompt = BASE_SYSTEM_PROMPT;
+function buildSystemPrompt(memories: string[], skillsText?: string, context?: ChatContext, projectName?: string): string {
+  let prompt = buildBasePrompt(projectName);
   if (skillsText) {
     prompt = `${skillsText}\n\n${prompt}`;
   }
@@ -1013,7 +1014,7 @@ export async function runChatAgent(
   );
 
   const messages: BaseMessage[] = [
-    new SystemMessage(buildSystemPrompt(memories, skillsText || undefined, context)),
+    new SystemMessage(buildSystemPrompt(memories, skillsText || undefined, context, projectName)),
     ...historyMessages,
     buildHumanMessage(userMessage, attachments),
   ];

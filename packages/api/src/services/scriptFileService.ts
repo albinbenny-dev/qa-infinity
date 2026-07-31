@@ -4,7 +4,10 @@ import JSZip from 'jszip';
 
 const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? '/scripts';
 
-const SKIP_DIRS = new Set(['__pycache__', '.git', 'node_modules', 'venv', '.venv', 'log', 'logs', 'rerun_results', 'skills']);
+// "results" holds execution artifacts (screenshots, logs, run history) that grow
+// unbounded over time and aren't part of the project's source — excluding it keeps
+// the file tree / search / zip walks from re-scanning that growth on every request.
+const SKIP_DIRS = new Set(['__pycache__', '.git', 'node_modules', 'venv', '.venv', 'log', 'logs', 'rerun_results', 'results', 'skills']);
 const SKIP_EXTS = new Set(['.html', '.xml', '.pyc', '.pyo', '.log']);
 const SKIP_NAMES = new Set(['output.xml', 'log.html', 'report.html', 'rerun.xml']);
 export const BINARY_EXTS = new Set(['.xlsx', '.xls', '.pdf', '.pyc', '.png', '.jpg', '.jpeg', '.gif', '.zip', '.tar', '.gz']);
