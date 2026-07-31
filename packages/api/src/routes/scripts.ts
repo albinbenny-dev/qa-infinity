@@ -1030,7 +1030,7 @@ router.get('/export/zip', async (req: Request, res: Response) => {
 
 router.get('/file-tree', async (req: Request, res: Response) => {
   try {
-    const tree = buildFileTree(req.project.slug);
+    const tree = await buildFileTree(req.project.slug);
     res.json(tree);
   } catch (err) {
     console.error('[scripts] GET /file-tree', err);

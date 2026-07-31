@@ -179,30 +179,41 @@ export interface FileTreeNode {
   children?: FileTreeNode[];
 }
 
-export function buildFileTree(slug: string): FileTreeNode[] {
+export async function buildFileTree(slug: string): Promise<FileTreeNode[]> {
   const root = projectRoot(slug);
-  if (!fs.existsSync(root)) return [];
+  try {
+    await fs.promises.access(root);
+  } catch {
+    return [];
+  }
   return walkForTree(root, root);
 }
 
-function walkForTree(root: string, dir: string): FileTreeNode[] {
-  const dirs: FileTreeNode[] = [];
-  const files: FileTreeNode[] = [];
-  for (const entry of fs.readdirSync(dir)) {
-    if (SKIP_DIRS.has(entry)) continue;
+// Async + parallelized across siblings: readdir/stat calls for everything in a
+// directory (and its subdirectories) fire concurrently instead of one at a time.
+// This both stops blocking Node's event loop for the whole walk duration (so
+// other requests, e.g. the Test Cases list, keep flowing while this runs) and
+// meaningfully cuts wall-clock time on large trees, since these are I/O-bound
+// calls that overlap well — this matters especially on virtualized filesystems
+// (e.g. Docker Desktop's Windows bind mount) where per-call latency dominates.
+async function walkForTree(root: string, dir: string): Promise<FileTreeNode[]> {
+  const entries = await fs.promises.readdir(dir);
+  const nodes = await Promise.all(entries.map(async (entry): Promise<FileTreeNode | null> => {
+    if (SKIP_DIRS.has(entry)) return null;
     const abs = path.join(dir, entry);
     const rel = path.relative(root, abs).replace(/\\/g, '/');
     const ext = path.extname(entry).toLowerCase();
-    if (SKIP_NAMES.has(entry) || SKIP_EXTS.has(ext)) continue;
-    const stat = fs.statSync(abs);
+    if (SKIP_NAMES.has(entry) || SKIP_EXTS.has(ext)) return null;
+    const stat = await fs.promises.stat(abs);
     if (stat.isDirectory()) {
-      dirs.push({ name: entry, path: rel, type: 'dir', children: walkForTree(root, abs) });
-    } else {
-      files.push({ name: entry, path: rel, type: 'file', ext });
+      const children = await walkForTree(root, abs);
+      return { name: entry, path: rel, type: 'dir', children };
     }
-  }
-  dirs.sort((a, b) => a.name.localeCompare(b.name));
-  files.sort((a, b) => a.name.localeCompare(b.name));
+    return { name: entry, path: rel, type: 'file', ext };
+  }));
+  const filtered = nodes.filter((n): n is FileTreeNode => n !== null);
+  const dirs = filtered.filter((n) => n.type === 'dir').sort((a, b) => a.name.localeCompare(b.name));
+  const files = filtered.filter((n) => n.type === 'file').sort((a, b) => a.name.localeCompare(b.name));
   return [...dirs, ...files];
 }
 
