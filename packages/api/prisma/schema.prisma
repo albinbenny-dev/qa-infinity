@@ -65,6 +65,8 @@ model Project {
   skills          ProjectSkill[]
   jiraIssues      JiraIssue[]
   jiraConfig      JiraConfig?
+  locatorEntries  LocatorEntry[]
+  scriptEdits     ScriptEdit[]
 
   @@index([createdBy])
 }
@@ -165,9 +167,64 @@ model Script {
   linkedTestCases    TestCase[]  @relation("TCLinkedScript")
   runResults         RunResult[]
   scriptJobs         ScriptJob[]
+  edits              ScriptEdit[]
 
   @@index([projectId])
   @@index([testCaseId])
+}
+
+// ── Object/Locator Repository ───────────────────────────────────────────────
+// A persisted, named, per-project element store — the "source of truth" a
+// script-generation call selects locators FROM instead of inventing new ones.
+// Populated automatically from passing runs (see extractAndLockLocators) and
+// from approved manual corrections (see ScriptEdit below); confidence grows
+// with successCount and shrinks with failCount, Healenium/Testim-style.
+model LocatorEntry {
+  id                String   @id @default(cuid())
+  projectId         String
+  name              String   // stable identity, e.g. "LOGIN.USERNAME_INPUT" — independent of the selector string
+  page              String?  // scoping key — feature group / page this element belongs to
+  selector          String   // the verified locator, e.g. "css=#username"
+  strategy          String   // "id" | "css" | "role" | "text" | "xpath"
+  domContext        String?  // JSON: sibling/parent fingerprint snapshot for future re-resolution
+  confidence        Float    @default(0.6)
+  successCount      Int      @default(0)
+  failCount         Int      @default(0)
+  sourceRunId       String?  // Run.id that first proved this locator
+  lastVerifiedRunId String?  // Run.id of the most recent confirming run
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, name])
+  @@index([projectId, page])
+  @@index([projectId, selector])
+}
+
+// ── Script correction feedback loop ─────────────────────────────────────────
+// Every manual edit to a generated script's content is recorded here so the
+// correction can be classified and, once approved, promoted into the
+// LocatorEntry repository or the golden-examples pool — the loop that was
+// previously entirely absent (a plain content overwrite taught the system
+// nothing). See routes/scripts.ts PUT /:id/content and services/scriptDiff.ts.
+model ScriptEdit {
+  id             String   @id @default(cuid())
+  scriptId       String
+  projectId      String
+  previousContent String
+  newContent     String
+  diffSummary    String?  // JSON: ScriptDiffSummary — locator/step/data changes detected
+  classification String   @default("UNCLASSIFIED") // "LOCATOR_SWAP" | "STRUCTURAL" | "DATA" | "UNCLASSIFIED"
+  promoted       Boolean  @default(false) // whether this correction has been written back into the repository/golden examples
+  editedBy       String?
+  createdAt      DateTime @default(now())
+  script         Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([scriptId])
+  @@index([projectId, classification])
 }
 
 model ScriptJob {

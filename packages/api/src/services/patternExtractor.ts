@@ -127,6 +127,12 @@ function inferLabel(selector: string): string {
 // ── Main export ─────────────────────────────────────────────────────────────
 
 export async function updatePatternMemory(projectId: string): Promise<void> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { slug: true },
+  });
+  if (!project) return;
+
   const scripts = await prisma.script.findMany({
     where: {
       projectId,
@@ -140,10 +146,12 @@ export async function updatePatternMemory(projectId: string): Promise<void> {
   if (scripts.length === 0) return;
 
   // Load content from disk (fall back to DB column)
+  // NOTE: readScript takes the project SLUG, not the projectId — passing projectId here
+  // used to silently fail and mask the bug behind the DB-content fallback below.
   const loaded: Array<{ id: string; content: string; title: string; isRobot: boolean }> = [];
   for (const s of scripts) {
     let content = s.content;
-    try { content = readScript(projectId, s.filename); } catch { /* use DB */ }
+    try { content = readScript(project.slug, s.filename); } catch { /* use DB */ }
     if (!content?.trim()) continue;
     loaded.push({
       id: s.id,

@@ -34,6 +34,7 @@ import {
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
 import { convertCodegenToRobot } from '../agents/codegenConverterAgent.js';
+import { recordScriptEdit } from '../services/scriptDiff.js';
 
 const router = Router({ mergeParams: true });
 
@@ -467,6 +468,26 @@ router.put('/project-file/content', async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /edits/pending — structural script corrections awaiting approval ──
+// STRUCTURAL edits (step/keyword changes, as opposed to a plain locator swap
+// which auto-promotes) sit here until a reviewer marks the script golden
+// (see PATCH /:id/golden) — that toggle is the approval gate that promotes them.
+
+router.get('/edits/pending', async (req: Request, res: Response) => {
+  try {
+    const edits = await prisma.scriptEdit.findMany({
+      where: { projectId: req.project.id, classification: 'STRUCTURAL', promoted: false },
+      include: { script: { select: { id: true, filename: true, isGolden: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    res.json({ edits });
+  } catch (err) {
+    console.error('[scripts] GET /edits/pending', err);
+    res.status(500).json({ error: 'Failed to list pending edits' });
+  }
+});
+
 // ── GET /:id/content — return raw script content ───────────────────────────
 
 router.get('/:id/content', async (req: Request, res: Response) => {
@@ -515,6 +536,7 @@ router.put('/:id/content', async (req: Request, res: Response) => {
     }
 
     const { content } = parsed.data;
+    const previousContent = script.content;
 
     // Update DB and filesystem
     await prisma.script.update({
@@ -526,7 +548,24 @@ router.put('/:id/content', async (req: Request, res: Response) => {
     // Auto-link TCs whose tcId matches [Tags] in this script (non-blocking)
     void autoLinkScriptByTags(req.project.id, script.id, content);
 
-    res.json({ ok: true });
+    // Record + classify this edit so it feeds the correction loop instead of
+    // vanishing on overwrite — locator swaps are promoted into the Object
+    // Repository immediately; structural edits are recorded for review.
+    let editSummary: { classification: string } | null = null;
+    try {
+      editSummary = await recordScriptEdit({
+        scriptId: script.id,
+        projectId: req.project.id,
+        previousContent,
+        newContent: content,
+        page: (script as any).useCaseFolder,
+        editedBy: req.user.id,
+      });
+    } catch (err) {
+      console.error('[scripts] recordScriptEdit failed (non-fatal):', err);
+    }
+
+    res.json({ ok: true, editClassification: editSummary?.classification ?? null });
   } catch (err) {
     console.error('[scripts] PUT /:id/content', err);
     res.status(500).json({ error: 'Failed to save script content' });
@@ -548,6 +587,17 @@ router.patch('/:id/golden', async (req: Request, res: Response) => {
       where: { id: script.id },
       data: { isGolden: !script.isGolden },
     });
+
+    // Marking a script golden IS the human approval gate for any structural
+    // corrections recorded against it — promote them so future generations can
+    // draw on the corrected version via the golden-examples pool.
+    if (updated.isGolden) {
+      await prisma.scriptEdit.updateMany({
+        where: { scriptId: script.id, promoted: false },
+        data: { promoted: true },
+      });
+    }
+
     res.json({ id: updated.id, isGolden: updated.isGolden });
   } catch (err) {
     console.error('[scripts] PATCH /:id/golden', err);
