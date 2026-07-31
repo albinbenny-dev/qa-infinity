@@ -588,6 +588,134 @@ export function extractRobotTags(content: string): string[] {
   return Array.from(tags);
 }
 
+// ── Shared common library (Infinity-generated, Browser-library RF only) ───────
+// Layout: {SCRIPTS_ROOT}/{slug}/Shared/{Session,Login,Locators,Navigation,TestData}.robot
+//
+// Deliberately named "Shared" — NOT "Resource"/"Resources" — because the runner's
+// existing hierarchy-vs-flat detection keys off those exact folder names at project
+// root. Reusing them would silently flip execution mode for legacy imported projects
+// that already have (or lack) such a folder. "Shared" never collides with that check,
+// with the legacy lowercase "resources/" dir, or with "TestCases"/"pages"/"skills".
+//
+// Phase 0 only creates and exposes these files — nothing in script generation reads
+// or imports them yet (that's Phase 2). Content here is placeholder/inert.
+
+export function sharedRobotDir(slug: string): string {
+  return path.join(projectRoot(slug), 'Shared');
+}
+
+export function hasSharedRobotLibrary(slug: string): boolean {
+  return fs.existsSync(sharedRobotDir(slug));
+}
+
+const DEFAULT_SESSION_ROBOT = `*** Settings ***
+Library    Browser
+
+*** Keywords ***
+Open Test Session
+    [Documentation]    Opens a new browser, context, and page. Shared across generated scripts.
+    New Browser    chromium    headless=\${HEADLESS}
+    New Context
+    New Page    \${BASE_URL}
+
+Close Test Session
+    [Documentation]    Closes the browser opened by "Open Test Session".
+    Close Browser
+`;
+
+const DEFAULT_LOGIN_ROBOT = `*** Settings ***
+Resource    Session.robot
+
+*** Keywords ***
+Login As User
+    [Documentation]    Placeholder — replace with the verified login flow, or capture a
+    ...    Mandatory Login Skill for this project so it can be synced here automatically.
+    [Arguments]    \${username}    \${password}
+    Log    TODO: Login As User is a placeholder — no real steps yet.    WARN
+`;
+
+const DEFAULT_LOCATORS_ROBOT = `*** Variables ***
+# Populated from scanned page locators / UI_FLOW skills.
+# Example:
+# \${EXAMPLE_FIELD}    css=#example
+`;
+
+const DEFAULT_NAVIGATION_ROBOT = `*** Settings ***
+Resource    Session.robot
+
+*** Keywords ***
+# Populated from recorded navigation flows / UI_FLOW skills.
+`;
+
+const DEFAULT_TESTDATA_ROBOT = `*** Variables ***
+# Shared, cross-cutting test data. Edit values here — not in individual scripts.
+`;
+
+const DEFAULT_SHARED_ROBOT_FILES: Record<string, string> = {
+  'Session.robot': DEFAULT_SESSION_ROBOT,
+  'Login.robot': DEFAULT_LOGIN_ROBOT,
+  'Locators.robot': DEFAULT_LOCATORS_ROBOT,
+  'Navigation.robot': DEFAULT_NAVIGATION_ROBOT,
+  'TestData.robot': DEFAULT_TESTDATA_ROBOT,
+};
+
+/** Lazily creates the Shared/ folder with default skeleton files, only if missing. Never overwrites existing files. */
+export function ensureSharedRobotLibrary(slug: string): void {
+  const dir = sharedRobotDir(slug);
+  ensureDir(dir);
+  for (const [filename, content] of Object.entries(DEFAULT_SHARED_ROBOT_FILES)) {
+    const filePath = path.join(dir, filename);
+    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, content, 'utf-8');
+  }
+}
+
+export function listSharedRobotFiles(slug: string): string[] {
+  const dir = sharedRobotDir(slug);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter(f => f.endsWith('.robot'));
+}
+
+export function readSharedRobotFile(slug: string, filename: string): string {
+  return fs.readFileSync(path.join(sharedRobotDir(slug), filename), 'utf-8');
+}
+
+// ── Shared common library (Playwright) ─────────────────────────────────────────
+// Layout: {SCRIPTS_ROOT}/{slug}/fixtures/auth.fixture.ts
+//                               fixtures/auth-state.json   (generated storageState, gitignored)
+//                               testdata.ts
+
+export function fixturesDir(slug: string): string {
+  return path.join(projectRoot(slug), 'fixtures');
+}
+
+export function hasPlaywrightFixtures(slug: string): boolean {
+  return fs.existsSync(fixturesDir(slug));
+}
+
+const DEFAULT_AUTH_FIXTURE_TS = `import { test as base } from '@playwright/test';
+
+// Placeholder shared fixture — Phase 2 wires this to load a pre-generated
+// storageState (fixtures/auth-state.json) instead of logging in per test.
+export const test = base.extend({});
+export const expect = base.expect;
+`;
+
+const DEFAULT_TESTDATA_TS = `// Shared, cross-cutting test data for this project.
+// Edit values here — not in individual generated specs.
+export const testData = {};
+`;
+
+/** Lazily creates fixtures/ + testdata.ts with default skeleton content, only if missing. Never overwrites existing files. */
+export function ensurePlaywrightCommonLibrary(slug: string): void {
+  const fxDir = fixturesDir(slug);
+  ensureDir(fxDir);
+  const fixturePath = path.join(fxDir, 'auth.fixture.ts');
+  if (!fs.existsSync(fixturePath)) fs.writeFileSync(fixturePath, DEFAULT_AUTH_FIXTURE_TS, 'utf-8');
+
+  const testDataPath = path.join(projectRoot(slug), 'testdata.ts');
+  if (!fs.existsSync(testDataPath)) fs.writeFileSync(testDataPath, DEFAULT_TESTDATA_TS, 'utf-8');
+}
+
 // ── Legacy disk import (kept for backward compat) ─────────────────────────────
 
 export interface DiskScriptMeta {
