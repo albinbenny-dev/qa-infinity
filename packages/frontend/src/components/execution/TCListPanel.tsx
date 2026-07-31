@@ -1,6 +1,20 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { TestCase } from '../../types';
-import SortableTcList from '../shared/SortableTcList';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -39,14 +53,13 @@ interface TCListPanelProps {
   allTCs: TestCase[];
   useCases: string[];
   selectedIds: Set<string>;
-  orderedTcIds: string[];
   runningTcIds: Set<string>;
   scriptedTcIds: Set<string>;
   onToggleTc: (id: string) => void;
   onToggleGroup: (ids: string[]) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
-  onReorder: (newIds: string[]) => void;
+  onReorderGroup: (useCaseTag: string | null, orderedIds: string[]) => void;
   onRunSelected: () => void;
   onRunGroup: (useCaseTag: string) => void;
   onRunIndividual: (tc: TestCase) => void;
@@ -60,14 +73,13 @@ export default function TCListPanel({
   allTCs,
   useCases,
   selectedIds,
-  orderedTcIds,
   runningTcIds,
   scriptedTcIds,
   onToggleTc,
   onToggleGroup,
   onSelectAll,
   onClearSelection,
-  onReorder,
+  onReorderGroup,
   onRunSelected,
   onRunGroup,
   onRunIndividual,
@@ -75,7 +87,7 @@ export default function TCListPanel({
   onDuplicateTc,
   isRunning,
 }: TCListPanelProps) {
-  const [viewMode, setViewMode] = useState<'usecase' | 'flat' | 'order'>('usecase');
+  const [viewMode, setViewMode] = useState<'usecase' | 'flat'>('usecase');
   const [typeFilter, setTypeFilter] = useState<'' | 'UI' | 'API' | 'SIT'>('');
   const [statusFilter, setStatusFilter] = useState('scripted');
   const [search, setSearch] = useState('');
@@ -142,26 +154,22 @@ export default function TCListPanel({
       }}>
         {/* View mode toggle */}
         <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-          {([
-            { key: 'usecase', label: '🏷 By UseCase' },
-            { key: 'flat',    label: '≡ Flat List' },
-            { key: 'order',   label: '⠿ Run Order' },
-          ] as const).map(({ key, label }) => (
+          {(['usecase', 'flat'] as const).map((mode) => (
             <button
-              key={key}
-              onClick={() => setViewMode(key)}
+              key={mode}
+              onClick={() => setViewMode(mode)}
               style={{
                 padding: '4px 9px',
                 borderRadius: 5,
                 fontSize: 10,
                 fontWeight: 700,
                 cursor: 'pointer',
-                border: `1px solid ${viewMode === key ? (key === 'order' ? 'rgba(244,123,32,0.35)' : 'rgba(37,99,171,0.3)') : 'var(--border)'}`,
-                background: viewMode === key ? (key === 'order' ? 'rgba(244,123,32,0.1)' : 'var(--cyan-dim)') : 'var(--surface3)',
-                color: viewMode === key ? (key === 'order' ? 'var(--6d-orange)' : 'var(--cyan)') : 'var(--text-dim)',
+                border: `1px solid ${viewMode === mode ? 'rgba(37,99,171,0.3)' : 'var(--border)'}`,
+                background: viewMode === mode ? 'var(--cyan-dim)' : 'var(--surface3)',
+                color: viewMode === mode ? 'var(--cyan)' : 'var(--text-dim)',
               }}
             >
-              {label}
+              {mode === 'usecase' ? '🏷 By UseCase' : '≡ Flat List'}
             </button>
           ))}
         </div>
@@ -236,7 +244,7 @@ export default function TCListPanel({
           flexShrink: 0,
           whiteSpace: 'nowrap',
         }}>
-          {viewMode === 'order' ? `${orderedTcIds.length} in queue` : viewMode === 'usecase' ? `${totalGroups} groups · ${totalVisible} TCs` : `${totalVisible} TCs`}
+          {viewMode === 'usecase' ? `${totalGroups} groups · ` : ''}{totalVisible} TCs
         </span>
       </div>
 
@@ -298,28 +306,7 @@ export default function TCListPanel({
 
       {/* TC List */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {viewMode === 'order' ? (
-          <div style={{ padding: '10px 12px' }}>
-            {orderedTcIds.length === 0 ? (
-              <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
-                <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>⠿</div>
-                Select test cases to set run order.
-              </div>
-            ) : (
-              <>
-                <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 8, fontWeight: 600 }}>
-                  Drag rows to set execution order · {orderedTcIds.length} queued
-                </div>
-                <SortableTcList
-                  tcIds={orderedTcIds}
-                  allTcs={allTCs}
-                  onChange={onReorder}
-                  onRemove={(id) => onToggleTc(id)}
-                />
-              </>
-            )}
-          </div>
-        ) : filtered.length === 0 ? (
+        {filtered.length === 0 ? (
           <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
             <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📋</div>
             {search || typeFilter || statusFilter ? 'No matching test cases.' : 'No test cases yet.'}
@@ -342,6 +329,7 @@ export default function TCListPanel({
               onRunIndividual={onRunIndividual}
               onViewTc={onViewTc}
               onDuplicateTc={onDuplicateTc}
+              onReorder={(orderedIds) => onReorderGroup(group.name === 'Uncategorised' ? null : group.name, orderedIds)}
             />
           ))
         ) : (
@@ -364,10 +352,72 @@ export default function TCListPanel({
   );
 }
 
+// ── Sortable TC row wrapper (for drag-to-reorder within a group) ──────────
+function SortableTCRow({
+  tc, isSelected, isRunning, runDisabled, onToggle, onRun, onView, onDuplicate,
+}: {
+  tc: TestCase;
+  isSelected: boolean;
+  isRunning: boolean;
+  runDisabled: boolean;
+  onToggle: () => void;
+  onRun: () => void;
+  onView: () => void;
+  onDuplicate: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tc.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+        position: 'relative',
+        boxShadow: isDragging ? '0 4px 14px rgba(0,0,0,0.18)' : undefined,
+        zIndex: isDragging ? 10 : undefined,
+      }}
+    >
+      <span
+        {...attributes}
+        {...listeners}
+        title="Drag to reorder"
+        style={{
+          position: 'absolute',
+          left: 6,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          color: 'var(--text-dim)',
+          fontSize: 14,
+          opacity: 0.45,
+          touchAction: 'none',
+          userSelect: 'none',
+          zIndex: 1,
+          lineHeight: 1,
+        }}
+      >
+        ⠿
+      </span>
+      <TCRow
+        tc={tc}
+        isSelected={isSelected}
+        isRunning={isRunning}
+        runDisabled={runDisabled}
+        onToggle={onToggle}
+        onRun={onRun}
+        onView={onView}
+        onDuplicate={onDuplicate}
+        indent
+      />
+    </div>
+  );
+}
+
 // ── UseCase group ─────────────────────────────────────────────────────────
 function UseCaseGroupRow({
   group, groupIndex: _groupIndex, expanded, selectedIds, runningTcIds, scriptedTcIds: _scriptedTcIds,
-  isRunning, onToggleExpand, onToggleTc, onToggleGroup, onRunGroup, onRunIndividual, onViewTc, onDuplicateTc,
+  isRunning, onToggleExpand, onToggleTc, onToggleGroup, onRunGroup, onRunIndividual, onViewTc, onDuplicateTc, onReorder,
 }: {
   group: { name: string; tcs: TestCase[]; color: string };
   groupIndex: number;
@@ -383,8 +433,35 @@ function UseCaseGroupRow({
   onRunIndividual: (tc: TestCase) => void;
   onViewTc: (tc: TestCase) => void;
   onDuplicateTc: (tc: TestCase) => void;
+  onReorder?: (orderedIds: string[]) => void;
 }) {
-  const ids = group.tcs.map((tc) => tc.id);
+  const [localTcs, setLocalTcs] = useState(group.tcs);
+
+  useEffect(() => {
+    setLocalTcs((prev) => {
+      const prevIds = prev.map((t) => t.id).join(',');
+      const nextIds = group.tcs.map((t) => t.id).join(',');
+      if (prevIds === nextIds) return prev;
+      return group.tcs;
+    });
+  }, [group.tcs]);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIdx = localTcs.findIndex((t) => t.id === active.id);
+      const newIdx = localTcs.findIndex((t) => t.id === over.id);
+      if (oldIdx !== -1 && newIdx !== -1) {
+        const reordered = arrayMove(localTcs, oldIdx, newIdx);
+        setLocalTcs(reordered);
+        onReorder?.(reordered.map((t) => t.id));
+      }
+    }
+  }
+
+  const ids = localTcs.map((tc) => tc.id);
   const allSelected = ids.length > 0 && ids.every((id) => selectedIds.has(id));
   const someSelected = ids.some((id) => selectedIds.has(id));
   const passCount = group.tcs.filter((tc) => tc.lastRun?.status === 'PASSED').length;
@@ -510,21 +587,26 @@ function UseCaseGroupRow({
         </button>
       </div>
 
-      {/* TC rows */}
-      {expanded && group.tcs.map((tc) => (
-        <TCRow
-          key={tc.id}
-          tc={tc}
-          isSelected={selectedIds.has(tc.id)}
-          isRunning={runningTcIds.has(tc.id)}
-          runDisabled={isRunning}
-          onToggle={() => onToggleTc(tc.id)}
-          onRun={() => onRunIndividual(tc)}
-          onView={() => onViewTc(tc)}
-          onDuplicate={() => onDuplicateTc(tc)}
-          indent
-        />
-      ))}
+      {/* TC rows — drag-to-reorder within group */}
+      {expanded && (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            {localTcs.map((tc) => (
+              <SortableTCRow
+                key={tc.id}
+                tc={tc}
+                isSelected={selectedIds.has(tc.id)}
+                isRunning={runningTcIds.has(tc.id)}
+                runDisabled={isRunning}
+                onToggle={() => onToggleTc(tc.id)}
+                onRun={() => onRunIndividual(tc)}
+                onView={() => onViewTc(tc)}
+                onDuplicate={() => onDuplicateTc(tc)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+      )}
     </div>
   );
 }

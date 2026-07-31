@@ -7,7 +7,7 @@ import TCListPanel from '../components/execution/TCListPanel';
 import { getCurrentUser } from '../lib/auth';
 import { useProject } from '../hooks/useProjects';
 import { useProjectEnvConfigs } from '../hooks/useProjects';
-import { useTestCases, useUseCases, useDuplicateTestCase } from '../hooks/useTestCases';
+import { useTestCases, useUseCases, useDuplicateTestCase, useReorderTestCases } from '../hooks/useTestCases';
 import { useScripts } from '../hooks/useScripts';
 import { useRuns, useCreateRun, useCreateGroupRun, useCreateIndividualRun, useCancelRun, type RunListItem } from '../hooks/useRuns';
 import { useTriggerHeal } from '../hooks/useHeals';
@@ -240,10 +240,11 @@ export default function Execution() {
   const cancelRun = useCancelRun(projectId ?? '');
   const triggerHeal = useTriggerHeal(projectId ?? '');
   const duplicateTc = useDuplicateTestCase(projectId ?? '');
+  const reorderTcMutation = useReorderTestCases(projectId ?? '');
 
   const { logs, stats, status: socketStatus, clearLogs, joinRun, leaveRun } = useRunSocket();
 
-  const { selectedTestCaseIds, projectSlug: storedSlug, setSelected, clearSelected } = useExecutionStore();
+  const { selectedTestCaseIds, projectSlug: storedSlug, setSelected } = useExecutionStore();
 
   // ── Run config state ──────────────────────────────────────────────────────
   const [environment, setEnvironment] = useState('');
@@ -347,14 +348,6 @@ export default function Execution() {
     });
   }, [envConfigs]);
 
-  // ── Sync store → local selection on mount ─────────────────────────────────
-  useEffect(() => {
-    if (selectedTestCaseIds.length > 0) {
-      setSelectedTcIds(new Set(selectedTestCaseIds));
-      clearSelected();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── Leave watched run room on unmount ─────────────────────────────────────
   const watchedRunIdRef = useRef<string | null>(null);
@@ -427,10 +420,6 @@ export default function Execution() {
 
   const handleClearSelection = useCallback(() => {
     setOrderedTcIds([]);
-  }, []);
-
-  const handleReorder = useCallback((newIds: string[]) => {
-    setOrderedTcIds(newIds);
   }, []);
 
   // ── Switch watched run (job queue selector) ───────────────────────────────
@@ -691,14 +680,13 @@ export default function Execution() {
             allTCs={allTCs}
             useCases={useCaseTags}
             selectedIds={selectedTcIds}
-            orderedTcIds={orderedTcIds}
             runningTcIds={runningTcIds}
             scriptedTcIds={scriptedTcIds}
             onToggleTc={handleToggleTc}
             onToggleGroup={handleToggleGroup}
             onSelectAll={handleSelectAll}
             onClearSelection={handleClearSelection}
-            onReorder={handleReorder}
+            onReorderGroup={(tag, ids) => reorderTcMutation.mutate({ useCaseTag: tag, orderedIds: ids })}
             onRunSelected={handleRunNow}
             onRunGroup={handleRunGroup}
             onRunIndividual={handleRunIndividual}
