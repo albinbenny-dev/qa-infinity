@@ -4,7 +4,7 @@ import { emitToProject } from '../lib/socket.js';
 import { addScriptVerifyJob } from '../lib/queue.js';
 import type { ScriptGenJobPayload } from '../lib/queue.js';
 import { runScriptAgent } from '../agents/scriptAgent.js';
-import { saveScript, savePOM, listPOMFiles, readScript, listResourceFiles, readResourceFile, listSkillFiles, readSkillFile, ensureSharedRobotLibrary, ensurePlaywrightCommonLibrary } from '../services/scriptFileService.js';
+import { saveScript, savePOM, listPOMFiles, readScript, listResourceFiles, readResourceFile, listSkillFiles, readSkillFile } from '../services/scriptFileService.js';
 import type { ResourceFileInfo } from '../agents/scriptAgent.js';
 import { isAgentEnabled } from '../lib/agentConfig.js';
 
@@ -150,18 +150,6 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       });
       await emitJobUpdate(scriptJobId);
       return;
-    }
-
-    // Phase 0 of the shared common-library work: lazily provision the Shared/ (RF)
-    // or fixtures/ (Playwright) skeleton for this project on first generation, if
-    // missing. This ONLY creates placeholder files — nothing below reads or injects
-    // them into the prompt yet, so this has no effect on generated output (Phase 2
-    // wires actual usage in).
-    try {
-      if (scriptMode === 'ROBOT') ensureSharedRobotLibrary(project.slug);
-      else ensurePlaywrightCommonLibrary(project.slug);
-    } catch (err) {
-      console.error('[scriptGenWorker] failed to provision shared common library (non-fatal)', err);
     }
 
     const existingPOMs = scriptMode === 'ROBOT' ? [] : listPOMFiles(project.slug);

@@ -673,24 +673,6 @@ const server = http.createServer(async (req, res) => {
             }
           }
         }
-
-        // Additive: expose the Infinity shared common library (Shared/*.robot —
-        // Session/Login/Locators/Navigation/TestData) next to the script, same way
-        // as the resources/ copy above. Deliberately separate from that block and
-        // from the hasHierarchy check above — this never touches legacy resources/
-        // or Resource//Resources/ handling, it only adds visibility for the new
-        // Shared/ folder when present. Hierarchy-mode projects already get this for
-        // free via the whole-tree symlink further down, so this only runs for flat
-        // (non-hierarchy) projects like this one.
-        const sharedSrcDir = path.join(projectRoot, 'Shared');
-        if (fs.existsSync(sharedSrcDir)) {
-          for (const sf of fs.readdirSync(sharedSrcDir)) {
-            const srcFile = path.join(sharedSrcDir, sf);
-            if (fs.statSync(srcFile).isFile()) {
-              fs.copyFileSync(srcFile, path.join(scriptDir, sf));
-            }
-          }
-        }
       }
 
       const effectiveOutputDir = outputDir || path.join('/artifacts', projectSlug, path.basename(scriptPath, '.robot'));
