@@ -259,6 +259,11 @@ const PYTHON_BIN = fs.existsSync('/opt/rfbrowser/bin/python3')
   ? '/opt/rfbrowser/bin/python3'
   : 'python3';
 
+// rebot — RF's own log/report merge tool, installed alongside `robot` in the same venv
+const REBOT_BIN = fs.existsSync('/opt/rfbrowser/bin/rebot')
+  ? '/opt/rfbrowser/bin/rebot'
+  : 'rebot';
+
 // Path to the rfbrowser-node gRPC wrapper (index.js inside the Browser package).
 // Resolved once at startup so we don't pay the Python fork cost per test run.
 // When set, each robot run gets its own isolated rfbrowser-node process on a unique port.
@@ -1330,6 +1335,84 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, cancelled: !!recording }));
+    return;
+  }
+
+  // POST /merge-rf-logs — combine several output.xml files into one RF log.html
+  // via `rebot` (RF's own merge tool), so a run spanning multiple distinct
+  // scripts can be viewed as one navigable log instead of a zip of separate ones.
+  if (req.method === 'POST' && req.url === '/merge-rf-logs') {
+    let body;
+    try {
+      const raw = await collectBody(req);
+      body = JSON.parse(raw);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      return;
+    }
+
+    const { outputXmlPaths, outputDir } = body;
+    if (!Array.isArray(outputXmlPaths) || outputXmlPaths.length === 0 || !outputDir) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'outputXmlPaths (non-empty array) and outputDir are required' }));
+      return;
+    }
+
+    // These paths get passed straight to rebot as CLI args, so restrict them to
+    // real output.xml files that actually live under /artifacts — rules out path
+    // traversal / argument injection from a crafted request.
+    const ARTIFACTS_ROOT = '/artifacts';
+    const validPaths = outputXmlPaths.filter((p) => {
+      if (typeof p !== 'string') return false;
+      const resolved = path.resolve(p);
+      return resolved.startsWith(ARTIFACTS_ROOT + path.sep)
+        && path.basename(resolved) === 'output.xml'
+        && fs.existsSync(resolved);
+    });
+    if (validPaths.length === 0) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No valid output.xml files found to merge' }));
+      return;
+    }
+
+    const resolvedOutDir = path.resolve(outputDir);
+    if (!resolvedOutDir.startsWith(ARTIFACTS_ROOT + path.sep)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'outputDir must be under /artifacts' }));
+      return;
+    }
+    fs.mkdirSync(resolvedOutDir, { recursive: true });
+
+    const rebotArgs = [
+      '--output', 'combined.xml',
+      '--log', 'combined_log.html',
+      '--report', 'NONE',
+      '--outputdir', resolvedOutDir,
+      '--name', 'Combined Run Log',
+      ...validPaths,
+    ];
+
+    const proc = spawn(REBOT_BIN, rebotArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      // rebot exits non-zero whenever the merged result contains any failure —
+      // that's expected and not a merge error; only a missing output file means
+      // the merge itself actually failed.
+      const logPath = path.join(resolvedOutDir, 'combined_log.html');
+      if (!fs.existsSync(logPath)) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'rebot did not produce a combined log', exitCode: code, stderr: stderr.slice(0, 2000) }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, logPath, mergedCount: validPaths.length }));
+    });
+    proc.on('error', (err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to spawn rebot: ${err.message}` }));
+    });
     return;
   }
 

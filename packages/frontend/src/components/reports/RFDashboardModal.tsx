@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
+import toast from 'react-hot-toast';
 import { api } from '../../lib/api';
 import { useRfSummary, useRfSteps, type RfSummaryResult, type RfKeyword } from '../../hooks/useReports';
 import { useProjectStore } from '../../stores/projectStore';
@@ -251,14 +252,27 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
   async function downloadAllLogs() {
     if (!projectId || !run) return;
     try {
-      const res = await api.get(`/projects/${projectId}/reports/runs/${run.id}/rf-logs-zip`, { responseType: 'blob' });
+      const res = await api.get(`/projects/${projectId}/reports/runs/${run.id}/rf-log-combined`, { responseType: 'blob' });
       const url = URL.createObjectURL(res.data as Blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `rf-logs-RUN-${String(run.runSeq).padStart(4, '0')}.zip`;
+      a.download = `rf-log-combined-RUN-${String(run.runSeq).padStart(4, '0')}.html`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch { /* silent */ }
+    } catch (err) {
+      // responseType: 'blob' means axios hands back the error body as a Blob
+      // too (even for JSON error responses) — read + parse it to surface the
+      // real server message instead of a generic one.
+      let detail = 'check the run has RF logs available';
+      const errData = (err as { response?: { data?: unknown } })?.response?.data;
+      if (errData instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await errData.text()) as { error?: string };
+          if (parsed.error) detail = parsed.error;
+        } catch { /* not JSON — keep generic message */ }
+      }
+      toast.error(`Could not download the combined RF log — ${detail}`);
+    }
   }
 
   const stats = summary?.stats;
@@ -495,7 +509,7 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
                   border: '1px solid var(--border2)', cursor: 'pointer',
                 }}
               >
-                ⬇ All RF Logs (.zip)
+                ⬇ Combined RF Log
               </button>
             )}
             <Dialog.Close asChild>

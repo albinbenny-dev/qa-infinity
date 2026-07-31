@@ -789,33 +789,75 @@ router.get('/runs/:runId/results/:resultId/rf-steps', async (req: Request, res: 
   } catch (err) { next(err); }
 });
 
-// ── GET /runs/:runId/rf-logs-zip — download all log.html files as zip ─────────
+// ── GET /runs/:runId/rf-log-combined — one merged RF log.html for the whole run ─
+// Replaces the old rf-logs-zip: that zipped one log.html per TestCase, which for
+// a multi-TC-per-script suite script meant N byte-identical copies of the same
+// file. Instead: dedupe down to the run's distinct script executions (by their
+// physical output dir) and merge them into one combined log via RF's own `rebot`
+// tool (called on the runner, which has it installed), or just stream the single
+// log directly when the run only ever executed one distinct script.
 
-router.get('/runs/:runId/rf-logs-zip', async (req: Request, res: Response, next: NextFunction) => {
+const RUNNER_URL = process.env.RUNNER_PRIMARY_URL ?? process.env.RUNNER_URL ?? 'http://qa-runner:5001';
+
+router.get('/runs/:runId/rf-log-combined', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const run = await prisma.run.findFirst({
       where: { id: req.params['runId'], projectId: req.project.id },
-      select: { runSeq: true, results: { select: { rfLogPath: true, testCase: { select: { tcId: true } } } } },
+      select: { runSeq: true, results: { select: { rfLogPath: true } } },
     });
     if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
 
-    const zip = new JSZip();
     const runLabel = `RUN-${String(run.runSeq).padStart(4, '0')}`;
-    let count = 0;
 
+    // Dedupe by physical output directory — a mirrored suite script's TCs all
+    // share the same rfLogPath, so this naturally collapses to one entry per
+    // distinct script execution rather than one per TestCase.
+    const outputDirs = new Set<string>();
     for (const r of run.results) {
-      if (!r.rfLogPath || !fs.existsSync(r.rfLogPath)) continue;
-      const data = fs.readFileSync(r.rfLogPath);
-      zip.file(`${r.testCase.tcId}_log.html`, data);
-      count++;
+      if (r.rfLogPath && fs.existsSync(r.rfLogPath)) outputDirs.add(path.dirname(r.rfLogPath));
+    }
+    if (outputDirs.size === 0) { res.status(404).json({ error: 'No RF logs available for this run' }); return; }
+
+    // Single distinct script — nothing to merge, just serve its log directly.
+    if (outputDirs.size === 1) {
+      const logPath = path.join([...outputDirs][0], 'log.html');
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Disposition', `attachment; filename="rf-log-${runLabel}.html"`);
+      res.send(fs.readFileSync(logPath));
+      return;
     }
 
-    if (count === 0) { res.status(404).json({ error: 'No RF logs available for this run' }); return; }
+    const outputXmlPaths = [...outputDirs]
+      .map((dir) => path.join(dir, 'output.xml'))
+      .filter((p) => fs.existsSync(p));
+    if (outputXmlPaths.length === 0) { res.status(404).json({ error: 'No RF logs available for this run' }); return; }
 
-    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="rf-logs-${runLabel}.zip"`);
-    res.send(buf);
+    // Combined log lives alongside the run's own per-script artifact dirs
+    // (one level up from any of them), reused across repeat downloads.
+    const runArtifactsDir = path.dirname([...outputDirs][0]);
+    const combinedDir = path.join(runArtifactsDir, 'combined-log');
+    const combinedLogPath = path.join(combinedDir, 'combined_log.html');
+
+    if (!fs.existsSync(combinedLogPath)) {
+      const mergeRes = await fetch(`${RUNNER_URL}/merge-rf-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outputXmlPaths, outputDir: combinedDir }),
+      });
+      if (!mergeRes.ok) {
+        const errBody = await mergeRes.json().catch(() => ({}));
+        res.status(502).json({ error: 'Failed to merge RF logs', detail: errBody?.error });
+        return;
+      }
+    }
+
+    if (!fs.existsSync(combinedLogPath)) {
+      res.status(500).json({ error: 'Combined log was not produced' });
+      return;
+    }
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `attachment; filename="rf-log-combined-${runLabel}.html"`);
+    res.send(fs.readFileSync(combinedLogPath));
   } catch (err) { next(err); }
 });
 
