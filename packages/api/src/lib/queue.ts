@@ -50,7 +50,11 @@ export interface HealJobPayload {
 export async function addRunJob(payload: RunJobPayload): Promise<void> {
   await testRunQueue.add('run', payload, {
     jobId: payload.runId,
-    attempts: 1,
+    // 2 attempts: if the worker process stalls (misses its lock-renewal heartbeat —
+    // e.g. it crashed or the event loop was blocked), BullMQ requeues the job once
+    // instead of moving straight to permanent failure. runWorker's resume logic
+    // (skips already-completed RunResults) picks the retry up from checkpoint.
+    attempts: 2,
     removeOnComplete: 100,
     removeOnFail: 50,
   });

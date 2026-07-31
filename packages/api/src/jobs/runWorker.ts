@@ -288,15 +288,34 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     const reportFile = path.join(artifactsDir, `${runLabel}_${tcLabel}_report.json`);
     const outputDir = path.join(artifactsDir, `${runLabel}_${tcLabel}`);
 
-    const result = await spawnPlaywright(
-      scriptPath,
-      reportFile,
-      outputDir,
-      { parallelWorkers, headless, browser, hostBrowser, envBaseUrl, envUsername, envPassword, environment, projectSlug },
-      (line) => emitLog(runId, 'run', line),
-      runAbortController.signal,
-      hostBrowser ? (vncData) => emitToRun(runId, 'run:vnc', vncData) : undefined,
-    );
+    // Backstop above spawnPlaywright's own internal 960s abort timer: that abort
+    // signal has to interrupt an in-flight stream read to work, which isn't
+    // guaranteed across all cases. If a script wedges and the internal abort
+    // never unblocks it, this lane must move on regardless so the rest of the
+    // run doesn't stall forever behind one hung test case.
+    const LANE_HARD_TIMEOUT_MS = 1_020_000; // 17 min
+    let laneTimeoutHandle: NodeJS.Timeout;
+    const laneTimeout = new Promise<SpawnResult>((resolve) => {
+      laneTimeoutHandle = setTimeout(() => resolve({
+        exitCode: 1,
+        error: 'Execution watchdog: script did not respond within the hard timeout — treated as failed so the run could continue.',
+        durationMs: LANE_HARD_TIMEOUT_MS,
+      }), LANE_HARD_TIMEOUT_MS);
+    });
+
+    const result = await Promise.race([
+      spawnPlaywright(
+        scriptPath,
+        reportFile,
+        outputDir,
+        { parallelWorkers, headless, browser, hostBrowser, envBaseUrl, envUsername, envPassword, environment, projectSlug },
+        (line) => emitLog(runId, 'run', line),
+        runAbortController.signal,
+        hostBrowser ? (vncData) => emitToRun(runId, 'run:vnc', vncData) : undefined,
+      ),
+      laneTimeout,
+    ]);
+    clearTimeout(laneTimeoutHandle!);
 
     // If the run was cancelled mid-script, mark result and stop
     if (runAbortController.signal.aborted) {

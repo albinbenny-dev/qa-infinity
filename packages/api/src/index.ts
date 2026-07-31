@@ -11,6 +11,7 @@ import { setRunsNamespace, setProjectsNamespace } from './lib/socket.js';
 import { prisma } from './lib/prisma.js';
 import { loadSchedules } from './lib/scheduler.js';
 import { startRunWorker } from './jobs/runWorker.js';
+import { startRunWatchdog } from './jobs/runWatchdog.js';
 import { startHealWorker } from './jobs/healWorker.js';
 import { startScanWorker } from './jobs/scanWorker.js';
 import { startScriptGenWorker } from './jobs/scriptGenWorker.js';
@@ -19,6 +20,21 @@ import { startAgentScanWorker } from './jobs/agentScanWorker.js';
 import { startRetentionSchedule } from './jobs/retentionWorker.js';
 import { saveSkillFile, deleteSkillFile } from './services/scriptFileService.js';
 import { scanAllScriptTags } from './routes/scripts.js';
+
+// Without a listener, Node silently terminates the process on an unhandled
+// rejection with only a generic stack trace (or nothing, on older versions) —
+// the exact failure mode that left a run's status update ("void prisma.run.update(...)")
+// unaccounted for during a prior incident. Log loudly, then exit deliberately so
+// Docker's `restart: unless-stopped` policy still recovers the container — this
+// only adds visibility, it does not change the crash-and-restart behavior.
+process.on('unhandledRejection', (reason) => {
+  console.error('[qa-api] FATAL unhandledRejection — process will exit:', reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[qa-api] FATAL uncaughtException — process will exit:', err);
+  process.exit(1);
+});
 
 const app = express();
 const httpServer = createServer(app);
@@ -304,6 +320,7 @@ httpServer.listen(PORT, () => {
     if (process.env.REDIS_URL || process.env.NODE_ENV !== 'test') {
       try {
         startRunWorker();
+        startRunWatchdog();
         if (process.env.APP_MODE !== 'runner') {
           startHealWorker();
           startScanWorker();

@@ -895,12 +895,21 @@ const server = http.createServer(async (req, res) => {
         cwd: spawnCwd,
         env: robotEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // detached=true creates a new process group so a hard-kill can take out
+        // the whole tree (xvfb-run/launcher + robot + its Chromium child) with a
+        // single negative-PID signal — a lone SIGTERM to the immediate child can
+        // leave grandchildren (and their locks/memory) orphaned if it's wedged.
+        detached: true,
       });
+
+      const killProcessTree = (signal) => {
+        try { process.kill(-proc.pid, signal); } catch { try { proc.kill(signal); } catch { /* already gone */ } }
+      };
 
       const killTimer = setTimeout(() => {
         sendLine({ type: 'log', text: `[runner] Robot script exceeded ${HARD_KILL_MS / 1000}s hard limit — killing` });
-        proc.kill('SIGTERM');
-        setTimeout(() => proc.kill('SIGKILL'), 5_000);
+        killProcessTree('SIGTERM');
+        setTimeout(() => killProcessTree('SIGKILL'), 5_000);
       }, HARD_KILL_MS);
 
       // Send a heartbeat every 20 s to keep the TCP session alive through
@@ -912,8 +921,8 @@ const server = http.createServer(async (req, res) => {
 
       req.on('close', () => {
         if (!procDone && !proc.killed) {
-          proc.kill('SIGTERM');
-          setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 3000);
+          killProcessTree('SIGTERM');
+          setTimeout(() => { if (!procDone) killProcessTree('SIGKILL'); }, 3000);
         }
         clearTimeout(killTimer);
         clearInterval(heartbeatTimer);
@@ -1077,15 +1086,23 @@ const server = http.createServer(async (req, res) => {
       cwd: SCRIPTS_DIR,
       env: spawnEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // detached=true creates a new process group so a hard-kill can take out the
+      // whole tree (xvfb-run + playwright + its Chromium child) with a single
+      // negative-PID signal — see the matching comment on the Robot Framework spawn.
+      detached: true,
     });
+
+    const killProcessTree = (signal) => {
+      try { process.kill(-proc.pid, signal); } catch { try { proc.kill(signal); } catch { /* already gone */ } }
+    };
 
     // Kill the Playwright process immediately when the API worker disconnects
     // (e.g. user clicked Stop Run, which aborts the fetch on the worker side)
     req.on('close', () => {
       releaseVnc();
-      if (!procDone && !proc.killed) {
-        proc.kill('SIGTERM');
-        setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 3000);
+      if (!procDone) {
+        killProcessTree('SIGTERM');
+        setTimeout(() => { if (!procDone) killProcessTree('SIGKILL'); }, 3000);
       }
       clearTimeout(killTimer);
     });
@@ -1094,8 +1111,8 @@ const server = http.createServer(async (req, res) => {
     // (accommodates multi-step workflow tests that use test.setTimeout up to 600 s + startup/shutdown buffer)
     const killTimer = setTimeout(() => {
       sendLine({ type: 'log', text: `[runner] Script exceeded ${HARD_KILL_MS / 1000}s hard limit — killing process` });
-      proc.kill('SIGTERM');
-      setTimeout(() => proc.kill('SIGKILL'), 5_000);
+      killProcessTree('SIGTERM');
+      setTimeout(() => killProcessTree('SIGKILL'), 5_000);
     }, HARD_KILL_MS);
 
     proc.stdout.on('data', handleChunk);
