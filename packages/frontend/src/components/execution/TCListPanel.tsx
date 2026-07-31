@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { TestCase } from '../../types';
+import SortableTcList from '../shared/SortableTcList';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -38,12 +39,14 @@ interface TCListPanelProps {
   allTCs: TestCase[];
   useCases: string[];
   selectedIds: Set<string>;
+  orderedTcIds: string[];
   runningTcIds: Set<string>;
   scriptedTcIds: Set<string>;
   onToggleTc: (id: string) => void;
   onToggleGroup: (ids: string[]) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
+  onReorder: (newIds: string[]) => void;
   onRunSelected: () => void;
   onRunGroup: (useCaseTag: string) => void;
   onRunIndividual: (tc: TestCase) => void;
@@ -57,12 +60,14 @@ export default function TCListPanel({
   allTCs,
   useCases,
   selectedIds,
+  orderedTcIds,
   runningTcIds,
   scriptedTcIds,
   onToggleTc,
   onToggleGroup,
   onSelectAll,
   onClearSelection,
+  onReorder,
   onRunSelected,
   onRunGroup,
   onRunIndividual,
@@ -70,7 +75,7 @@ export default function TCListPanel({
   onDuplicateTc,
   isRunning,
 }: TCListPanelProps) {
-  const [viewMode, setViewMode] = useState<'usecase' | 'flat'>('usecase');
+  const [viewMode, setViewMode] = useState<'usecase' | 'flat' | 'order'>('usecase');
   const [typeFilter, setTypeFilter] = useState<'' | 'UI' | 'API' | 'SIT'>('');
   const [statusFilter, setStatusFilter] = useState('scripted');
   const [search, setSearch] = useState('');
@@ -137,22 +142,26 @@ export default function TCListPanel({
       }}>
         {/* View mode toggle */}
         <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-          {(['usecase', 'flat'] as const).map((mode) => (
+          {([
+            { key: 'usecase', label: '🏷 By UseCase' },
+            { key: 'flat',    label: '≡ Flat List' },
+            { key: 'order',   label: '⠿ Run Order' },
+          ] as const).map(({ key, label }) => (
             <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
+              key={key}
+              onClick={() => setViewMode(key)}
               style={{
                 padding: '4px 9px',
                 borderRadius: 5,
                 fontSize: 10,
                 fontWeight: 700,
                 cursor: 'pointer',
-                border: `1px solid ${viewMode === mode ? 'rgba(37,99,171,0.3)' : 'var(--border)'}`,
-                background: viewMode === mode ? 'var(--cyan-dim)' : 'var(--surface3)',
-                color: viewMode === mode ? 'var(--cyan)' : 'var(--text-dim)',
+                border: `1px solid ${viewMode === key ? (key === 'order' ? 'rgba(244,123,32,0.35)' : 'rgba(37,99,171,0.3)') : 'var(--border)'}`,
+                background: viewMode === key ? (key === 'order' ? 'rgba(244,123,32,0.1)' : 'var(--cyan-dim)') : 'var(--surface3)',
+                color: viewMode === key ? (key === 'order' ? 'var(--6d-orange)' : 'var(--cyan)') : 'var(--text-dim)',
               }}
             >
-              {mode === 'usecase' ? '🏷 By UseCase' : '≡ Flat List'}
+              {label}
             </button>
           ))}
         </div>
@@ -227,7 +236,7 @@ export default function TCListPanel({
           flexShrink: 0,
           whiteSpace: 'nowrap',
         }}>
-          {viewMode === 'usecase' ? `${totalGroups} groups · ` : ''}{totalVisible} TCs
+          {viewMode === 'order' ? `${orderedTcIds.length} in queue` : viewMode === 'usecase' ? `${totalGroups} groups · ${totalVisible} TCs` : `${totalVisible} TCs`}
         </span>
       </div>
 
@@ -289,7 +298,28 @@ export default function TCListPanel({
 
       {/* TC List */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {filtered.length === 0 ? (
+        {viewMode === 'order' ? (
+          <div style={{ padding: '10px 12px' }}>
+            {orderedTcIds.length === 0 ? (
+              <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+                <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>⠿</div>
+                Select test cases to set run order.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 8, fontWeight: 600 }}>
+                  Drag rows to set execution order · {orderedTcIds.length} queued
+                </div>
+                <SortableTcList
+                  tcIds={orderedTcIds}
+                  allTcs={allTCs}
+                  onChange={onReorder}
+                  onRemove={(id) => onToggleTc(id)}
+                />
+              </>
+            )}
+          </div>
+        ) : filtered.length === 0 ? (
           <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
             <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📋</div>
             {search || typeFilter || statusFilter ? 'No matching test cases.' : 'No test cases yet.'}

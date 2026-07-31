@@ -18,6 +18,7 @@ import { useSuites, useCreateSuite, useUpdateSuite, useDeleteSuite } from '../ho
 import { useScripts } from '../hooks/useScripts';
 import { useProjectStore } from '../stores/projectStore';
 import EmailConfig from '../components/reports/EmailConfig';
+import SortableTcList from '../components/shared/SortableTcList';
 import type { Schedule, Suite, SuiteStage, TestCase, EnvConfig } from '../types';
 import { api } from '../lib/api';
 import type { RunListItem } from '../hooks/useRuns';
@@ -829,6 +830,7 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave
   }, [testCases]);
 
   const [expandedUc, setExpandedUc] = useState<Set<string>>(new Set());
+  const [expandedStages, setExpandedStages] = useState<Set<string>>(new Set());
   const [scriptsOnly, setScriptsOnly] = useState(false);
 
   const visibleUcGroups = useMemo(() => {
@@ -911,6 +913,28 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave
 
   function removeStage(id: string) {
     setStages(prev => prev.filter(s => s.id !== id).map((s, i) => ({ ...s, order: i })));
+  }
+
+  function toggleStageExpand(id: string) {
+    setExpandedStages(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  }
+
+  function reorderTcsInStage(stageId: string, newTcIds: string[]) {
+    setStages(prev => prev.map(s => s.id === stageId ? { ...s, tcIds: newTcIds } : s));
+  }
+
+  function removeTcFromStage(stageId: string, tcId: string) {
+    setStages(prev => {
+      const stage = prev.find(s => s.id === stageId);
+      if (!stage) return prev;
+      const next = stage.tcIds.filter(id => id !== tcId);
+      if (next.length === 0) return prev.filter(s => s.id !== stageId).map((s, i) => ({ ...s, order: i }));
+      return prev.map(s => s.id === stageId ? { ...s, tcIds: next } : s);
+    });
   }
 
   function toggleMode(id: string) {
@@ -1083,88 +1107,116 @@ function SuiteForm({ mode, initial, testCases, scriptedTcIds = new Set(), onSave
             {stages.map((stage, idx) => {
               const color = UC_COLORS[stage.useCaseTag] ?? `var(${UC_FALLBACKS[idx % UC_FALLBACKS.length]})`;
               const isParallel = stage.mode === 'parallel';
+              const isExpanded = expandedStages.has(stage.id);
               return (
                 <div key={stage.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '8px 10px',
                   background: 'var(--bg)', border: '1px solid var(--border)',
                   borderRadius: 8, borderLeft: `3px solid ${color}`,
+                  overflow: 'hidden',
                 }}>
-                  {/* Order number */}
-                  <span style={{
-                    minWidth: 18, height: 18, borderRadius: '50%',
-                    background: 'rgba(37,99,171,0.14)', color: 'var(--cyan)',
-                    fontSize: 9, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                  }}>{idx + 1}</span>
+                  {/* Stage header row */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px' }}>
+                    {/* Order number */}
+                    <span style={{
+                      minWidth: 18, height: 18, borderRadius: '50%',
+                      background: 'rgba(37,99,171,0.14)', color: 'var(--cyan)',
+                      fontSize: 9, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>{idx + 1}</span>
 
-                  {/* Use case name */}
-                  <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {stage.useCaseTag}
-                  </span>
+                    {/* Use case name */}
+                    <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {stage.useCaseTag}
+                    </span>
 
-                  {/* TC count badge */}
-                  <span style={{
-                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100, flexShrink: 0,
-                    background: 'rgba(34,211,238,0.1)', color: 'var(--cyan)',
-                  }}>{stage.tcIds.length} TCs</span>
-
-                  {/* Parallel / Sequential toggle */}
-                  <button
-                    type="button"
-                    onClick={() => toggleMode(stage.id)}
-                    title={isParallel ? 'Switch to Sequential' : 'Switch to Parallel'}
-                    style={{
-                      padding: '3px 9px', borderRadius: 5, cursor: 'pointer', flexShrink: 0,
-                      fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em',
-                      background: isParallel ? 'rgba(139,92,246,0.12)' : 'rgba(37,99,171,0.12)',
-                      border: isParallel ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(37,99,171,0.3)',
-                      color: isParallel ? '#8b5cf6' : 'var(--cyan)',
-                      transition: 'all 0.14s',
-                    }}
-                  >
-                    {isParallel ? '⇉ Parallel' : '→ Sequential'}
-                  </button>
-
-                  {/* Up / Down arrows */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+                    {/* TC count badge — click to expand */}
                     <button
                       type="button"
-                      disabled={idx === 0}
-                      onClick={() => moveStage(idx, 'up')}
+                      onClick={() => toggleStageExpand(stage.id)}
+                      title={isExpanded ? 'Hide TC order' : 'Show & reorder TCs'}
                       style={{
-                        width: 16, height: 14, borderRadius: 3, border: '1px solid var(--border)',
-                        background: 'var(--surface)', color: idx === 0 ? 'var(--text-dim)' : 'var(--text-mid)',
-                        cursor: idx === 0 ? 'not-allowed' : 'pointer', fontSize: 8, lineHeight: 1,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        opacity: idx === 0 ? 0.35 : 1,
+                        fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100, flexShrink: 0,
+                        background: isExpanded ? 'rgba(244,123,32,0.12)' : 'rgba(34,211,238,0.1)',
+                        color: isExpanded ? 'var(--6d-orange)' : 'var(--cyan)',
+                        border: isExpanded ? '1px solid rgba(244,123,32,0.25)' : '1px solid transparent',
+                        cursor: 'pointer',
                       }}
-                    >▲</button>
+                    >
+                      {isExpanded ? '▾' : '▸'} {stage.tcIds.length} TCs
+                    </button>
+
+                    {/* Parallel / Sequential toggle */}
                     <button
                       type="button"
-                      disabled={idx === stages.length - 1}
-                      onClick={() => moveStage(idx, 'down')}
+                      onClick={() => toggleMode(stage.id)}
+                      title={isParallel ? 'Switch to Sequential' : 'Switch to Parallel'}
                       style={{
-                        width: 16, height: 14, borderRadius: 3, border: '1px solid var(--border)',
-                        background: 'var(--surface)', color: idx === stages.length - 1 ? 'var(--text-dim)' : 'var(--text-mid)',
-                        cursor: idx === stages.length - 1 ? 'not-allowed' : 'pointer', fontSize: 8, lineHeight: 1,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        opacity: idx === stages.length - 1 ? 0.35 : 1,
+                        padding: '3px 9px', borderRadius: 5, cursor: 'pointer', flexShrink: 0,
+                        fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em',
+                        background: isParallel ? 'rgba(139,92,246,0.12)' : 'rgba(37,99,171,0.12)',
+                        border: isParallel ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(37,99,171,0.3)',
+                        color: isParallel ? '#8b5cf6' : 'var(--cyan)',
+                        transition: 'all 0.14s',
                       }}
-                    >▼</button>
+                    >
+                      {isParallel ? '⇉ Parallel' : '→ Sequential'}
+                    </button>
+
+                    {/* Up / Down arrows */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => moveStage(idx, 'up')}
+                        style={{
+                          width: 16, height: 14, borderRadius: 3, border: '1px solid var(--border)',
+                          background: 'var(--surface)', color: idx === 0 ? 'var(--text-dim)' : 'var(--text-mid)',
+                          cursor: idx === 0 ? 'not-allowed' : 'pointer', fontSize: 8, lineHeight: 1,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          opacity: idx === 0 ? 0.35 : 1,
+                        }}
+                      >▲</button>
+                      <button
+                        type="button"
+                        disabled={idx === stages.length - 1}
+                        onClick={() => moveStage(idx, 'down')}
+                        style={{
+                          width: 16, height: 14, borderRadius: 3, border: '1px solid var(--border)',
+                          background: 'var(--surface)', color: idx === stages.length - 1 ? 'var(--text-dim)' : 'var(--text-mid)',
+                          cursor: idx === stages.length - 1 ? 'not-allowed' : 'pointer', fontSize: 8, lineHeight: 1,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          opacity: idx === stages.length - 1 ? 0.35 : 1,
+                        }}
+                      >▼</button>
+                    </div>
+
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      onClick={() => removeStage(stage.id)}
+                      style={{
+                        width: 20, height: 20, borderRadius: 4, border: '1px solid rgba(220,38,38,0.2)',
+                        background: 'transparent', color: 'var(--fail)',
+                        cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0, lineHeight: 1,
+                      }}
+                    >✕</button>
                   </div>
 
-                  {/* Delete */}
-                  <button
-                    type="button"
-                    onClick={() => removeStage(stage.id)}
-                    style={{
-                      width: 20, height: 20, borderRadius: 4, border: '1px solid rgba(220,38,38,0.2)',
-                      background: 'transparent', color: 'var(--fail)',
-                      cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      flexShrink: 0, lineHeight: 1,
-                    }}
-                  >✕</button>
+                  {/* Expandable TC drag-reorder panel */}
+                  {isExpanded && (
+                    <div style={{ padding: '6px 10px 10px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
+                      <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        ⠿ Drag to set execution order within this stage
+                      </div>
+                      <SortableTcList
+                        tcIds={stage.tcIds}
+                        allTcs={testCases}
+                        onChange={(newIds) => reorderTcsInStage(stage.id, newIds)}
+                        onRemove={(tcId) => removeTcFromStage(stage.id, tcId)}
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1462,6 +1514,24 @@ function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTc
         onChange={ids => set({ selectedTcIds: ids })}
         scriptedTcIds={scriptedTcIds}
       />
+
+      {/* Run Order — drag to set execution sequence */}
+      {form.selectedTcIds.length > 0 && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>⠿ Run Order</span>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{form.selectedTcIds.length} TCs · drag to reorder</span>
+          </div>
+          <div style={{ padding: '8px 10px' }}>
+            <SortableTcList
+              tcIds={form.selectedTcIds}
+              allTcs={testCases}
+              onChange={ids => set({ selectedTcIds: ids })}
+              onRemove={id => set({ selectedTcIds: form.selectedTcIds.filter(x => x !== id) })}
+            />
+          </div>
+        </div>
+      )}
 
       <div>
         <label style={labelStyle}>Email Recipients</label>

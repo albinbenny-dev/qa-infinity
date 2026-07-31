@@ -258,10 +258,11 @@ export default function Execution() {
     localStorage.setItem('qa:parallelWorkers', String(n));
   }, []);
 
-  // ── TC selection ──────────────────────────────────────────────────────────
-  const [selectedTcIds, setSelectedTcIds] = useState<Set<string>>(
-    () => new Set(selectedTestCaseIds),
+  // ── TC selection — ordered array so drag reorder is preserved ────────────
+  const [orderedTcIds, setOrderedTcIds] = useState<string[]>(
+    () => selectedTestCaseIds ?? [],
   );
+  const selectedTcIds = useMemo(() => new Set(orderedTcIds), [orderedTcIds]);
 
   // ── Active run tracking ───────────────────────────────────────────────────
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -397,29 +398,32 @@ export default function Execution() {
 
   // ── TC selection handlers ─────────────────────────────────────────────────
   const handleToggleTc = useCallback((id: string) => {
-    setSelectedTcIds((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id); else n.add(id);
-      return n;
+    setOrderedTcIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      return [...prev, id];
     });
   }, []);
 
   const handleToggleGroup = useCallback((ids: string[]) => {
-    setSelectedTcIds((prev) => {
-      const n = new Set(prev);
-      const allSel = ids.every((id) => n.has(id));
-      if (allSel) ids.forEach((id) => n.delete(id));
-      else ids.forEach((id) => n.add(id));
-      return n;
+    setOrderedTcIds((prev) => {
+      const set = new Set(prev);
+      const allSel = ids.every((id) => set.has(id));
+      if (allSel) return prev.filter((id) => !ids.includes(id));
+      const toAdd = ids.filter((id) => !set.has(id));
+      return [...prev, ...toAdd];
     });
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    setSelectedTcIds(new Set(allTCs.map((tc) => tc.id)));
+    setOrderedTcIds(allTCs.map((tc) => tc.id));
   }, [allTCs]);
 
   const handleClearSelection = useCallback(() => {
-    setSelectedTcIds(new Set());
+    setOrderedTcIds([]);
+  }, []);
+
+  const handleReorder = useCallback((newIds: string[]) => {
+    setOrderedTcIds(newIds);
   }, []);
 
   // ── Switch watched run (job queue selector) ───────────────────────────────
@@ -434,7 +438,7 @@ export default function Execution() {
   // ── Run handlers ──────────────────────────────────────────────────────────
   async function handleRunNow() {
     if (!projectId) return;
-    const tcIds = Array.from(selectedTcIds);
+    const tcIds = orderedTcIds;
     if (tcIds.length === 0) {
       toast.error('Select at least one test case first');
       return;
@@ -680,12 +684,14 @@ export default function Execution() {
             allTCs={allTCs}
             useCases={useCaseTags}
             selectedIds={selectedTcIds}
+            orderedTcIds={orderedTcIds}
             runningTcIds={runningTcIds}
             scriptedTcIds={scriptedTcIds}
             onToggleTc={handleToggleTc}
             onToggleGroup={handleToggleGroup}
             onSelectAll={handleSelectAll}
             onClearSelection={handleClearSelection}
+            onReorder={handleReorder}
             onRunSelected={handleRunNow}
             onRunGroup={handleRunGroup}
             onRunIndividual={handleRunIndividual}
