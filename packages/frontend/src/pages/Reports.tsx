@@ -303,7 +303,7 @@ export default function Reports() {
         </div>
 
         {/* ── Run history table ─────────────────────────────────────────────── */}
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)', flexShrink: 0 }}>
           <div style={{ height: 3, background: 'var(--warm-accent)' }} />
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Run History</span>
