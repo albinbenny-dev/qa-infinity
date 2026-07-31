@@ -434,13 +434,22 @@ export function deleteResourceFile(projectId: string, filename: string): void {
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 }
 
-export function listResourceFiles(identifier: string): { filename: string; size: number; isBinary: boolean }[] {
+// Async + parallelized across siblings, same reasoning as walkForTree above —
+// this used to be a synchronous recursive fs.readdirSync/statSync walk that
+// blocked the whole event loop (measured 20s+ on a project with a deeply
+// nested resources/ tree), stalling every other in-flight request meanwhile.
+export async function listResourceFiles(identifier: string): Promise<{ filename: string; size: number; isBinary: boolean }[]> {
   const dir = resourcesDir(identifier);
-  if (!fs.existsSync(dir)) return [];
-  function scan(current: string, prefix: string): { filename: string; size: number; isBinary: boolean }[] {
-    return fs.readdirSync(current).flatMap((entry) => {
+  try {
+    await fs.promises.access(dir);
+  } catch {
+    return [];
+  }
+  async function scan(current: string, prefix: string): Promise<{ filename: string; size: number; isBinary: boolean }[]> {
+    const entries = await fs.promises.readdir(current);
+    const results = await Promise.all(entries.map(async (entry) => {
       const full = path.join(current, entry);
-      const stat = fs.statSync(full);
+      const stat = await fs.promises.stat(full);
       const rel = prefix ? `${prefix}/${entry}` : entry;
       if (stat.isDirectory()) {
         if (SKIP_DIRS.has(entry)) return [];
@@ -448,7 +457,8 @@ export function listResourceFiles(identifier: string): { filename: string; size:
       }
       const isBinary = BINARY_EXTS.has(path.extname(entry).toLowerCase());
       return [{ filename: rel, size: stat.size, isBinary }];
-    });
+    }));
+    return results.flat();
   }
   return scan(dir, '');
 }

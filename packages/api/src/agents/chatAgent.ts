@@ -600,7 +600,7 @@ async function toolGenerateScript(
   });
   if (!project) return { text: 'Project not found.', actionType: 'SCRIPT_ERROR' };
 
-  const resourceFiles = listResourceFiles(project.slug).map((f: { filename: string }) => {
+  const resourceFiles = (await listResourceFiles(project.slug)).map((f: { filename: string }) => {
     let keywords: string[] = [];
     try { keywords = extractRobotKeywords(readResourceFile(project.slug, f.filename)); } catch { /* skip */ }
     return { filename: f.filename, keywords };
@@ -714,7 +714,7 @@ async function toolFixScript(
   });
   if (!project) return { text: 'Project not found.', actionType: 'SCRIPT_ERROR' };
 
-  const resourceFiles = listResourceFiles(project.slug).map((f: { filename: string }) => {
+  const resourceFiles = (await listResourceFiles(project.slug)).map((f: { filename: string }) => {
     let keywords: string[] = [];
     try { keywords = extractRobotKeywords(readResourceFile(project.slug, f.filename)); } catch { /* skip */ }
     return { filename: f.filename, keywords };

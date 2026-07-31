@@ -69,7 +69,7 @@ router.get('/', (async (req, res) => {
   const { projectId } = req.params;
   const slug = projectSlug(req);
   try {
-    const fsMeta = listResourceFiles(slug);
+    const fsMeta = await listResourceFiles(slug);
     const rows = await prisma.projectResource.findMany({ where: { projectId } });
     const dbMap = new Map(rows.map((r) => [r.filename, r]));
 
@@ -373,7 +373,7 @@ router.get('/health', (async (req, res) => {
   const { projectId } = req.params;
   const slug = projectSlug(req);
   try {
-    const resources = listResourceFiles(slug);
+    const resources = await listResourceFiles(slug);
     const scriptMetas = listScriptFiles(slug);
     const scriptCount = scriptMetas.length;
     const keywordUsage: Record<string, number> = {};
@@ -419,18 +419,30 @@ router.get('/keywords/index', (async (req, res) => {
   const { projectId: _projectId } = req.params;
   const slug = projectSlug(req);
   try {
-    const files = listResourceFiles(slug);
-    const index: Record<string, { filename: string; line: number }> = {};
-    for (const f of files) {
-      if (f.isBinary) continue;
+    const files = await listResourceFiles(slug);
+    const candidates = files.filter((f) => {
+      if (f.isBinary) return false;
       const ext = path.extname(f.filename).toLowerCase();
-      if (ext !== '.robot' && ext !== '.resource') continue;
+      return ext === '.robot' || ext === '.resource';
+    });
+    // Read + parse every candidate file concurrently instead of one at a time —
+    // this loop used to be the dominant cost of this endpoint (full synchronous
+    // file reads for every keyword file, serialized).
+    const perFile = await Promise.all(candidates.map(async (f) => {
       const filePath = path.join(resourcesDir(slug), f.filename);
-      if (!fs.existsSync(filePath)) continue;
-      const content = fs.readFileSync(filePath, 'utf-8');
-      for (const kw of extractRobotKeywordsWithLines(content)) {
+      try {
+        const content = await fs.promises.readFile(filePath, 'utf-8');
+        return { filename: f.filename, keywords: extractRobotKeywordsWithLines(content) };
+      } catch {
+        return null; // unreadable/missing — skip, same as before
+      }
+    }));
+    const index: Record<string, { filename: string; line: number }> = {};
+    for (const entry of perFile) {
+      if (!entry) continue;
+      for (const kw of entry.keywords) {
         if (!index[kw.name]) {
-          index[kw.name] = { filename: f.filename, line: kw.line };
+          index[kw.name] = { filename: entry.filename, line: kw.line };
         }
       }
     }

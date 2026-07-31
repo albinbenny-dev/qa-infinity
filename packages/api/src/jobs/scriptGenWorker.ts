@@ -166,7 +166,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
 
     const existingPOMs = scriptMode === 'ROBOT' ? [] : listPOMFiles(project.slug);
     const resourceFiles: ResourceFileInfo[] | undefined = scriptMode === 'ROBOT'
-      ? listResourceFiles(project.slug).map((f) => {
+      ? (await listResourceFiles(project.slug)).map((f) => {
           let keywords: string[] = [];
           try {
             const content = readResourceFile(project.slug, f.filename);

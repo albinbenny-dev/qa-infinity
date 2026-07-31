@@ -184,7 +184,7 @@ async function healRobotScript(
   });
   if (!tc || !project) return null;
 
-  const resourceFiles: ResourceFileInfo[] = listResourceFiles(project.slug).map((f) => {
+  const resourceFiles: ResourceFileInfo[] = (await listResourceFiles(project.slug)).map((f) => {
     let keywords: string[] = [];
     try { keywords = extractRobotKeywords(readResourceFile(project.slug, f.filename)); } catch { /* skip */ }
     return { filename: f.filename, keywords };
