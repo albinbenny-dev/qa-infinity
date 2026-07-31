@@ -7,7 +7,7 @@ import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import apiRouter from './routes/index.js';
-import { setRunsNamespace, setProjectsNamespace } from './lib/socket.js';
+import { setRunsNamespace, setProjectsNamespace, getLastVnc } from './lib/socket.js';
 import { prisma } from './lib/prisma.js';
 import { loadSchedules } from './lib/scheduler.js';
 import { startRunWorker } from './jobs/runWorker.js';
@@ -102,6 +102,8 @@ runsNamespace.on('connection', (socket) => {
       // Catch up the client if it joined after early events were already emitted
       if (run.status === 'RUNNING') {
         socket.emit('run:start', { total: run.results.length });
+        const lastVnc = getLastVnc(rid);
+        if (lastVnc) socket.emit('run:vnc', lastVnc);
       } else if (run.status === 'PASSED' || run.status === 'FAILED' || run.status === 'CANCELLED') {
         const passed  = run.results.filter((r) => r.status === 'PASSED').length;
         const failed  = run.results.filter((r) => r.status === 'FAILED').length;
