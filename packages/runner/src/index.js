@@ -11,17 +11,21 @@ const SCRIPTS_DIR = '/scripts';
 const CONFIG_FILE = 'qa-infinity.playwright.config.js';
 const CONFIG_PATH = path.join(SCRIPTS_DIR, CONFIG_FILE);
 
-// ── noVNC / live-browser-view constants ────────────────────────────────────
-// Two VNC slots are started at boot. Each slot has its own Xvfb display and
-// x11vnc instance. A single websockify with TokenFile routing multiplexes both
-// onto port 6080. Each host-browser or recording session claims one slot and
-// gets a short-lived token; the noVNC client connects with that token so
-// sessions are isolated (max 2 concurrent viewers).
-const VNC_SLOTS = [
-  { display: ':99',  vncPort: 5900 },
-  { display: ':100', vncPort: 5901 },
-];
-const VNC_DISPLAY    = VNC_SLOTS[0].display; // legacy alias
+// ── noVNC / live-browser-view constants ─────────────────────────────────────
+// MAX_VNC_SESSIONS slots are started at boot (each its own Xvfb display + x11vnc
+// instance — cheap, tens of MB apiece). A single websockify with TokenFile
+// routing multiplexes all of them onto port 6080. Each host-browser or
+// recording session claims one slot and gets a short-lived token; the noVNC
+// client connects with that token so sessions are isolated. This is the real
+// concurrency ceiling on live-viewable sessions — turn it down here (or via the
+// MAX_VNC_SESSIONS env var) if the box is struggling, since each claimed slot
+// backs a real headed Chromium process once a run actually starts.
+const MAX_VNC_SESSIONS = Number(process.env.MAX_VNC_SESSIONS) || 6;
+const VNC_SLOTS = Array.from({ length: MAX_VNC_SESSIONS }, (_, i) => ({
+  display: `:${99 + i}`,
+  vncPort: 5900 + i,
+}));
+const VNC_DISPLAY    = VNC_SLOTS[0].display; // legacy alias — also the only display the RF warm pool renders on
 const NOVNC_PORT     = 6080;
 const NOVNC_WEB_DIR  = '/usr/share/novnc';
 const VNC_TOKEN_FILE = '/tmp/vnc-tokens.cfg';
@@ -37,14 +41,9 @@ function writeVncTokenFile() {
   try { fs.writeFileSync(VNC_TOKEN_FILE, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8'); } catch {}
 }
 
-// allowedIndices restricts which slots may be handed out. RF Browser's warm-pool
-// nodes are only ever spawned on VNC_SLOTS[0] (see VNC_DISPLAY) — their Node
-// process bakes in DISPLAY at spawn time and can't be redirected per-run — so an
-// RF/warm-pool run must never be handed slot 1, or the viewer would connect to
-// an idle display while the browser renders invisibly on slot 0.
-function claimVncSlot(allowedIndices = VNC_SLOTS.map((_, i) => i)) {
+function claimVncSlot() {
   const usedSlots = new Set(vncSessions.values());
-  for (const i of allowedIndices) {
+  for (let i = 0; i < VNC_SLOTS.length; i++) {
     if (!usedSlots.has(i)) {
       const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
       vncSessions.set(token, i);
@@ -633,11 +632,7 @@ const server = http.createServer(async (req, res) => {
       if (vncClaim && !vncReleased) { vncReleased = true; releaseVncSlot(vncClaim.token); }
     };
     if (hostBrowser) {
-      // RF (.robot) tests run through the warm rfbrowser-node pool, which only
-      // ever renders on VNC_SLOTS[0] — restrict those claims to slot 0 so a
-      // busy slot correctly reports vnc-busy instead of silently handing out
-      // slot 1, whose viewer would show an idle display forever.
-      vncClaim = claimVncSlot(scriptPath.endsWith('.robot') ? [0] : undefined);
+      vncClaim = claimVncSlot();
       sendLine(vncClaim ? { type: 'vnc-session', token: vncClaim.token } : { type: 'vnc-busy' });
     }
 
@@ -764,20 +759,21 @@ const server = http.createServer(async (req, res) => {
       let spawnCmd, spawnArgs;
 
       if (RF_BROWSER_WRAPPER_JS) {
-        // Warm pool nodes are spawned with DISPLAY=:99 (VNC display).
-        // Only use them for host-browser runs — headless runs go through xvfb-run
-        // which creates its own isolated display (:100, :101, …). If a warm node
-        // (DISPLAY=:99) were claimed for a headless run, Playwright would render on
-        // :99, leaking the browser into the VNC viewer and causing overlapping windows
-        // when multiple headless runs are in flight concurrently.
-        const warmEntry = hostBrowser ? claimWarmNode() : null;
+        // Warm pool nodes are all spawned with DISPLAY=VNC_DISPLAY (slot 0) — their
+        // Node process bakes in DISPLAY at spawn time and can't be redirected
+        // per-run. Only use the pool when this run actually landed on slot 0;
+        // any other claimed slot (or a busy/no-slot headless run) cold-starts
+        // instead, which correctly picks up vncClaim.display via robotEnv/bash
+        // env inheritance below — see the launcher script's `node ... &` line.
+        const wantsWarmSlot = hostBrowser && vncClaim && vncClaim.display === VNC_DISPLAY;
+        const warmEntry = wantsWarmSlot ? claimWarmNode() : null;
         const rfBrowserPort = warmEntry ? warmEntry.port : await findFreePort();
         const warmProc = warmEntry ? warmEntry.proc : null;
 
         if (warmEntry) {
-          console.log(`[runner] [warm-pool] Using pre-warmed rfbrowser-node on port ${rfBrowserPort} (host-browser)`);
+          console.log(`[runner] [warm-pool] Using pre-warmed rfbrowser-node on port ${rfBrowserPort} (host-browser, slot 0)`);
         } else {
-          console.log(`[runner] [warm-pool] Cold-starting rfbrowser-node on port ${rfBrowserPort} (${hostBrowser ? 'pool empty' : 'headless — warm pool bypassed'})`);
+          console.log(`[runner] [warm-pool] Cold-starting rfbrowser-node on port ${rfBrowserPort} (${hostBrowser ? (vncClaim ? 'non-warm slot' : 'no VNC slot available') : 'headless — warm pool bypassed'})`);
         }
 
         // Launcher: if we have a warm proc, skip the node spawn + wait steps entirely.

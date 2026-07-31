@@ -1877,7 +1877,7 @@ export default function Scripts() {
   const qc = useQueryClient();
   const { canWrite } = useRBAC();
   const { open: openChat } = useChatSidebarStore();
-  const { mode: appMode, novncPort } = useAppConfig();
+  const { mode: appMode, novncPort, maxVncSessions } = useAppConfig();
   const isRunner = appMode === 'runner';
 
   const { data: project } = useProject(slug);
@@ -2236,7 +2236,7 @@ export default function Scripts() {
           const vncUrl = `http://${window.location.hostname}:${novncPort}/vnc.html?path=websockify%3Ftoken%3D${data.token}&autoconnect=1&resize=scale`;
           window.open(vncUrl, 'qa-vnc-viewer');
         } else {
-          toast('VNC viewer unavailable — all 2 sessions in use. Run executing without visual monitoring.', { icon: '⚠️' });
+          toast(`VNC viewer unavailable — all ${maxVncSessions} sessions in use. Run executing without visual monitoring.`, { icon: '⚠️' });
         }
       });
     } catch (err) {

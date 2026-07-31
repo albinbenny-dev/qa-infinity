@@ -95,6 +95,7 @@ services:
       - RUNNER_URL=http://qa-runner:5001
       - RUNNER_PRIMARY_URL=http://qa-runner:5001
       - NOVNC_HOST_PORT=${NOVNC_HOST_PORT:-6180}
+      - MAX_VNC_SESSIONS=${MAX_VNC_SESSIONS:-6}
     depends_on:
       qa-redis:
         condition: service_healthy
@@ -137,6 +138,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Kolkata
+      - MAX_VNC_SESSIONS=${MAX_VNC_SESSIONS:-6}
     shm_size: '256m'   # Chrome uses /tmp via --disable-dev-shm-usage; 256m covers Selenium fallback needs
     init: true         # Use tini as PID 1 to reap zombie processes from Chrome/Selenium workers
     depends_on:
@@ -152,11 +154,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 2G
+          cpus: '4'
+          memory: 6G
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '1'
+          memory: 1G
     networks:
       - qa-net
 

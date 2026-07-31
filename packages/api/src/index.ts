@@ -194,6 +194,7 @@ app.get('/api/app-config', (_req, res) => {
   res.json({
     mode: process.env.APP_MODE === 'runner' ? 'runner' : 'full',
     novncPort: Number(process.env.NOVNC_HOST_PORT) || 6180,
+    maxVncSessions: Number(process.env.MAX_VNC_SESSIONS) || 6,
   });
 });
 
