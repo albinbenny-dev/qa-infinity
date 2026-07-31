@@ -94,6 +94,7 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3100}
       - RUNNER_URL=http://qa-runner:5001
       - RUNNER_PRIMARY_URL=http://qa-runner:5001
+      - NOVNC_HOST_PORT=${NOVNC_HOST_PORT:-6180}
     depends_on:
       qa-redis:
         condition: service_healthy
@@ -142,7 +143,7 @@ services:
       qa-api:
         condition: service_healthy
     ports:
-      - "6180:6080"    # noVNC live browser viewer — open in browser to watch tests run
+      - "${NOVNC_HOST_PORT:-6180}:6080"    # noVNC live browser viewer — open in browser to watch tests run
     volumes:
       - ./scripts:/scripts
       - qa-artifacts:/artifacts

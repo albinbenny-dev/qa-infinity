@@ -1877,7 +1877,7 @@ export default function Scripts() {
   const qc = useQueryClient();
   const { canWrite } = useRBAC();
   const { open: openChat } = useChatSidebarStore();
-  const { mode: appMode } = useAppConfig();
+  const { mode: appMode, novncPort } = useAppConfig();
   const isRunner = appMode === 'runner';
 
   const { data: project } = useProject(slug);
@@ -2085,7 +2085,7 @@ export default function Scripts() {
       await api.post(`/projects/${projectId}/scripts/record/start`, { url: recordUrl, sessionId: sid });
       setRecordSessionId(sid);
       setRecordingActive(true);
-      window.open(`http://${window.location.hostname}:6180/vnc.html?autoconnect=1&resize=remote&quality=6`, '_blank');
+      window.open(`http://${window.location.hostname}:${novncPort}/vnc.html?autoconnect=1&resize=remote&quality=6`, '_blank');
       toast.success('Recording started — interact with the browser in the noVNC tab');
     } catch {
       toast.error('Failed to start recording — is the runner container running?');
@@ -2233,7 +2233,7 @@ export default function Scripts() {
         clearTimeout(vncTimeout);
         sock.disconnect();
         if (data.token) {
-          const vncUrl = `http://${window.location.hostname}:6180/vnc.html?path=websockify%3Ftoken%3D${data.token}&autoconnect=1&resize=scale`;
+          const vncUrl = `http://${window.location.hostname}:${novncPort}/vnc.html?path=websockify%3Ftoken%3D${data.token}&autoconnect=1&resize=scale`;
           window.open(vncUrl, 'qa-vnc-viewer');
         } else {
           toast('VNC viewer unavailable — all 2 sessions in use. Run executing without visual monitoring.', { icon: '⚠️' });
@@ -3067,7 +3067,7 @@ export default function Scripts() {
                   </div>
                 </div>
                 <a
-                  href={`http://${window.location.hostname}:6180/vnc.html?autoconnect=1&resize=remote&quality=6`}
+                  href={`http://${window.location.hostname}:${novncPort}/vnc.html?autoconnect=1&resize=remote&quality=6`}
                   target="_blank"
                   rel="noreferrer"
                   style={{ fontSize: 12, color: 'var(--cyan)', textDecoration: 'underline' }}

@@ -4,19 +4,20 @@ type AppMode = 'full' | 'runner';
 
 interface AppConfig {
   mode: AppMode;
+  novncPort: number;
   isReady: boolean;
 }
 
-const AppConfigContext = createContext<AppConfig>({ mode: 'full', isReady: false });
+const AppConfigContext = createContext<AppConfig>({ mode: 'full', novncPort: 6180, isReady: false });
 
 export function AppConfigProvider({ children }: { children: React.ReactNode }) {
-  const [config, setConfig] = useState<AppConfig>({ mode: 'full', isReady: false });
+  const [config, setConfig] = useState<AppConfig>({ mode: 'full', novncPort: 6180, isReady: false });
 
   useEffect(() => {
     fetch('/api/app-config')
       .then((r) => r.json())
-      .then((data) => setConfig({ mode: data.mode ?? 'full', isReady: true }))
-      .catch(() => setConfig({ mode: 'full', isReady: true }));
+      .then((data) => setConfig({ mode: data.mode ?? 'full', novncPort: data.novncPort ?? 6180, isReady: true }))
+      .catch(() => setConfig({ mode: 'full', novncPort: 6180, isReady: true }));
   }, []);
 
   return <AppConfigContext.Provider value={config}>{children}</AppConfigContext.Provider>;

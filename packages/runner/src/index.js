@@ -37,9 +37,14 @@ function writeVncTokenFile() {
   try { fs.writeFileSync(VNC_TOKEN_FILE, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8'); } catch {}
 }
 
-function claimVncSlot() {
+// allowedIndices restricts which slots may be handed out. RF Browser's warm-pool
+// nodes are only ever spawned on VNC_SLOTS[0] (see VNC_DISPLAY) — their Node
+// process bakes in DISPLAY at spawn time and can't be redirected per-run — so an
+// RF/warm-pool run must never be handed slot 1, or the viewer would connect to
+// an idle display while the browser renders invisibly on slot 0.
+function claimVncSlot(allowedIndices = VNC_SLOTS.map((_, i) => i)) {
   const usedSlots = new Set(vncSessions.values());
-  for (let i = 0; i < VNC_SLOTS.length; i++) {
+  for (const i of allowedIndices) {
     if (!usedSlots.has(i)) {
       const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
       vncSessions.set(token, i);
@@ -628,7 +633,11 @@ const server = http.createServer(async (req, res) => {
       if (vncClaim && !vncReleased) { vncReleased = true; releaseVncSlot(vncClaim.token); }
     };
     if (hostBrowser) {
-      vncClaim = claimVncSlot();
+      // RF (.robot) tests run through the warm rfbrowser-node pool, which only
+      // ever renders on VNC_SLOTS[0] — restrict those claims to slot 0 so a
+      // busy slot correctly reports vnc-busy instead of silently handing out
+      // slot 1, whose viewer would show an idle display forever.
+      vncClaim = claimVncSlot(scriptPath.endsWith('.robot') ? [0] : undefined);
       sendLine(vncClaim ? { type: 'vnc-session', token: vncClaim.token } : { type: 'vnc-busy' });
     }
 
