@@ -2043,7 +2043,7 @@ function UIScannerTab() {
 
 function ExecutionTab() {
   const { activeProject } = useProjectStore();
-  const updateProject = useUpdateProject();
+  const updateProject = useUpdateProject(activeProject?.id ?? '');
 
   const [manualWorkers,    setManualWorkers]    = useState(activeProject?.defaultManualWorkers    ?? 2);
   const [suiteWorkers,     setSuiteWorkers]     = useState(activeProject?.defaultSuiteWorkers     ?? 2);
