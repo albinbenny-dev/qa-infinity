@@ -243,7 +243,7 @@ export default function Execution() {
 
   const { logs, stats, status: socketStatus, clearLogs, joinRun, leaveRun } = useRunSocket();
 
-  const { selectedTestCaseIds, clearSelected } = useExecutionStore();
+  const { selectedTestCaseIds, projectSlug: storedSlug, setSelected, clearSelected } = useExecutionStore();
 
   // ── Run config state ──────────────────────────────────────────────────────
   const [environment, setEnvironment] = useState('');
@@ -259,10 +259,17 @@ export default function Execution() {
   }, []);
 
   // ── TC selection — ordered array so drag reorder is preserved ────────────
+  // If the stored slug matches this project, restore the saved order; otherwise start fresh.
   const [orderedTcIds, setOrderedTcIds] = useState<string[]>(
-    () => selectedTestCaseIds ?? [],
+    () => (storedSlug === slug ? (selectedTestCaseIds ?? []) : []),
   );
   const selectedTcIds = useMemo(() => new Set(orderedTcIds), [orderedTcIds]);
+
+  // Write order back to store whenever it changes so it survives navigation + refresh.
+  useEffect(() => {
+    setSelected(orderedTcIds, slug);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedTcIds]);
 
   // ── Active run tracking ───────────────────────────────────────────────────
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
