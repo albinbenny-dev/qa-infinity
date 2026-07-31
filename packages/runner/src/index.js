@@ -378,6 +378,13 @@ function parseRobotXmlReport(xmlPath) {
     if (!nameMatch) continue;
     const name = decodeXmlEntities(nameMatch[1]);
 
+    // RF puts one <tags><tag>...</tag>...</tags> block directly under <test> (used
+    // downstream to match this specific test back to a TestCase by tcId tag).
+    const tagsMatch = body.match(/<tags>([\s\S]*?)<\/tags>/);
+    const tags = tagsMatch
+      ? [...tagsMatch[1].matchAll(/<tag>([^<]*)<\/tag>/g)].map((tm) => decodeXmlEntities(tm[1]).trim())
+      : [];
+
     // Status is in the direct child <status> of <test> (not nested keyword statuses)
     const statusMatch = body.match(/<status\s+status="(PASS|FAIL)"[^>]*(?:start(?:time)?="([^"]*)")?[^>]*(?:end(?:time)?="([^"]*)")?/);
     const status = statusMatch ? statusMatch[1] : 'FAIL';
@@ -409,7 +416,7 @@ function parseRobotXmlReport(xmlPath) {
       if (errorMsg && errorMsg.length > 600) errorMsg = errorMsg.slice(0, 600) + '…';
     }
 
-    tests.push({ name, status, durationMs, errorMsg });
+    tests.push({ name, status, durationMs, errorMsg, tags });
   }
 
   // Normalise to a shape similar to Playwright JSON so runWorker.ts can reuse the same parsing path

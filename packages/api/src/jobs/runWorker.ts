@@ -45,7 +45,7 @@ interface PWReport {
   // Robot Framework report shape (from parseRobotXmlReport in runner/index.js)
   _robotReport?: true;
   suiteStatus?: 'PASS' | 'FAIL';
-  tests?: Array<{ name: string; status: 'PASS' | 'FAIL'; durationMs: number; errorMsg: string | null }>;
+  tests?: Array<{ name: string; status: 'PASS' | 'FAIL'; durationMs: number; errorMsg: string | null; tags?: string[] }>;
 }
 
 function flattenTests(suite: PWSuite): PWTestCase[] {
@@ -340,12 +340,14 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     let tracePath: string | undefined;
     let videoPath: string | undefined;
     let rfLogPath: string | undefined;
+    let rfTestsForTagMatch: Array<{ name: string; status: 'PASS' | 'FAIL'; durationMs: number; errorMsg: string | null; tags?: string[] }> | undefined;
 
     if (result.reportData?._robotReport) {
       // ── Robot Framework report ──────────────────────────────────────────
       // RF exit code is the definitive source of truth (0 = all pass, non-zero = failure)
       const rfReport = result.reportData;
       const rfTests = rfReport.tests ?? [];
+      rfTestsForTagMatch = rfTests;
       duration = rfTests.reduce((sum, t) => sum + t.durationMs, 0) || result.durationMs;
       passed = result.exitCode === 0;
       if (!passed) {
@@ -354,6 +356,22 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
           ?? result.errorSnippet
           ?? 'Robot test failed — check the run log for details.';
       }
+
+      // Multi-TC suite scripts contain several *** Test Cases *** blocks, each
+      // tagged with its own TC_ID. Prefer this TC's own tagged test result over
+      // the whole-script aggregate above when a tag match exists — this makes a
+      // TC that individually passed show PASSED even if a sibling test in the
+      // same script failed (and vice versa), instead of every TC in the script
+      // sharing one blanket pass/fail. Falls back to the aggregate when the
+      // script doesn't tag tests this way (single-TC scripts, legacy scripts).
+      const ownTcId = tcReadableId.get(testCaseId);
+      const ownTest = ownTcId ? rfTests.find((t) => t.tags?.includes(ownTcId)) : undefined;
+      if (ownTest) {
+        passed = ownTest.status === 'PASS';
+        duration = ownTest.durationMs || duration;
+        errorMessage = ownTest.status === 'FAIL' ? (ownTest.errorMsg ?? errorMessage) : undefined;
+      }
+
       // Assets captured by the runner's post-run directory scan
       if (result.screenshotPath) screenshotPath = result.screenshotPath;
       if (result.videoPath) videoPath = result.videoPath;
@@ -428,20 +446,37 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       emitLog(runId, 'fail', `✗ ${scriptName} FAILED · ${errorMessage ?? 'Unknown error'}`);
     }
 
-    // Fan-out result to any mirror TCs that share the same script
+    // Fan-out result to any mirror TCs that share the same script. Each mirror
+    // gets its own tag-matched test result when one exists (same preference as
+    // the representative TC above), falling back to this script's aggregate
+    // result when the script doesn't tag tests by TC_ID.
     const mirrors = mirroredTcIds[testCaseId] ?? [];
     for (const mirrorTcId of mirrors) {
       const mirrorRunResultId = tcIdToRunResultId.get(mirrorTcId);
+
+      let mirrorStatus = finalStatus;
+      let mirrorDuration = duration;
+      let mirrorErrorMessage = errorMessage;
+      const mirrorTcReadableId = tcReadableId.get(mirrorTcId);
+      const mirrorTest = mirrorTcReadableId
+        ? rfTestsForTagMatch?.find((t) => t.tags?.includes(mirrorTcReadableId))
+        : undefined;
+      if (mirrorTest) {
+        mirrorStatus = mirrorTest.status === 'PASS' ? 'PASSED' : 'FAILED';
+        mirrorDuration = mirrorTest.durationMs || mirrorDuration;
+        mirrorErrorMessage = mirrorTest.status === 'FAIL' ? (mirrorTest.errorMsg ?? mirrorErrorMessage) : undefined;
+      }
+
       if (mirrorRunResultId) {
         await prisma.runResult.update({
           where: { id: mirrorRunResultId },
-          data: { status: finalStatus, duration, errorMessage: errorMessage ?? null,
+          data: { status: mirrorStatus, duration: mirrorDuration, errorMessage: mirrorErrorMessage ?? null,
                   screenshotPath: screenshotPath ?? null, tracePath: tracePath ?? null,
                   videoPath: videoPath ?? null, rfLogPath: rfLogPath ?? null },
         });
       }
-      if (passed) totalPassed++; else totalFailed++;
-      emitToRun(runId, 'run:progress', { testCaseId: mirrorTcId, status: finalStatus, index: i, total });
+      if (mirrorStatus === 'PASSED') totalPassed++; else totalFailed++;
+      emitToRun(runId, 'run:progress', { testCaseId: mirrorTcId, status: mirrorStatus, index: i, total });
     }
 
     emitToRun(runId, 'run:progress', {
