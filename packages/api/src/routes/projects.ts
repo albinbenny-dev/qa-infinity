@@ -6,7 +6,7 @@ import JSZip from 'jszip';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
-import { exportZip, projectRoot } from '../services/scriptFileService.js';
+import { addProjectFilesToZip, projectRoot } from '../services/scriptFileService.js';
 import {
   CreateProjectSchema,
   UpdateProjectSchema,
@@ -773,25 +773,11 @@ projectRouter.get(
         })),
       };
 
-      // Get filesystem files as a ZIP buffer
-      const filesZipBuf = await exportZip(project.slug);
-      const filesZip = await JSZip.loadAsync(filesZipBuf);
-
-      // Build final ZIP
+      // Build final ZIP — files are read from disk straight into this zip
+      // (no intermediate zip buffer to decompress and recompress a second time).
       const zip = new JSZip();
       zip.file('manifest.json', JSON.stringify(manifest, null, 2));
-
-      // Re-add all files/ from the inner zip under files/
-      const promises: Promise<void>[] = [];
-      filesZip.forEach((relPath, entry) => {
-        if (entry.dir) return;
-        promises.push(
-          entry.async('nodebuffer').then((buf) => {
-            zip.file(`files/${relPath}`, buf);
-          }),
-        );
-      });
-      await Promise.all(promises);
+      await addProjectFilesToZip(zip, project.slug, 'files/');
 
       const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 

@@ -348,29 +348,58 @@ export async function importFromZip(slug: string, zipBuffer: Buffer): Promise<{ 
 
 // ── Zip export ────────────────────────────────────────────────────────────────
 
+// Walks `dir` with async fs calls (yields the event loop between files instead
+// of blocking it for the whole walk, as the old fs.readdirSync/statSync/
+// readFileSync version did) and writes entries straight into `zip` under
+// `pathPrefix`. Shared by exportZip() and any caller that wants a project's
+// files added directly into an existing zip without an intermediate buffer —
+// see addProjectFilesToZip below, which exists specifically so /export-project
+// doesn't have to decompress-then-recompress every file a second time.
+async function addDirToZip(
+  zip: JSZip,
+  dir: string,
+  root: string,
+  pathPrefix: string,
+  filenames?: string[],
+): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fs.promises.readdir(dir);
+  } catch {
+    return; // dir doesn't exist — nothing to add
+  }
+
+  await Promise.all(entries.map(async (f) => {
+    if (SKIP_DIRS.has(f)) return;
+    const abs = path.join(dir, f);
+    const ext = path.extname(f).toLowerCase();
+    if (SKIP_NAMES.has(f) || SKIP_EXTS.has(ext)) return;
+
+    const stat = await fs.promises.stat(abs);
+    if (stat.isDirectory()) {
+      await addDirToZip(zip, abs, root, pathPrefix, filenames);
+    } else {
+      const rel = path.relative(root, abs).replace(/\\/g, '/');
+      if (filenames && !filenames.some((fn) => rel.endsWith('/' + fn) || rel === fn)) return;
+      const buf = await fs.promises.readFile(abs);
+      zip.file(pathPrefix + rel, buf);
+    }
+  }));
+}
+
+// Adds a project's on-disk files directly into an existing zip under
+// `pathPrefix` (e.g. 'files/') — no intermediate zip buffer to decompress and
+// recompress, unlike building a standalone zip with exportZip() and re-adding
+// its entries into another one.
+export async function addProjectFilesToZip(zip: JSZip, slug: string, pathPrefix: string): Promise<void> {
+  const root = projectRoot(slug);
+  await addDirToZip(zip, root, root, pathPrefix);
+}
+
 export async function exportZip(slug: string, filenames?: string[]): Promise<Buffer> {
   const root = projectRoot(slug);
   const zip = new JSZip();
-
-  function addDir(dir: string): void {
-    if (!fs.existsSync(dir)) return;
-    for (const f of fs.readdirSync(dir)) {
-      if (SKIP_DIRS.has(f)) continue;
-      const abs = path.join(dir, f);
-      const ext = path.extname(f).toLowerCase();
-      if (SKIP_NAMES.has(f) || SKIP_EXTS.has(ext)) continue;
-      const stat = fs.statSync(abs);
-      if (stat.isDirectory()) {
-        addDir(abs);
-      } else {
-        const rel = path.relative(root, abs).replace(/\\/g, '/');
-        if (filenames && !filenames.some(fn => rel.endsWith('/' + fn) || rel === fn)) continue;
-        zip.file(rel, fs.readFileSync(abs));
-      }
-    }
-  }
-
-  addDir(root);
+  await addDirToZip(zip, root, root, '', filenames);
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
