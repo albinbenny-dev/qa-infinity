@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -774,6 +774,16 @@ export default function Healing() {
   const [detailHeal, setDetailHeal] = useState<HealProposal | null>(null);
   const [healProgress, setHealProgress] = useState<HealInProgressEntry[]>([]);
   const [retryingHealId, setRetryingHealId] = useState<string | null>(null);
+  // Which heal's AI Analysis is shown — set by clicking a specific heal card/row.
+  // Falls back to the project-wide latest heal when nothing has been picked yet
+  // (see `selectedHeal` below), so the panel isn't empty on first load.
+  const [selectedHealId, setSelectedHealId] = useState<string | null>(null);
+  // Tracks whether the mousedown that led to the detail-modal overlay's click
+  // actually started on the backdrop itself — a plain onClick={onClose} fires
+  // even when a user drags a text selection from inside the diff out over the
+  // backdrop, because the browser retargets that click to the nearest common
+  // ancestor of mousedown/mouseup (the overlay).
+  const detailOverlayMouseDownRef = useRef(false);
 
   const { data: pendingHeals = [], isLoading: loadingPending } = useHeals(projectId, 'PENDING');
   const { data: exhaustedHeals = [] } = useHeals(projectId, 'EXHAUSTED');
@@ -923,6 +933,18 @@ export default function Healing() {
   }
 
   const latestHeal = allHeals[0];
+  // The heal actually shown in the AI Analysis panel — whichever the user last
+  // clicked, or the project-wide latest heal as a default before any selection.
+  const selectedHeal = (selectedHealId && allHeals.find((h) => h.id === selectedHealId)) || latestHeal;
+
+  function handleSelectHeal(heal: HealProposal): void {
+    setSelectedHealId(heal.id);
+  }
+
+  function handleViewFullDiff(heal: HealProposal): void {
+    setSelectedHealId(heal.id);
+    setDetailHeal(heal);
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1280,6 +1302,9 @@ export default function Healing() {
                     onReject={() => handleReject(h.id)}
                     onRetryWithContext={(ctx) => handleRetryWithContext(h.id, ctx)}
                     canWrite={canWrite}
+                    selected={selectedHealId === h.id}
+                    onSelect={() => handleSelectHeal(h)}
+                    onViewFullDiff={() => handleViewFullDiff(h)}
                   />
                 ))
               )}
@@ -1314,14 +1339,16 @@ export default function Healing() {
                   {exhaustedHeals.map((h) => (
                     <div
                       key={h.id}
+                      onClick={() => handleSelectHeal(h)}
                       style={{
                         background: 'rgba(220,38,38,0.04)',
-                        border: '1px solid rgba(220,38,38,0.25)',
+                        border: selectedHealId === h.id ? '1px solid var(--cyan)' : '1px solid rgba(220,38,38,0.25)',
                         borderRadius: 10,
                         padding: '12px 14px',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 8,
+                        cursor: 'pointer',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
@@ -1349,7 +1376,24 @@ export default function Healing() {
                             Exhausted
                           </span>
                           <button
-                            onClick={() => handleDismissExhausted(h.id)}
+                            onClick={(e) => { e.stopPropagation(); handleViewFullDiff(h); }}
+                            title="View full diff in a larger view"
+                            style={{
+                              padding: '2px 9px',
+                              borderRadius: 5,
+                              background: 'transparent',
+                              border: '1px solid var(--border2)',
+                              color: 'var(--cyan)',
+                              fontSize: 10,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              fontFamily: 'var(--font-ui)',
+                            }}
+                          >
+                            ⤢ Full Diff
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDismissExhausted(h.id); }}
                             title="Clear this card"
                             style={{
                               padding: '2px 9px',
@@ -1395,7 +1439,7 @@ export default function Healing() {
             </div>
 
             {/* AI Analysis */}
-            {latestHeal?.summary && (
+            {selectedHeal?.summary && (
               <div
                 style={{
                   background: 'var(--surface)',
@@ -1427,7 +1471,7 @@ export default function Healing() {
                       marginBottom: 8,
                     }}
                   >
-                    AI Analysis — Latest Heal
+                    AI Analysis{selectedHealId && selectedHealId !== latestHeal?.id ? ' — Selected Heal' : ' — Latest Heal'}
                   </div>
                   <p
                     style={{
@@ -1437,9 +1481,9 @@ export default function Healing() {
                       margin: 0,
                     }}
                   >
-                    {latestHeal.summary}
+                    {selectedHeal.summary}
                   </p>
-                  {latestHeal.runResult?.testCase && (
+                  {selectedHeal.runResult?.testCase && (
                     <div
                       style={{
                         marginTop: 10,
@@ -1448,12 +1492,12 @@ export default function Healing() {
                         fontFamily: 'var(--font-mono)',
                       }}
                     >
-                      {latestHeal.runResult.testCase.tcId} · {latestHeal.runResult.testCase.title}
+                      {selectedHeal.runResult.testCase.tcId} · {selectedHeal.runResult.testCase.title}
                     </div>
                   )}
                 </div>
 
-                {latestHeal.lineDiff && latestHeal.lineDiff.length > 0 && (
+                {selectedHeal.lineDiff && selectedHeal.lineDiff.length > 0 && (
                   <div
                     style={{
                       padding: '0 16px 14px',
@@ -1463,7 +1507,7 @@ export default function Healing() {
                     }}
                   >
                     <button
-                      onClick={() => setDetailHeal(latestHeal)}
+                      onClick={() => setDetailHeal(selectedHeal)}
                       style={{
                         background: 'none',
                         border: 'none',
@@ -1539,10 +1583,11 @@ export default function Healing() {
             justifyContent: 'center',
             padding: 24,
           }}
-          onClick={() => setDetailHeal(null)}
+          onMouseDown={(e) => { detailOverlayMouseDownRef.current = e.target === e.currentTarget; }}
+          onClick={(e) => { if (e.target === e.currentTarget && detailOverlayMouseDownRef.current) setDetailHeal(null); }}
         >
           <div
-            style={{ width: '100%', maxWidth: 700, maxHeight: '85vh', overflow: 'auto' }}
+            style={{ width: '100%', maxWidth: 1100, maxHeight: '90vh', overflow: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
             <HealDetailPanel heal={detailHeal} onClose={() => setDetailHeal(null)} />
