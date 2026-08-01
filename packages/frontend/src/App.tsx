@@ -19,6 +19,7 @@ import Usage from './pages/Usage';
 import UserManagement from './pages/UserManagement';
 import RunMonitor from './pages/RunMonitor';
 import Skills from './pages/Skills';
+import Locators from './pages/Locators';
 import CopyExport from './pages/CopyExport';
 import { isAuthenticated } from './lib/auth';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="/projects/:slug/reports/runs/:runId" element={<RunDetail />} />
           <Route path="/projects/:slug/chat"         element={<AiRoute element={<Chat />} />} />
           <Route path="/projects/:slug/skills"       element={<AiRoute element={<Skills />} />} />
+          <Route path="/projects/:slug/locators"     element={<AiRoute element={<Locators />} />} />
           <Route path="/projects/:slug/copy-export"  element={<CopyExport />} />
           <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
           <Route path="/usage"                       element={<AiRoute element={<Usage />} />} />

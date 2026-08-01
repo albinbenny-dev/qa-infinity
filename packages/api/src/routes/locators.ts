@@ -1,28 +1,35 @@
 /**
- * Bulk import for the Object/Locator Repository (see services/locatorRepository.ts).
+ * Object/Locator Repository management API (see services/locatorRepository.ts).
  *
  * The repository is normally populated two ways — a passing run
  * (jobs/runWorker.ts extractAndLockLocators) or an approved manual correction
  * (services/scriptDiff.ts) — both of which require a script to already exist
- * and have been exercised at least once. This endpoint exists for the cold
- * start: a team's own hand-verified locator map (the kind maintained
- * alongside the application itself) can be imported directly, seeding the
- * repository with pre-vetted knowledge before a single script has run.
- * Imported entries get a high confidence since a human, not an inference,
- * vouches for them — comparable to an approved correction, not a first pass.
+ * and have been exercised at least once. This router covers the other two
+ * ways a team actually needs to manage it:
+ *  - Cold-start import of a hand-curated locator map (this can be ANY app's
+ *    map — Ventas today, a different product tomorrow — nothing here is
+ *    hardcoded per-project) via /import (and /import/preview to validate
+ *    before committing).
+ *  - Direct single-entry CRUD for day-to-day maintenance as the list grows.
+ * Imported/manually-entered locators get a high confidence since a human,
+ * not an inference, vouches for them — comparable to an approved correction.
  */
 
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
+import { z } from 'zod';
+// @ts-ignore — js-yaml has no bundled types and @types/js-yaml isn't installed
+import yaml from 'js-yaml';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
-import { buildNamedLocatorName } from '../services/locatorRepository.js';
+import { buildNamedLocatorName, selectorStrategy } from '../services/locatorRepository.js';
 
 const router = Router({ mergeParams: true });
 router.use(verifyToken as RequestHandler);
 router.use(requireProjectAccess as unknown as RequestHandler);
 
 const IMPORT_CONFIDENCE = 0.92;
+const MANUAL_CONFIDENCE = 0.85;
 
 type PageMap = Record<string, Record<string, string>>;
 
@@ -69,14 +76,94 @@ function parseLocatorValue(raw: string): { strategy: string; selector: string } 
   return null;
 }
 
+/**
+ * A locator map can arrive three ways: an already-structured JSON body (the
+ * original API shape), a `{ raw: "..." }` string the caller wants parsed
+ * server-side, or nothing at all. The raw string is tried as JSON first,
+ * then YAML — so a team's existing locators.yaml can be pasted verbatim with
+ * no client-side conversion.
+ */
+function resolvePageMap(body: unknown): { pageMap: PageMap | null; parseError?: string } {
+  if (body && typeof body === 'object' && typeof (body as Record<string, unknown>)['raw'] === 'string') {
+    const raw = (body as Record<string, unknown>)['raw'] as string;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      try {
+        parsed = yaml.load(raw);
+      } catch (yamlErr) {
+        return { pageMap: null, parseError: `Could not parse as JSON or YAML: ${(yamlErr as Error).message}` };
+      }
+    }
+    return { pageMap: extractPageMap(parsed) };
+  }
+  return { pageMap: extractPageMap(body) };
+}
+
+interface ImportEntryPreview {
+  page: string;
+  name: string;
+  elementName: string;
+  selector: string;
+  strategy: string;
+  isNew: boolean;
+}
+
+async function buildImportPreview(projectId: string, pageMap: PageMap): Promise<{ entries: ImportEntryPreview[]; skipped: string[] }> {
+  const entries: ImportEntryPreview[] = [];
+  const skipped: string[] = [];
+
+  for (const [pageName, elements] of Object.entries(pageMap)) {
+    for (const [elementName, rawLocator] of Object.entries(elements)) {
+      const parsed = parseLocatorValue(rawLocator);
+      if (!parsed) { skipped.push(`${pageName}.${elementName}`); continue; }
+      const name = buildNamedLocatorName(pageName, elementName);
+      const existing = await prisma.locatorEntry.findUnique({ where: { projectId_name: { projectId, name } } });
+      entries.push({
+        page: pageName, name, elementName,
+        selector: parsed.selector, strategy: parsed.strategy,
+        isNew: !existing,
+      });
+    }
+  }
+  return { entries, skipped };
+}
+
+// ── POST /import/preview — parse + diff against the existing repository, no writes ─
+
+router.post('/import/preview', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { pageMap, parseError } = resolvePageMap(req.body);
+    if (parseError) { res.status(400).json({ error: parseError }); return; }
+    if (!pageMap) {
+      res.status(400).json({
+        error: 'Could not find a locator map. Expected { pageName: { elementName: "strategy:selector" } }, optionally wrapped in an app-name key, a "pages" key, or pasted as raw YAML/JSON.',
+      });
+      return;
+    }
+    const { entries, skipped } = await buildImportPreview(req.project.id, pageMap);
+    res.json({
+      ok: true,
+      totalPages: Object.keys(pageMap).length,
+      totalElements: entries.length,
+      newCount: entries.filter((e) => e.isNew).length,
+      updateCount: entries.filter((e) => !e.isNew).length,
+      entries,
+      skipped,
+    });
+  } catch (err) { next(err); }
+});
+
 // ── POST /import — bulk-seed the repository from a hand-curated locator map ─
 
 router.post('/import', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const pageMap = extractPageMap(req.body);
+    const { pageMap, parseError } = resolvePageMap(req.body);
+    if (parseError) { res.status(400).json({ error: parseError }); return; }
     if (!pageMap) {
       res.status(400).json({
-        error: 'Body must be a map of { pageName: { elementName: "strategy:selector" } } — optionally wrapped in a single app-name key or a "pages" key.',
+        error: 'Could not find a locator map. Expected { pageName: { elementName: "strategy:selector" } }, optionally wrapped in an app-name key, a "pages" key, or pasted as raw YAML/JSON.',
       });
       return;
     }
@@ -128,7 +215,7 @@ router.post('/import', async (req: Request, res: Response, next: NextFunction) =
   } catch (err) { next(err); }
 });
 
-// ── GET / — list the repository for this project (verification / debugging) ─
+// ── GET / — list the repository for this project ──────────────────────────
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -137,6 +224,82 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       orderBy: [{ page: 'asc' }, { confidence: 'desc' }],
     });
     res.json({ entries });
+  } catch (err) { next(err); }
+});
+
+// ── Single-entry CRUD — day-to-day maintenance as the list grows ──────────
+
+const CreateLocatorSchema = z.object({
+  page: z.string().min(1).max(120),
+  elementName: z.string().min(1).max(120),
+  selector: z.string().min(1).max(500), // "strategy:value" or "strategy=value"
+});
+
+router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = CreateLocatorSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+    const { page, elementName, selector: rawSelector } = parsed.data;
+
+    const locator = parseLocatorValue(rawSelector);
+    if (!locator) { res.status(400).json({ error: `Could not parse selector "${rawSelector}" — expected "strategy:value" (e.g. "css:.my-button")` }); return; }
+
+    const name = buildNamedLocatorName(page, elementName);
+    const entry = await prisma.locatorEntry.upsert({
+      where: { projectId_name: { projectId: req.project.id, name } },
+      create: {
+        projectId: req.project.id, name, page,
+        selector: locator.selector, strategy: locator.strategy,
+        confidence: MANUAL_CONFIDENCE, successCount: 0,
+      },
+      update: {
+        selector: locator.selector, strategy: locator.strategy,
+        confidence: MANUAL_CONFIDENCE, isActive: true,
+      },
+    });
+    res.status(201).json({ entry });
+  } catch (err) { next(err); }
+});
+
+const UpdateLocatorSchema = z.object({
+  page: z.string().min(1).max(120).optional(),
+  selector: z.string().min(1).max(500).optional(),
+  isActive: z.boolean().optional(),
+});
+
+router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const existing = await prisma.locatorEntry.findFirst({ where: { id: req.params.id, projectId: req.project.id } });
+    if (!existing) { res.status(404).json({ error: 'Locator entry not found' }); return; }
+
+    const parsed = UpdateLocatorSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+    const { page, selector: rawSelector, isActive } = parsed.data;
+
+    let selectorUpdate: { selector: string; strategy: string } | undefined;
+    if (rawSelector !== undefined) {
+      const locator = parseLocatorValue(rawSelector) ?? { selector: rawSelector, strategy: selectorStrategy(rawSelector) };
+      selectorUpdate = locator;
+    }
+
+    const entry = await prisma.locatorEntry.update({
+      where: { id: existing.id },
+      data: {
+        ...(page !== undefined ? { page } : {}),
+        ...(selectorUpdate ?? {}),
+        ...(isActive !== undefined ? { isActive } : {}),
+      },
+    });
+    res.json({ entry });
+  } catch (err) { next(err); }
+});
+
+router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const existing = await prisma.locatorEntry.findFirst({ where: { id: req.params.id, projectId: req.project.id } });
+    if (!existing) { res.status(404).json({ error: 'Locator entry not found' }); return; }
+    await prisma.locatorEntry.delete({ where: { id: existing.id } });
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

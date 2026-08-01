@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ClipboardList, Brain, PenLine, Code2,
   Play, Clock, RefreshCw, BarChart2, MessageSquare,
   Upload, Settings, Globe, CreditCard, User, LogOut, Activity,
-  ChevronsRight, ChevronsLeft,
+  ChevronsRight, ChevronsLeft, MapPin,
   type LucideIcon,
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
@@ -27,6 +27,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   dashboard:   LayoutDashboard,
   tcLibrary:   ClipboardList,
   skills:      Brain,
+  locators:    MapPin,
   writer:      PenLine,
   scripts:     Code2,
   execution:   Play,
@@ -79,6 +80,7 @@ export default function Sidebar({ slug }: SidebarProps) {
         { label: 'Dashboard',     shortLabel: 'Dash',    path: `/projects/${slug}/dashboard`,  iconKey: 'dashboard' },
         { label: 'TC Library',    shortLabel: 'TCs',     path: `/projects/${slug}/tc-library`, iconKey: 'tcLibrary', badge: activeProject?._count?.testCases ?? undefined, badgeVariant: 'green' },
         ...(!isRunner ? [{ label: 'Product Skills', shortLabel: 'Skills', path: `/projects/${slug}/skills`, iconKey: 'skills' }] : []),
+        ...(!isRunner ? [{ label: 'Object Repository', shortLabel: 'Locators', path: `/projects/${slug}/locators`, iconKey: 'locators' }] : []),
       ],
     },
     {
