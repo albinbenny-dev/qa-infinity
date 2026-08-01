@@ -47,6 +47,21 @@ export function selectorStrategy(selector: string): string {
   return m ? m[1] : 'css';
 }
 
+function sanitizeNamePart(s: string): string {
+  return s.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Builds a repository name from a page + a human-chosen element name — used
+ * for bulk-importing a hand-curated locator map (see routes/locators.ts).
+ * Unlike buildLocatorName below, this preserves the team's own naming
+ * ("StockCreation.POField") instead of inferring one from the selector, since
+ * a human already gave it a meaningful name.
+ */
+export function buildNamedLocatorName(page: string, elementName: string): string {
+  return `${sanitizeNamePart(page)}.${sanitizeNamePart(elementName)}`;
+}
+
 /** Builds a stable repository name from a page scope + selector. Deterministic — same selector always maps to the same name unless a human renames it. */
 export function buildLocatorName(page: string | null | undefined, selector: string): string {
   const scope = (page?.trim() || 'GLOBAL').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
