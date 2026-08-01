@@ -540,3 +540,37 @@ model LlmCall {
   @@index([projectId])
   @@index([createdAt])
 }
+
+// ── Infrastructure metrics ───────────────────────────────────────────────────
+// Platform-level, not project-scoped — sampled by an out-of-band host cron
+// script (scripts/collect-container-metrics.sh) that runs `docker stats` and
+// reads /proc directly on the host, then POSTs a batch to
+// POST /admin/metrics/ingest. Deliberately NOT collected by qa-api itself —
+// the app never touches the Docker socket or the host filesystem for this.
+
+model HostMetricSample {
+  id            String   @id @default(cuid())
+  timestamp     DateTime
+  cpuCores      Int
+  cpuPercent    Float    // host-wide CPU utilization at sample time
+  memTotalBytes Float    // stored as Float (not BigInt) — values are well within
+  memUsedBytes  Float    // Number's safe-integer range and this avoids BigInt's
+  createdAt     DateTime @default(now()) // JSON-serialization friction entirely
+
+  @@index([timestamp])
+}
+
+model ContainerMetricSample {
+  id            String   @id @default(cuid())
+  timestamp     DateTime
+  container     String   // e.g. "qa-api", "qa-runner", "qa-postgres", "qa-redis", "qa-ui"
+  cpuPercent    Float
+  memUsedBytes  Float
+  memLimitBytes Float?
+  netRxBytes    Float?
+  netTxBytes    Float?
+  createdAt     DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([container, timestamp])
+}

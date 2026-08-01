@@ -215,6 +215,20 @@ router.post('/import', async (req: Request, res: Response, next: NextFunction) =
   } catch (err) { next(err); }
 });
 
+// ── GET /pages — distinct page names for autocomplete ────────────────────
+
+router.get('/pages', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rows = await prisma.locatorEntry.findMany({
+      where: { projectId: req.project.id },
+      select: { page: true },
+      distinct: ['page'],
+      orderBy: { page: 'asc' },
+    });
+    res.json({ pages: rows.map(r => r.page) });
+  } catch (err) { next(err); }
+});
+
 // ── GET / — list the repository for this project ──────────────────────────
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
