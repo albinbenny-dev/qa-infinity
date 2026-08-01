@@ -236,8 +236,25 @@ const TYPE_CHIP: Record<string, { bg: string; color: string }> = {
   SIT: { bg: 'var(--emerald-dim)', color: 'var(--emerald)' },
 };
 
+function RunStatusDot({ status }: { status?: 'PASSED' | 'FAILED' | 'RUNNING' | 'PENDING' | 'CANCELLED' | null }) {
+  const color = status === 'PASSED' ? 'var(--pass)'
+    : status === 'FAILED' ? 'var(--fail)'
+    : status === 'RUNNING' ? 'var(--run)'
+    : 'var(--border2)';
+  const title = status === 'PASSED' ? 'Last run: passed'
+    : status === 'FAILED' ? 'Last run: failed'
+    : status === 'RUNNING' ? 'Last run: in progress'
+    : 'Never run';
+  return (
+    <span
+      title={title}
+      style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }}
+    />
+  );
+}
+
 function TCScriptRow({
-  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, onToggle, onOpen, onToggleGolden, onChat, onDelete,
+  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, lastRunStatus, onToggle, onOpen, onToggleGolden, onChat, onDelete,
 }: {
   tc: TestCase;
   isScripted: boolean;
@@ -245,6 +262,7 @@ function TCScriptRow({
   verificationStatus?: 'NOT_VERIFIED' | 'VERIFIED' | 'MANUAL_REVIEW';
   suspectedIssue?: string | null;
   isGolden?: boolean;
+  lastRunStatus?: 'PASSED' | 'FAILED' | 'RUNNING' | 'PENDING' | 'CANCELLED' | null;
   onToggle: () => void;
   onOpen: () => void;
   onToggleGolden?: () => void;
@@ -328,6 +346,9 @@ function TCScriptRow({
       }}>
         {tc.type}
       </span>
+
+      {/* Last run status — only for scripted TCs */}
+      {isScripted ? <RunStatusDot status={lastRunStatus} /> : <div style={{ width: 7, flexShrink: 0 }} />}
 
       {/* Golden star — only for scripted TCs */}
       {isScripted ? (
@@ -2079,7 +2100,6 @@ export default function Scripts() {
   // ── Regenerate modal state ────────────────────────────────────────────────
 
   const [showRegenModal, setShowRegenModal] = useState(false);
-  const [regenFixContext, setRegenFixContext] = useState<{ failedStep?: string; errorMessage?: string } | undefined>();
 
   // ── Execution Monitor state ────────────────────────────────────────────────
 
@@ -2654,6 +2674,42 @@ export default function Scripts() {
     [activeTabId],
   );
 
+  // ── Refresh active tab — re-fetch content from the server ────────────────
+  // Needed because Heal approvals and the AI chat both patch the script file
+  // directly on the backend; without this the open editor keeps showing the
+  // stale copy it loaded on open until the tab is closed and reopened.
+
+  const refreshActiveTab = useCallback(async () => {
+    if (!activeTabId || !projectId) return;
+    const tab = openTabs.find((t) => t.id === activeTabId);
+    if (!tab) return;
+    if (dirtyTabs.has(activeTabId) && !window.confirm('This tab has unsaved edits. Reload from the saved version and discard them?')) {
+      return;
+    }
+    setLoadingContent(true);
+    try {
+      let content: string;
+      if (tab.kind === 'resource') {
+        const res = await api.get<{ content: string }>(`/projects/${projectId}/resources/${tab.filename}/content`);
+        content = res.data.content;
+      } else if (tab.kind === 'projectFile') {
+        const res = await api.get<{ content: string }>(`/projects/${projectId}/scripts/project-file/content`, { params: { path: tab.relPath } });
+        content = res.data.content;
+      } else {
+        const res = await api.get<{ content: string }>(`/projects/${projectId}/scripts/${tab.id}/content`);
+        content = res.data.content;
+      }
+      setTabContents((prev) => ({ ...prev, [activeTabId]: content }));
+      setDirtyTabs((prev) => { const n = new Set(prev); n.delete(activeTabId); return n; });
+      qc.invalidateQueries({ queryKey: ['scripts', projectId] });
+      toast.success('Reloaded');
+    } catch {
+      toast.error('Failed to reload content');
+    } finally {
+      setLoadingContent(false);
+    }
+  }, [activeTabId, projectId, openTabs, dirtyTabs, qc]);
+
   // ── Save current tab ─────────────────────────────────────────────────────
 
   const saveActiveTab = useCallback(async () => {
@@ -2860,7 +2916,6 @@ export default function Scripts() {
   async function handleRegenConfirm(opts: { withHeal: boolean; contextNote: string; saveHints: boolean; scriptMode: 'PLAYWRIGHT' | 'ROBOT'; domSnippet?: string; domRecording?: string; failedStep?: string; failedStepError?: string; referenceTcIds?: string[] }) {
     if (!projectId || !activeScriptTcId) return;
     setShowRegenModal(false);
-    setRegenFixContext(undefined);
 
     if (opts.saveHints && opts.contextNote.trim() && activeTc) {
       await api.patch(
@@ -3022,9 +3077,8 @@ export default function Scripts() {
         <RegenerateModal
           script={activeScript}
           tc={activeTc}
-          fixContext={regenFixContext}
           onConfirm={handleRegenConfirm}
-          onClose={() => { setShowRegenModal(false); setRegenFixContext(undefined); }}
+          onClose={() => setShowRegenModal(false)}
         />
       )}
 
@@ -3535,6 +3589,7 @@ export default function Scripts() {
                                   verificationStatus={linkedScript?.verificationStatus}
                                   suspectedIssue={linkedScript?.suspectedIssue}
                                   isGolden={linkedScript?.isGolden}
+                                  lastRunStatus={linkedScript?.lastRunStatus}
                                   onToggle={() => handleTCToggle(tc.id)}
                                   onOpen={() => handleOpenTCScript(tc.id)}
                                   onToggleGolden={linkedScript ? () => handleToggleGolden(linkedScript.id) : undefined}
@@ -3821,6 +3876,35 @@ export default function Scripts() {
                 borderBottom: '1px solid rgba(255,255,255,0.05)',
                 minHeight: 32,
               }}>
+                {activeTab && (
+                  <button
+                    onClick={refreshActiveTab}
+                    disabled={loadingContent}
+                    title="Reload this file's content from the server — use after a heal or chat modifies it"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '3px 9px', borderRadius: 5, cursor: loadingContent ? 'not-allowed' : 'pointer',
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'transparent',
+                      color: 'var(--text-dim)',
+                      opacity: loadingContent ? 0.55 : 1,
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loadingContent) {
+                        (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)';
+                        (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+                    }}
+                  >
+                    ⟳ Refresh
+                  </button>
+                )}
                 {activeTab?.kind === 'resource' && (() => {
                   const r = resources.find(res => res.filename === activeTab.filename);
                   const cp = r?.containerPath ?? `resources/${activeTab.filename}`;
@@ -4100,34 +4184,6 @@ export default function Scripts() {
                           {quickRunStatus === 'PASSED' ? '✅ PASSED' : quickRunStatus === 'FAILED' ? '❌ FAILED' : `⚠ ${quickRunStatus}`}
                           <span style={{ fontSize: 9, opacity: 0.7 }}>↗</span>
                         </span>
-                        {quickRunId && (
-                          <button
-                            onClick={() => { setMonitorRunId(quickRunId); setMonitorScript(activeScript?.filename ?? ''); setShowMonitor(true); }}
-                            title="Open execution monitor"
-                            style={{
-                              fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
-                              background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
-                              color: 'var(--text-dim)', fontFamily: 'var(--font-ui)',
-                            }}
-                          >
-                            ◫ Monitor
-                          </button>
-                        )}
-                        {quickRunStatus === 'FAILED' && activeScriptTcId && (
-                          <button
-                            onClick={() => {
-                              setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
-                              setShowRegenModal(true);
-                            }}
-                            style={{
-                              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
-                              background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)',
-                              color: 'var(--violet)', fontFamily: 'var(--font-ui)',
-                            }}
-                          >
-                            🩹 Fix with AI
-                          </button>
-                        )}
                       </>
                     )}
 
@@ -4162,32 +4218,6 @@ export default function Scripts() {
                           {hostRunStatus === 'PASSED' ? '✅ PASSED' : hostRunStatus === 'FAILED' ? '❌ FAILED' : `⚠ ${hostRunStatus}`}
                           <span style={{ fontSize: 9, opacity: 0.7 }}>↗</span>
                         </span>
-                        <button
-                          onClick={() => { setMonitorRunId(hostRunId); setMonitorScript(activeScript?.filename ?? ''); setShowMonitor(true); }}
-                          title="Open host-browser execution monitor"
-                          style={{
-                            fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
-                            background: 'transparent', border: '1px solid rgba(96,165,250,0.2)',
-                            color: 'var(--sky)', fontFamily: 'var(--font-ui)',
-                          }}
-                        >
-                          ◫ Monitor
-                        </button>
-                        {hostRunStatus === 'FAILED' && activeScriptTcId && (
-                          <button
-                            onClick={() => {
-                              setRegenFixContext({ failedStep: `Run failed for: ${activeScript.filename}`, errorMessage: 'Check run log for details' });
-                              setShowRegenModal(true);
-                            }}
-                            style={{
-                              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
-                              background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)',
-                              color: 'var(--violet)', fontFamily: 'var(--font-ui)',
-                            }}
-                          >
-                            🩹 Fix with AI
-                          </button>
-                        )}
                       </>
                     )}
                   </>
