@@ -6,7 +6,7 @@ import JSZip from 'jszip';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireProjectAccess } from '../middleware/projectAccess.js';
-import { addProjectFilesToZip, projectRoot } from '../services/scriptFileService.js';
+import { addProjectFilesToZip, projectRoot, saveSkillFile } from '../services/scriptFileService.js';
 import {
   CreateProjectSchema,
   UpdateProjectSchema,
@@ -737,6 +737,11 @@ projectRouter.get(
         where: { projectId: project.id },
       });
 
+      // Fetch all skills for this project
+      const skills = await prisma.projectSkill.findMany({
+        where: { projectId: project.id },
+      });
+
       // Build TC-id → tcId lookup for script records
       const idToTcId = new Map(testCases.map((t) => [t.id, t.tcId]));
 
@@ -770,6 +775,18 @@ projectRouter.get(
           scriptType: s.scriptType,
           isCustomUpload: s.isCustomUpload,
           tcId: s.testCaseId ? (idToTcId.get(s.testCaseId) ?? null) : null,
+        })),
+        skills: skills.map((s) => ({
+          skillType: s.skillType,
+          name: s.name,
+          scope: s.scope,
+          featureGroup: s.featureGroup,
+          tier: s.tier,
+          content: s.content,
+          humanContext: s.humanContext,
+          captureMethod: s.captureMethod,
+          confidence: s.confidence,
+          isActive: s.isActive,
         })),
       };
 
@@ -875,6 +892,35 @@ router.post(
             content: '',
           },
         });
+      }
+
+      // Create skills
+      for (const sk of (manifest.skills ?? [])) {
+        const skill = await prisma.projectSkill.create({
+          data: {
+            projectId: project.id,
+            skillType: sk.skillType,
+            name: sk.name,
+            scope: sk.scope ?? null,
+            featureGroup: sk.featureGroup ?? null,
+            tier: sk.tier ?? 'FEATURE',
+            content: sk.content,
+            humanContext: sk.humanContext ?? null,
+            captureMethod: sk.captureMethod ?? 'MANUALLY_ENTERED',
+            confidence: sk.confidence ?? 0.8,
+            isActive: sk.isActive ?? true,
+          },
+        });
+        if (skill.isActive) {
+          saveSkillFile(slug, skill.id, {
+            id: skill.id, skillType: skill.skillType, name: skill.name,
+            scope: skill.scope, featureGroup: skill.featureGroup,
+            tier: skill.tier, humanContext: skill.humanContext,
+            content: skill.content, confidence: skill.confidence,
+            captureMethod: skill.captureMethod, isActive: skill.isActive,
+            updatedAt: skill.updatedAt.toISOString(),
+          });
+        }
       }
 
       // Extract project files
