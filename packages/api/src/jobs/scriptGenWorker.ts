@@ -66,7 +66,11 @@ function lintRobotScript(content: string, resourceFiles: ResourceFileInfo[]): st
 // Matches a locator argument (css=/id=/role=/text=/xpath=) anywhere on a line —
 // same shape as the extraction regex used to populate the repository, so what
 // we compare against here is exactly what could have matched a known entry.
-const LOCATOR_ARG_RE = /(?:css|id|role|text|xpath)=[^\s'"}{]+/g;
+// See the identical fix + rationale in services/scriptDiff.ts: a plain
+// [^\s'"}{]+ class truncates role=xxx[name="..."] and css=[attr='...']
+// locators at their first quote — exactly the two most-recommended
+// strategies in the generation system prompt.
+const LOCATOR_ARG_RE = /(?:css|id|role|text|xpath)=(?:[^\s'"]|"[^"]*"|'[^']*')+/g;
 
 /**
  * Flags any locator the model wrote that isn't a known, repository-verified

@@ -14,7 +14,12 @@
 import { prisma } from '../lib/prisma.js';
 import { recordLocatorCorrection } from './locatorRepository.js';
 
-const LOCATOR_ARG_RE = /(?:css|id|role|text|xpath)=[^\s'"}{]+/g;
+// The alternation for quoted segments matters: role=row[name="..."] and
+// css=[attr='...'] — both explicitly recommended locator strategies in the
+// generation system prompt — contain quote characters and often internal
+// spaces (e.g. name='Search Menu Item'). A plain [^\s'"}{]+ class stops at
+// the first quote, truncating exactly these two strategies mid-token.
+const LOCATOR_ARG_RE = /(?:css|id|role|text|xpath)=(?:[^\s'"]|"[^"]*"|'[^']*')+/g;
 
 export type ScriptEditClassification = 'LOCATOR_SWAP' | 'STRUCTURAL' | 'DATA' | 'UNCLASSIFIED';
 

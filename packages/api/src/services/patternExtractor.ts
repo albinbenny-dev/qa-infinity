@@ -90,7 +90,10 @@ function extractPlaywrightLoginBlock(content: string): string | null {
 function extractLocators(content: string, isRobot: boolean): string[] {
   if (isRobot) {
     // Robot Browser library selectors: css=, id=, role=, text=
-    const pattern = /\b(?:css|id|role|text|xpath)=[^\s'"}\n]{4,}/g;
+    // (?:[^\s'"]|"[^"]*"|'[^']*')+ rather than a plain [^\s'"}\n]{4,} class —
+    // role=xxx[name="..."] and css=[attr='...'] both contain quotes (often
+    // with internal spaces) and would otherwise be truncated at the first one.
+    const pattern = /\b(?:css|id|role|text|xpath)=(?:[^\s'"]|"[^"]*"|'[^']*'){4,}/g;
     const raw = content.match(pattern) ?? [];
     return [...new Set(raw)].filter((l) => !l.includes('${') && l.length < 100);
   }

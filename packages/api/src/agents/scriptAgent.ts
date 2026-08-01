@@ -375,6 +375,24 @@ Choose the FIRST strategy that uniquely identifies the element. Never skip ahead
   GOOD: Fill Text    css=#username    value
   GOOD: Wait For Elements State    css=input[type='password']    visible    \${TIMEOUT}
 
+### Verifying a value appears in a table/grid — role=row vs role=cell
+A table row's ARIA accessible name is the CONCATENATION of every cell's text in
+that row, in DOM order, with NO separator — it is never just "the one value you
+care about". Waiting for role=row[name="<single-field-value>"] to verify one
+column's value will time out and fail, because that exact string is not the
+row's name — it only exists inside one of the row's cells.
+  Example: a row with columns [Start Range: "1000112"] [End Range: "1000112"]
+  [Product Code: "100004889"] has accessible name "10001121000112100004889" —
+  not "100004889".
+  BAD:  Wait For Elements State    role=row[name="\${PRODUCT_CODE}"]    visible    \${TIMEOUT}
+        ← waits for a row whose ENTIRE name equals just the product code — never matches
+  GOOD: Wait For Elements State    role=cell[name="\${PRODUCT_CODE}"]    visible    \${TIMEOUT}
+        ← targets the specific cell containing that value — this is what actually exists
+Use role=row[name="..."] ONLY when you deliberately need the full concatenated
+row text (rare — e.g. asserting the whole row is empty/absent). To verify ONE
+column's value appeared after adding/submitting a record, always target
+role=cell[name="<value>"], not role=row.
+
 ### Keyword naming — NEVER duplicate keyword names
 - Every keyword name in *** Keywords *** MUST be unique within the file.
 - If two actions share the same name (e.g. two "Click Login Button" steps), give them distinct names:

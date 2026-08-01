@@ -567,7 +567,11 @@ async function extractAndLockLocators(
   // common in generated scripts. Any passing script whose corrected locator happened to
   // use id= or role= silently never made it into generationHints OR the Locator
   // Repository, so the fix could pass a real run and still never get "learned."
-  const locatorPattern = /(?:css=|id=|role=|text=|xpath=)[^\s'"}{]+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
+  // The (?:[^\s'"]|"[^"]*"|'[^']*')+ body (rather than a plain [^\s'"}{]+ class) matters
+  // just as much here: role=row[name="..."] and css=[attr='...'] both contain quotes
+  // (often with internal spaces) and would otherwise be truncated at the first one,
+  // silently corrupting exactly the two most-recommended locator strategies.
+  const locatorPattern = /(?:css=|id=|role=|text=|xpath=)(?:[^\s'"]|"[^"]*"|'[^']*')+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
   const matches = scriptContent.match(locatorPattern) ?? [];
   const unique = [...new Set(matches)].filter(
     (l) => !l.includes('${') && l.length > 5,
