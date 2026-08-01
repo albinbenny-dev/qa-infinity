@@ -1909,6 +1909,39 @@ function addCssPrefix(locator: string): string {
   return locator;
 }
 
+// A stray double-space (or tab) inside what's meant to be one Log message
+// splits it into multiple RF cells — the fragment right after the message
+// then gets parsed as Log's second positional argument, which is `level`,
+// not more message text. RF throws "Argument 'level' got value '...' that
+// cannot be converted to 'TRACE', 'DEBUG', ..." and the whole test fails at
+// that line. See fixSplitLogMessage below.
+const VALID_LOG_LEVELS = new Set(['TRACE', 'DEBUG', 'INFO', 'CONSOLE', 'HTML', 'WARN', 'ERROR', 'NONE']);
+const NAMED_ARG_RE = /^[a-zA-Z_]\w*=/;
+
+function fixSplitLogMessage(line: string): string {
+  if (!/^\s*Log(\s{2,}|\t)/.test(line)) return line;
+  const indent = line.match(/^(\s*)/)?.[1] ?? '';
+  const cells = line.trim().split(/ {2,}|\t/);
+  if (cells.length <= 2) return line; // already just `Log <message>` — nothing to fix
+
+  const keyword = cells[0];
+  const rest = cells.slice(1);
+
+  // Peel off legitimate trailing cells from the end: named args (console=True,
+  // html=True, ...) are always separate cells, and at most one bare level
+  // token (INFO, WARN, ...) may follow the message as Log's 2nd positional arg.
+  let i = rest.length - 1;
+  const trailing: string[] = [];
+  while (i >= 0 && NAMED_ARG_RE.test(rest[i])) { trailing.unshift(rest[i]); i--; }
+  if (i > 0 && VALID_LOG_LEVELS.has(rest[i].trim().toUpperCase())) { trailing.unshift(rest[i]); i--; }
+
+  const messageParts = rest.slice(0, i + 1);
+  if (messageParts.length <= 1) return line; // nothing was wrongly split
+
+  const message = messageParts.join(' ');
+  return [indent + keyword, message, ...trailing].join('    ');
+}
+
 function sanitizeRobotScript(script: string): string {
   const lines = script.split('\n');
   const out: string[] = [];
@@ -1934,6 +1967,9 @@ function sanitizeRobotScript(script: string): string {
       const indent = fixed.match(/^(\s+)/)?.[1] ?? '    ';
       fixed = `${indent}Keyboard Input    type    \${TC_PASSWORD}`;
     }
+
+    // 2c. Fix Log messages accidentally split across cells by a stray double-space
+    fixed = fixSplitLogMessage(fixed);
 
     // 3. Add css= prefix to bare locators in Browser keyword lines
     const trimmedLine = fixed.trimStart();
