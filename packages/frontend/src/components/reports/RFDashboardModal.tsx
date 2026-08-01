@@ -236,29 +236,40 @@ export default function RFDashboardModal({ open, onClose, projectId, run }: Prop
   // Reset to "all" filter whenever a new run is opened
   useEffect(() => { if (open) setFilter('all'); }, [open, run?.id]);
 
+  // Appending the anchor to the DOM before clicking (and delaying the URL
+  // revoke) matters for large blobs specifically: several browsers silently
+  // no-op a synthetic click on an <a> that was never attached to the document,
+  // and revoking the object URL synchronously right after .click() races the
+  // browser's own hand-off to its download manager on big files — both look
+  // exactly like "the request succeeded but nothing downloaded."
+  function triggerBlobDownload(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   async function downloadExcel() {
     if (!projectId || !run) return;
     try {
       const res = await api.get(`/projects/${projectId}/reports/runs/${run.id}/export`, { responseType: 'blob' });
-      const url = URL.createObjectURL(res.data as Blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `RUN-${String(run.runSeq).padStart(4, '0')}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload(res.data as Blob, `RUN-${String(run.runSeq).padStart(4, '0')}.xlsx`);
     } catch { /* silent */ }
   }
 
   async function downloadAllLogs() {
     if (!projectId || !run) return;
     try {
-      const res = await api.get(`/projects/${projectId}/reports/runs/${run.id}/rf-log-combined`, { responseType: 'blob' });
-      const url = URL.createObjectURL(res.data as Blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `rf-log-combined-RUN-${String(run.runSeq).padStart(4, '0')}.html`;
-      a.click();
-      URL.revokeObjectURL(url);
+      // No timeout override here would inherit the shared client's 30s cap —
+      // combined RF logs can run into the tens/hundreds of MB, easily longer
+      // than 30s to transfer on a real network, so this download gets an
+      // unbounded wait instead.
+      const res = await api.get(`/projects/${projectId}/reports/runs/${run.id}/rf-log-combined`, { responseType: 'blob', timeout: 0 });
+      triggerBlobDownload(res.data as Blob, `rf-log-combined-RUN-${String(run.runSeq).padStart(4, '0')}.html`);
     } catch (err) {
       // responseType: 'blob' means axios hands back the error body as a Blob
       // too (even for JSON error responses) — read + parse it to surface the
