@@ -43,8 +43,14 @@ router.use(requireProjectAccess as unknown as RequestHandler);
 
 // ── Zod schemas ────────────────────────────────────────────────────────────
 
+// 50 was an arbitrary cap with no technical basis — generation is queued
+// (BullMQ, concurrency 3), so a bigger batch just takes longer to drain, it
+// doesn't block the request. Raised to a generous sanity ceiling instead of
+// a number picked to match nobody's actual batch size.
+const MAX_GENERATE_BATCH = 200;
+
 const GenerateSchema = z.object({
-  testCaseIds: z.array(z.string().min(1)).min(1).max(50),
+  testCaseIds: z.array(z.string().min(1)).min(1).max(MAX_GENERATE_BATCH),
   withHeal: z.boolean().optional().default(false),
   contextNote: z.string().max(12000).optional(),
   domSnippet: z.string().max(8000).optional(),
@@ -171,7 +177,16 @@ router.post('/generate', async (req: Request, res: Response) => {
   try {
     const parsed = GenerateSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
+      // A plain, human-readable string here matters — the frontend surfaces
+      // this directly in a toast, and Zod's flatten() is an object that
+      // doesn't render as one (this is exactly what silently produced the
+      // unhelpful generic "Request failed with status code 400" toast when
+      // a batch exceeded MAX_GENERATE_BATCH).
+      const tooMany = req.body?.testCaseIds?.length > MAX_GENERATE_BATCH;
+      const message = tooMany
+        ? `You selected ${req.body.testCaseIds.length} test cases — the limit per batch is ${MAX_GENERATE_BATCH}. Split into smaller batches.`
+        : 'Invalid request — check the selected test cases and try again.';
+      res.status(400).json({ error: message, detail: parsed.error.flatten() });
       return;
     }
 

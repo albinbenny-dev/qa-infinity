@@ -2804,7 +2804,11 @@ export default function Scripts() {
       const label = opts.scriptMode === 'ROBOT' ? '🤖 Robot' : '⚡ generate';
       toast.success(`Queued ${ids.length} script${ids.length !== 1 ? 's' : ''} (${label})`);
     } catch (err) {
-      const msg = (err as Error)?.message ?? 'Failed to enqueue';
+      // Prefer the server's actual error message (e.g. a batch-size limit) over
+      // axios's generic "Request failed with status code 400" — the latter is
+      // technically true but tells the user nothing they can act on.
+      const serverMsg = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
+      const msg = typeof serverMsg === 'string' ? serverMsg : (err as Error)?.message ?? 'Failed to enqueue';
       toast.error(msg);
     }
   }
@@ -2885,7 +2889,8 @@ export default function Scripts() {
       const label = opts.scriptMode === 'ROBOT' ? '🤖 Robot' : (opts.withHeal ? '↺ Regenerating with heal…' : '↺ Regenerating…');
       toast.success(label);
     } catch (err) {
-      const msg = (err as Error)?.message ?? 'Failed to regenerate';
+      const serverMsg = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
+      const msg = typeof serverMsg === 'string' ? serverMsg : (err as Error)?.message ?? 'Failed to regenerate';
       toast.error(msg);
     }
   }
