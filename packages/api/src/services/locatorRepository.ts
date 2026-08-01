@@ -11,6 +11,7 @@
 
 import { prisma } from '../lib/prisma.js';
 import type { LocatorEntry } from '@prisma/client';
+import { relevanceScore } from './skillSelector.js';
 
 const MIN_CONFIDENCE = 0.05;
 const MAX_CONFIDENCE = 0.98;
@@ -160,28 +161,43 @@ export async function recordLocatorCorrection(params: {
 
 /**
  * Returns the closed list of repository entries generation should choose from
- * for a given page/feature scope — global (page-less) entries are always
- * included since they tend to be app-wide (login, nav shell), plus anything
- * scoped to the requested page. Sorted by confidence so the LLM sees the most
- * trustworthy options first.
+ * for a given page/feature scope.
+ *
+ * Originally this hard-filtered to page-less (global) entries plus an EXACT
+ * (case-insensitive) match on the TC's useCaseTag — which meant a locator
+ * proven under one useCaseTag was completely invisible to a same-page-but-
+ * differently-tagged TC. That's a real-world miss: a "Save" button or a
+ * shared form field routinely gets exercised by TCs under several different
+ * useCaseTags, and a locator that was hard-won on one of them should still be
+ * offered on the others rather than forcing the LLM to re-invent it from
+ * scratch. So instead of filtering entries out, every entry gets a scope
+ * score (1.0 global or exact match, a token-overlap relevance score for a
+ * near match, a low-but-nonzero floor otherwise) and is ranked by that first
+ * and confidence second — nothing is ever excluded outright, just ordered.
  */
 export async function getLocatorsForScope(
   projectId: string,
   page?: string | null,
 ): Promise<LocatorEntry[]> {
-  const scope = page?.trim();
+  const tcTag = page?.trim();
   const entries = await prisma.locatorEntry.findMany({
-    where: {
-      projectId,
-      isActive: true,
-      ...(scope
-        ? { OR: [{ page: null }, { page: { equals: scope, mode: 'insensitive' } }] }
-        : {}),
-    },
-    orderBy: { confidence: 'desc' },
-    take: 60,
+    where: { projectId, isActive: true },
   });
-  return entries;
+
+  const scored = entries.map((e) => {
+    let scopeScore = 0.15; // project-wide fallback floor — never fully excluded
+    if (!e.page || !tcTag) {
+      scopeScore = 1;
+    } else if (e.page.toLowerCase() === tcTag.toLowerCase()) {
+      scopeScore = 1;
+    } else {
+      scopeScore = Math.max(scopeScore, relevanceScore(e.page, tcTag));
+    }
+    return { entry: e, scopeScore };
+  });
+
+  scored.sort((a, b) => b.scopeScore - a.scopeScore || b.entry.confidence - a.entry.confidence);
+  return scored.slice(0, 60).map((s) => s.entry);
 }
 
 /** Set of selector strings currently in the repository for this project — used by the post-generation lint. */

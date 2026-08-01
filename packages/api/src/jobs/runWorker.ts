@@ -561,8 +561,13 @@ async function extractAndLockLocators(
     return;
   }
 
-  // Extract all locator strings assigned to variables or passed to RF Browser keywords
-  const locatorPattern = /(?:css=|text=|xpath=)[^\s'"}{]+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
+  // Extract all locator strings assigned to variables or passed to RF Browser keywords.
+  // Previously this only matched css=/text=/xpath= — missing id= and role=, which are
+  // tiers 1 and 4 of the system prompt's own locator priority order and thus extremely
+  // common in generated scripts. Any passing script whose corrected locator happened to
+  // use id= or role= silently never made it into generationHints OR the Locator
+  // Repository, so the fix could pass a real run and still never get "learned."
+  const locatorPattern = /(?:css=|id=|role=|text=|xpath=)[^\s'"}{]+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
   const matches = scriptContent.match(locatorPattern) ?? [];
   const unique = [...new Set(matches)].filter(
     (l) => !l.includes('${') && l.length > 5,
@@ -602,7 +607,7 @@ async function extractAndLockLocators(
         page: tc.useCaseTag,
         selector,
         runId,
-      }).catch(() => { /* best-effort — a locator write failure must not fail the run */ }),
+      }).catch((err) => console.error(`[run-worker] recordLocatorSuccess failed for "${selector}" (TC ${testCaseId}):`, err)),
     ),
   );
 }
