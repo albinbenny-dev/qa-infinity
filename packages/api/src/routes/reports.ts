@@ -799,6 +799,18 @@ router.get('/runs/:runId/results/:resultId/rf-steps', async (req: Request, res: 
 
 const RUNNER_URL = process.env.RUNNER_PRIMARY_URL ?? process.env.RUNNER_URL ?? 'http://qa-runner:5001';
 
+// Combined RF logs regularly run into the tens/hundreds of MB — streaming
+// instead of `res.send(fs.readFileSync(...))` avoids buffering the whole file
+// in the Node process's memory and gives the OS/socket real backpressure
+// instead of forcing the full buffer through in one go.
+function streamFileAsAttachment(res: Response, filePath: string, filename: string, contentType: string): void {
+  const { size } = fs.statSync(filePath);
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', String(size));
+  fs.createReadStream(filePath).pipe(res);
+}
+
 router.get('/runs/:runId/rf-log-combined', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const run = await prisma.run.findFirst({
@@ -821,9 +833,7 @@ router.get('/runs/:runId/rf-log-combined', async (req: Request, res: Response, n
     // Single distinct script — nothing to merge, just serve its log directly.
     if (outputDirs.size === 1) {
       const logPath = path.join([...outputDirs][0], 'log.html');
-      res.setHeader('Content-Type', 'text/html');
-      res.setHeader('Content-Disposition', `attachment; filename="rf-log-${runLabel}.html"`);
-      res.send(fs.readFileSync(logPath));
+      streamFileAsAttachment(res, logPath, `rf-log-${runLabel}.html`, 'text/html');
       return;
     }
 
@@ -855,9 +865,7 @@ router.get('/runs/:runId/rf-log-combined', async (req: Request, res: Response, n
       res.status(500).json({ error: 'Combined log was not produced' });
       return;
     }
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Content-Disposition', `attachment; filename="rf-log-combined-${runLabel}.html"`);
-    res.send(fs.readFileSync(combinedLogPath));
+    streamFileAsAttachment(res, combinedLogPath, `rf-log-combined-${runLabel}.html`, 'text/html');
   } catch (err) { next(err); }
 });
 
