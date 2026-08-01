@@ -416,11 +416,15 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
     let dryRunSuspectedIssue: string | null = null;
     if (isRobotContent) {
       const MAX_DRYRUN_REPAIR_ATTEMPTS = 2;
+      const dryRunStart = Date.now();
       let attempt = 0;
       let dryRun = await dryRunRobotScript(project.slug, filename);
+      // Always logged — pass, fail, or skipped — specifically so "is the
+      // dry-run gate actually running?" has a direct answer in the logs
+      // instead of only showing up when something goes wrong.
+      console.log(`[script-gen-worker] dry-run for ${tc.tcId}: ${dryRun.skipped ? 'SKIPPED (runner unreachable)' : dryRun.passed ? 'PASS' : 'FAIL'} (attempt 1, ${Date.now() - dryRunStart}ms)${!dryRun.passed && !dryRun.skipped ? ` — ${dryRun.errorMessage}` : ''}`);
       while (!dryRun.passed && attempt < MAX_DRYRUN_REPAIR_ATTEMPTS) {
         attempt += 1;
-        console.log(`[script-gen-worker] dry-run failed for ${tc.tcId} (repair attempt ${attempt}/${MAX_DRYRUN_REPAIR_ATTEMPTS}): ${dryRun.errorMessage}`);
         result = await runScriptAgent({
           ...agentInputBase,
           failedStep: 'Dry-run validation (robot --dryrun)',
@@ -428,7 +432,9 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
         });
         result.specContent = postProcess(result.specContent);
         saveScript(project.slug, filename, result.specContent, tc.useCaseTag);
+        const attemptStart = Date.now();
         dryRun = await dryRunRobotScript(project.slug, filename);
+        console.log(`[script-gen-worker] dry-run for ${tc.tcId}: ${dryRun.skipped ? 'SKIPPED (runner unreachable)' : dryRun.passed ? 'PASS' : 'FAIL'} (repair attempt ${attempt + 1}/${MAX_DRYRUN_REPAIR_ATTEMPTS + 1}, ${Date.now() - attemptStart}ms)${!dryRun.passed && !dryRun.skipped ? ` — ${dryRun.errorMessage}` : ''}`);
       }
       if (!dryRun.passed) {
         dryRunSuspectedIssue = `Dry-run check still failing after ${attempt} repair attempt(s) — needs manual review. ${dryRun.errorMessage ?? ''}`.trim();

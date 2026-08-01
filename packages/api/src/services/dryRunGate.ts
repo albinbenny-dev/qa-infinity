@@ -24,6 +24,8 @@ import { findScriptPath } from './scriptFileService.js';
 export interface DryRunResult {
   passed: boolean;
   errorMessage?: string;
+  /** True when the gate didn't actually validate anything (runner unreachable, file missing) — passed=true here means "not blocked", not "verified." */
+  skipped?: boolean;
 }
 
 const RUNNER_URL = process.env.RUNNER_PRIMARY_URL ?? process.env.RUNNER_URL ?? 'http://qa-runner:5001';
@@ -36,7 +38,7 @@ export async function dryRunRobotScript(slug: string, filename: string): Promise
   const scriptPath = findScriptPath(slug, filename);
   if (!scriptPath) {
     // Can't locate the file we just wrote — don't block on an internal inconsistency.
-    return { passed: true };
+    return { passed: true, skipped: true };
   }
 
   const controller = new AbortController();
@@ -83,6 +85,6 @@ export async function dryRunRobotScript(slug: string, filename: string): Promise
     clearTimeout(timeout);
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[dry-run-gate] runner unreachable, skipping gate (fail-open): ${message}`);
-    return { passed: true };
+    return { passed: true, skipped: true };
   }
 }
