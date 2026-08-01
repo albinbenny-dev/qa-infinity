@@ -2049,6 +2049,14 @@ function ExecutionTab() {
   const [suiteWorkers,     setSuiteWorkers]     = useState(activeProject?.defaultSuiteWorkers     ?? 2);
   const [schedulerWorkers, setSchedulerWorkers] = useState(activeProject?.defaultSchedulerWorkers ?? 2);
 
+  useEffect(() => {
+    if (activeProject) {
+      setManualWorkers(activeProject.defaultManualWorkers ?? 2);
+      setSuiteWorkers(activeProject.defaultSuiteWorkers ?? 2);
+      setSchedulerWorkers(activeProject.defaultSchedulerWorkers ?? 2);
+    }
+  }, [activeProject]);
+
   const clamp = (v: number) => Math.max(1, Math.min(16, v));
 
   const handleSave = async () => {
