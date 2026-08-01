@@ -412,7 +412,7 @@ function SkillCard({
   const meta = SKILL_META[skill.skillType] ?? SKILL_META.HISTORICAL;
   const [expanded, setExpanded] = useState(false);
 
-  let parsedContent: Record<string, unknown> = {};
+  let parsedContent: Record<string, unknown> | null = null;
   try {
     parsedContent = JSON.parse(skill.content) as Record<string, unknown>;
   } catch {}
@@ -612,7 +612,7 @@ function SkillCard({
           }}
         >
           <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {JSON.stringify(parsedContent, null, 2)}
+            {parsedContent !== null ? JSON.stringify(parsedContent, null, 2) : skill.content}
           </pre>
         </div>
       )}
