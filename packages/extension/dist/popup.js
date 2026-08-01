@@ -12,7 +12,7 @@ ${d}
 ${c.join(`
 `)}
 `}async function T(e){const i=e.textContent??"";e.textContent="✓",e.style.color="#22d3ee",e.style.borderColor="#22d3ee",await new Promise(d=>setTimeout(d,1200)),e.textContent=i,e.style.color="",e.style.borderColor=""}function z(e){switch(e){case"click":return"🖱";case"fill":return"⌨";case"select":return"▾";case"navigate":return"→";case"check":return"☑";case"uncheck":return"☐";default:return"•"}}function N(){h.innerHTML=`${w()}<div class="body" style="align-items:center;padding-top:24px">
-    <div class="spinner" style="width:20px;height:20px"></div></div>`}function I(e=""){const i=localStorage.getItem("qai_api_url")??"http://localhost:4200";h.innerHTML=`${w()}
+    <div class="spinner" style="width:20px;height:20px"></div></div>`}function I(e=""){const i=localStorage.getItem("qai_api_url")??"http://localhost:3300";h.innerHTML=`${w()}
     <div class="body">
       <div><label>API URL</label>
         <input id="apiUrl" type="text" value="${i}" placeholder="http://localhost:4200"/></div>
