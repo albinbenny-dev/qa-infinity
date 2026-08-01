@@ -613,6 +613,12 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
   const skillTriggerRef = React.useRef<HTMLButtonElement>(null);
   const skillDropRef = React.useRef<HTMLDivElement>(null);
   const autoDetectedRef = React.useRef(false);
+  // Whether the mousedown that led to the overlay's click actually started on the
+  // backdrop itself (not inside the modal box) — a plain onClick={onClose} on the
+  // overlay fires even when a user drags a text selection or a textarea's resize
+  // handle from inside the box out over the backdrop, because the browser
+  // retargets that click to the nearest common ancestor of mousedown/mouseup.
+  const overlayMouseDownRef = useRef(false);
 
   const pid = projectId ?? singleTc?.projectId;
   const { data: skillsData } = useSkills(pid);
@@ -676,7 +682,11 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
     : 0;
 
   return (
-    <div style={MODAL_OVERLAY} onClick={onClose}>
+    <div
+      style={MODAL_OVERLAY}
+      onMouseDown={(e) => { overlayMouseDownRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && overlayMouseDownRef.current) onClose(); }}
+    >
       <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
         <div style={MODAL_HEADER}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
@@ -922,6 +932,7 @@ function PromoteReferenceSkillModal({ tc, scriptBody, existingFeatureGroups, onC
   const [featureGroup, setFeatureGroup] = useState(tc.useCaseTag ?? '');
   const [fgOpen, setFgOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const overlayMouseDownRef = useRef(false);
 
   const fgOptions = Array.from(new Set([
     ...(tc.useCaseTag ? [tc.useCaseTag] : []),
@@ -938,7 +949,11 @@ function PromoteReferenceSkillModal({ tc, scriptBody, existingFeatureGroups, onC
   const previewLines = scriptBody.split('\n').slice(0, 8).join('\n');
 
   return (
-    <div style={MODAL_OVERLAY} onClick={onClose}>
+    <div
+      style={MODAL_OVERLAY}
+      onMouseDown={(e) => { overlayMouseDownRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && overlayMouseDownRef.current) onClose(); }}
+    >
       <div style={{ ...MODAL_BOX, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
         <div style={MODAL_HEADER}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>🔖 Promote to Reference Skill</span>
@@ -1078,6 +1093,7 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   const [save, setSave] = useState(false);
   const [saveAsSkill, setSaveAsSkill] = useState(false);
   const [busy, setBusy] = useState(false);
+  const overlayMouseDownRef = useRef(false);
 
   const errorText = job.suspectedIssue ?? job.lastError ?? null;
   const featureGroup = job.testCase?.useCaseTag ?? '';
@@ -1089,7 +1105,11 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   }
 
   return (
-    <div style={MODAL_OVERLAY} onClick={onClose}>
+    <div
+      style={MODAL_OVERLAY}
+      onMouseDown={(e) => { overlayMouseDownRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && overlayMouseDownRef.current) onClose(); }}
+    >
       <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
         <div style={MODAL_HEADER}>
           <div>
@@ -1220,6 +1240,7 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
   const [save, setSave] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showDomHelper, setShowDomHelper] = useState(false);
+  const overlayMouseDownRef = useRef(false);
   const [scriptMode, setScriptMode] = useState<'PLAYWRIGHT' | 'ROBOT'>(
     (script as any).scriptType === 'PLAYWRIGHT' ? 'PLAYWRIGHT' : 'ROBOT',
   );
@@ -1269,7 +1290,11 @@ function RegenerateModal({ script, tc, fixContext, onConfirm, onClose }: Regener
   }
 
   return (
-    <div style={MODAL_OVERLAY} onClick={onClose}>
+    <div
+      style={MODAL_OVERLAY}
+      onMouseDown={(e) => { overlayMouseDownRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && overlayMouseDownRef.current) onClose(); }}
+    >
       <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
         <div style={MODAL_HEADER}>
           <div>
@@ -1607,6 +1632,7 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
   const [busy, setBusy] = useState(false);
   const [conversionNote, setConversionNote] = useState<{ converted: boolean; filename: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const overlayMouseDownRef = useRef(false);
   const upload = useUploadScript(projectId);
   const uploadWithExtract = useUploadScriptWithExtract(projectId);
 
@@ -1665,7 +1691,11 @@ function ImportScriptModal({ projectId, testCases, preSelectedTcId, onClose }: I
   ];
 
   return (
-    <div style={MODAL_OVERLAY} onClick={onClose}>
+    <div
+      style={MODAL_OVERLAY}
+      onMouseDown={(e) => { overlayMouseDownRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && overlayMouseDownRef.current) onClose(); }}
+    >
       <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
         <div style={MODAL_HEADER}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>⬆ Import Script</span>
@@ -2032,8 +2062,15 @@ export default function Scripts() {
   const [genModalInitNote, setGenModalInitNote] = useState('');
 
   // ── Promote to Reference Skill modal state ────────────────────────────────
+  // The tc/script are snapshotted at open time (see the button below) rather
+  // than read live from activeTc/activeScript while the modal is open — a
+  // cache invalidation on the test-cases query (e.g. from an unrelated script
+  // upload) can make activeTc's allTCs.find(...) momentarily return undefined,
+  // which used to unmount the whole modal (and its typed-in name/feature
+  // group) via the `showPromoteModal && activeTc && activeScript` guard.
 
   const [showPromoteModal, setShowPromoteModal] = useState(false);
+  const [promoteSnapshot, setPromoteSnapshot] = useState<{ tc: TestCase; script: Script } | null>(null);
 
   // ── Retry feedback modal state ────────────────────────────────────────────
 
@@ -2866,32 +2903,34 @@ export default function Scripts() {
   }
 
   async function handlePromoteToReferenceSkill(opts: { name: string; featureGroup: string }) {
-    if (!projectId || !activeScript || !activeTc) return;
+    if (!projectId || !promoteSnapshot) return;
+    const { tc, script } = promoteSnapshot;
     const scriptBody = (activeTabId && tabContents[activeTabId]) ? tabContents[activeTabId] : '';
     let steps: string[] = [];
-    try { steps = typeof activeTc.steps === 'string' ? JSON.parse(activeTc.steps) : activeTc.steps; } catch { steps = []; }
+    try { steps = typeof tc.steps === 'string' ? JSON.parse(tc.steps) : tc.steps; } catch { steps = []; }
     const content = JSON.stringify({
       tcSnapshot: {
-        tcId: activeTc.tcId,
-        title: activeTc.title,
+        tcId: tc.tcId,
+        title: tc.title,
         steps,
-        expectedResult: activeTc.expectedResult ?? '',
+        expectedResult: tc.expectedResult ?? '',
       },
       scriptBody,
       passedAt: new Date().toISOString(),
-      sourceScriptId: activeScript.id,
+      sourceScriptId: script.id,
     });
     try {
       await api.post(`/projects/${projectId}/skills`, {
         skillType: 'REFERENCE_SCRIPT',
         name: opts.name,
         featureGroup: opts.featureGroup || null,
-        scope: activeTc.tcId,
+        scope: tc.tcId,
         content,
         captureMethod: 'MANUALLY_ENTERED',
         confidence: 1.0,
       });
       setShowPromoteModal(false);
+      setPromoteSnapshot(null);
       toast.success('Saved as Reference Skill — will be auto-detected for scripts in this feature group');
     } catch {
       toast.error('Failed to save reference skill');
@@ -2947,20 +2986,20 @@ export default function Scripts() {
         />
       )}
 
-      {/* Promote to Reference Skill modal */}
-      {showPromoteModal && activeTc && activeScript && (
+      {/* Promote to Reference Skill modal — uses the open-time snapshot, not live activeTc/activeScript (see state comment above) */}
+      {showPromoteModal && promoteSnapshot && (
         <PromoteReferenceSkillModal
           tc={{
-            tcId: activeTc.tcId,
-            title: activeTc.title,
-            steps: (() => { try { return typeof activeTc.steps === 'string' ? JSON.parse(activeTc.steps) : activeTc.steps; } catch { return []; } })(),
-            expectedResult: activeTc.expectedResult,
-            useCaseTag: activeTc.useCaseTag,
+            tcId: promoteSnapshot.tc.tcId,
+            title: promoteSnapshot.tc.title,
+            steps: (() => { try { return typeof promoteSnapshot.tc.steps === 'string' ? JSON.parse(promoteSnapshot.tc.steps) : promoteSnapshot.tc.steps; } catch { return []; } })(),
+            expectedResult: promoteSnapshot.tc.expectedResult,
+            useCaseTag: promoteSnapshot.tc.useCaseTag,
           }}
           scriptBody={(activeTabId && tabContents[activeTabId]) ? tabContents[activeTabId] : ''}
           existingFeatureGroups={existingFeatureGroups}
           onConfirm={handlePromoteToReferenceSkill}
-          onClose={() => setShowPromoteModal(false)}
+          onClose={() => { setShowPromoteModal(false); setPromoteSnapshot(null); }}
         />
       )}
 
@@ -3907,7 +3946,7 @@ export default function Scripts() {
                 {/* 🔖 Promote to Reference Skill */}
                 {activeScript && activeTc && canWrite && (
                   <button
-                    onClick={() => setShowPromoteModal(true)}
+                    onClick={() => { setPromoteSnapshot({ tc: activeTc, script: activeScript }); setShowPromoteModal(true); }}
                     title="Promote this verified TC + script to a Reference Skill — the agent will mirror its locators for future scripts in the same feature group"
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 4,
