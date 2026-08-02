@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
 import ExecutionMonitor from '../components/scripts/ExecutionMonitor';
+import TCDetailModal from '../components/tc-library/TCDetailModal';
 import EditorTabs, { type EditorTab } from '../components/scripts/EditorTabs';
 import { useProject, useProjectEnvConfigs } from '../hooks/useProjects';
 import { useRBAC } from '../hooks/useRBAC';
@@ -254,7 +255,7 @@ function RunStatusDot({ status }: { status?: 'PASSED' | 'FAILED' | 'RUNNING' | '
 }
 
 function TCScriptRow({
-  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, lastRunStatus, onToggle, onOpen, onToggleGolden, onChat, onDelete,
+  tc, isScripted, isSelected, verificationStatus, suspectedIssue, isGolden, lastRunStatus, onToggle, onOpen, onToggleGolden, onChat, onDelete, onView,
 }: {
   tc: TestCase;
   isScripted: boolean;
@@ -268,6 +269,7 @@ function TCScriptRow({
   onToggleGolden?: () => void;
   onChat: () => void;
   onDelete?: () => void;
+  onView: () => void;
 }) {
   const chip = TYPE_CHIP[tc.type] ?? { bg: 'var(--surface3)', color: 'var(--text-dim)' };
   const needsReview = isScripted && verificationStatus === 'MANUAL_REVIEW';
@@ -346,6 +348,29 @@ function TCScriptRow({
       }}>
         {tc.type}
       </span>
+
+      {/* View TC details — steps, expected result, etc. */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onView(); }}
+        title="View test case details"
+        style={{
+          width: 20, height: 20, borderRadius: 3,
+          background: 'transparent', border: '1px solid transparent',
+          color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          transition: 'all 0.15s',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(42,157,143,0.12)';
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(42,157,143,0.3)';
+          (e.currentTarget as HTMLButtonElement).style.color = 'var(--emerald)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+          (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+        }}
+      >👁</button>
 
       {/* Last run status — only for scripted TCs */}
       {isScripted ? <RunStatusDot status={lastRunStatus} /> : <div style={{ width: 7, flexShrink: 0 }} />}
@@ -1234,6 +1259,88 @@ function RetryFeedbackModal({ job, onConfirm, onClose }: RetryFeedbackModalProps
   );
 }
 
+// ── EditGroupModal ───────────────────────────────────────────────────────────
+
+interface EditGroupModalProps {
+  group: { name: string; tcs: TestCase[] };
+  existingGroups: string[];
+  onConfirm: (newName: string) => Promise<void>;
+  onClose: () => void;
+}
+
+function EditGroupModal({ group, existingGroups, onConfirm, onClose }: EditGroupModalProps) {
+  const [name, setName] = useState(group.name);
+  const [busy, setBusy] = useState(false);
+  const overlayMouseDownRef = useRef(false);
+
+  const isDuplicate = existingGroups.includes(name.trim()) && name.trim() !== group.name;
+  const isUnchanged = name.trim() === group.name;
+  const isDisabled = busy || isDuplicate || isUnchanged || !name.trim();
+
+  async function handleSubmit() {
+    if (isDisabled) return;
+    setBusy(true);
+    await onConfirm(name.trim());
+    setBusy(false);
+  }
+
+  return (
+    <div
+      style={MODAL_OVERLAY}
+      onMouseDown={(e) => { overlayMouseDownRef.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && overlayMouseDownRef.current) onClose(); }}
+    >
+      <div style={MODAL_BOX} onClick={(e) => e.stopPropagation()}>
+        <div style={MODAL_HEADER}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>✏ Edit Feature Group</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={MODAL_BODY}>
+          <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
+            Renaming this group will update the feature group tag on all {group.tcs.length} test case{group.tcs.length !== 1 ? 's' : ''} in &ldquo;{group.name}&rdquo;.
+          </p>
+          <div>
+            <span style={LABEL_STYLE}>Group name</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--surface)', border: `1px solid ${isDuplicate ? 'rgba(220,38,38,0.5)' : 'var(--border2)'}`, borderRadius: 6,
+                color: 'var(--text)', fontSize: 11, padding: '7px 10px',
+                fontFamily: 'var(--font-ui)', outline: 'none',
+              }}
+            />
+            {isDuplicate && (
+              <p style={{ fontSize: 10, color: 'var(--fail)', margin: '4px 0 0' }}>
+                A group with this name already exists.
+              </p>
+            )}
+          </div>
+        </div>
+        <div style={MODAL_FOOTER}>
+          <button onClick={onClose} style={BTN_CANCEL}>Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={isDisabled}
+            style={{
+              padding: '7px 18px', borderRadius: 6, border: 'none',
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)', color: '#fff',
+              background: 'linear-gradient(135deg, var(--cyan), var(--emerald))',
+              opacity: isDisabled ? 0.6 : 1,
+            }}
+          >
+            {busy ? 'Renaming…' : '✓ Rename Group'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── RegenerateModal ──────────────────────────────────────────────────────────
 
 interface RegenerateModalProps {
@@ -2003,6 +2110,7 @@ export default function Scripts() {
     new Set(AIRTEL_USE_CASES),
   );
   const [tcSelected, setTcSelected] = useState<Set<string>>(new Set());
+  const [editingGroup, setEditingGroup] = useState<{ name: string; tcs: TestCase[] } | null>(null);
 
   // ── Resizable left panel ─────────────────────────────────────────────────
 
@@ -2443,6 +2551,7 @@ export default function Scripts() {
   // ── Import folder (zip) ───────────────────────────────────────────────────
   const importFolderRef = useRef<HTMLInputElement>(null);
   const [importConfirmFile, setImportConfirmFile] = useState<File | null>(null);
+  const [viewTc, setViewTc] = useState<TestCase | null>(null);
 
   async function handleImportFolder(file: File, createTCs = true) {
     setImportConfirmFile(null);
@@ -3011,6 +3120,25 @@ export default function Scripts() {
     }
   }
 
+  // ── Rename feature group ──────────────────────────────────────────────────
+
+  async function handleRenameGroup(newName: string) {
+    if (!projectId || !editingGroup) return;
+    const ids = editingGroup.tcs.map((tc) => tc.id);
+    try {
+      await api.post(`/projects/${projectId}/test-cases/bulk-update-usecase`, {
+        testCaseIds: ids,
+        targetUseCaseTag: newName,
+      });
+      qc.invalidateQueries({ queryKey: ['test-cases', projectId] });
+      qc.invalidateQueries({ queryKey: ['use-cases', projectId] });
+      setEditingGroup(null);
+      toast.success(`Renamed group to "${newName}"`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to rename group');
+    }
+  }
+
   // ── Send to execution ─────────────────────────────────────────────────────
 
   function handleSendToExecution() {
@@ -3060,6 +3188,16 @@ export default function Scripts() {
           existingFeatureGroups={existingFeatureGroups}
           onConfirm={handlePromoteToReferenceSkill}
           onClose={() => { setShowPromoteModal(false); setPromoteSnapshot(null); }}
+        />
+      )}
+
+      {/* Edit feature group modal */}
+      {editingGroup && (
+        <EditGroupModal
+          group={editingGroup}
+          existingGroups={useCases}
+          onConfirm={handleRenameGroup}
+          onClose={() => setEditingGroup(null)}
         />
       )}
 
@@ -3575,6 +3713,31 @@ export default function Scripts() {
                               }}>
                                 {done}/{group.tcs.length}
                               </span>
+
+                              {/* Edit group button */}
+                              {canWrite && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setEditingGroup({ name: group.name, tcs: group.tcs }); }}
+                                  title="Rename feature group"
+                                  style={{
+                                    width: 18, height: 18, borderRadius: 3, padding: 0, flexShrink: 0,
+                                    background: 'transparent', border: '1px solid transparent',
+                                    color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.15s',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(37,99,171,0.12)';
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(37,99,171,0.3)';
+                                    (e.currentTarget as HTMLButtonElement).style.color = 'var(--cyan)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent';
+                                    (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)';
+                                  }}
+                                >✏</button>
+                              )}
                             </div>
 
                             {/* TC rows */}
@@ -3600,6 +3763,7 @@ export default function Scripts() {
                                     openChat({ prompt, context: { tcId: tc.tcId, tcTitle: tc.title, page: 'scripts' } });
                                   }}
                                   onDelete={linkedScript && canWrite ? () => handleDeleteScript(linkedScript.id, `${tc.tcId} — ${tc.title}`) : undefined}
+                                  onView={() => setViewTc(tc)}
                                 />
                               );
                             })}
@@ -4360,6 +4524,9 @@ export default function Scripts() {
           )}
         </div>
       </div>
+
+      {/* TC detail popup — steps, expected result, recent results */}
+      {viewTc && <TCDetailModal tc={viewTc} onClose={() => setViewTc(null)} />}
 
       {/* Import folder confirmation dialog */}
       <Dialog.Root open={!!importConfirmFile} onOpenChange={(o) => !o && setImportConfirmFile(null)}>
