@@ -597,6 +597,12 @@ const server = http.createServer(async (req, res) => {
       environment = '',
       hostBrowser = false,
       projectSlug = '',
+      // Dry-run gate: Robot Framework's own --dryrun flag validates test data and
+      // resolves every keyword call without executing any keyword implementation —
+      // no browser is opened, so this never needs a VNC slot or the warm-pool path.
+      // Fast (sub-second to a few seconds), catches syntax/undefined-keyword errors
+      // the way a linter would, before a real (slow, browser-driving) run is spent.
+      dryRun = false,
     } = body;
 
     if (!scriptPath || !reportFile) {
@@ -631,7 +637,7 @@ const server = http.createServer(async (req, res) => {
     const releaseVnc = () => {
       if (vncClaim && !vncReleased) { vncReleased = true; releaseVncSlot(vncClaim.token); }
     };
-    if (hostBrowser) {
+    if (hostBrowser && !dryRun) {
       vncClaim = claimVncSlot();
       sendLine(vncClaim ? { type: 'vnc-session', token: vncClaim.token } : { type: 'vnc-busy' });
     }
@@ -729,8 +735,9 @@ const server = http.createServer(async (req, res) => {
         '--log', 'log.html',
         '--listener', `${listenerPath}:${effectiveOutputDir}`,
         '--variable', `OUTPUTDIR:${effectiveOutputDir}`,
-        '--variable', `HEADLESS:${hostBrowser ? 'False' : 'True'}`,
+        '--variable', `HEADLESS:${(hostBrowser && !dryRun) ? 'False' : 'True'}`,
       ];
+      if (dryRun) robotArgs.push('--dryrun');
       // Only override BASE_URL if a value was supplied — if empty, let the script's
       // own *** Variables *** default take effect (e.g. imported projects with no env config).
       if (baseUrl) robotArgs.push('--variable', `BASE_URL:${baseUrl}`);

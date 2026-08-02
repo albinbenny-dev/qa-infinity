@@ -3,31 +3,25 @@ import { createAnthropicDirectClient, createLLM } from './llm.js';
 import { prisma } from './prisma.js';
 import { appendAuditLog } from './llmAudit.js';
 import { listSkillFiles, readSkillFile, type SkillFileData } from '../services/scriptFileService.js';
+import { selectRelevantSkills, isLoginSkill } from '../services/skillSelector.js';
 
 // ── Skill loading ──────────────────────────────────────────────────────────
+// useCaseTag is optional and opt-in: passing it (even as null) scopes FEATURE/
+// HISTORICAL-tier skills to what's relevant via selectRelevantSkills — the same
+// predicate agents/scriptAgent.ts uses — instead of the previous "include every
+// active skill regardless of feature group" behavior. Omit it to keep that
+// legacy behavior for callers that haven't adopted scoping yet.
 
-export function loadActiveSkills(slug: string): SkillFileData[] {
+export function loadActiveSkills(slug: string, useCaseTag?: string | null): SkillFileData[] {
   const files = listSkillFiles(slug);
   const skills: SkillFileData[] = [];
   for (const f of files) {
     try { skills.push(readSkillFile(slug, f)); } catch {}
   }
-  return skills
-    .filter((s) => s.isActive)
-    .sort((a, b) => {
-      const aLogin = isLoginSkill(a);
-      const bLogin = isLoginSkill(b);
-      if (aLogin && !bLogin) return -1;
-      if (!aLogin && bLogin) return 1;
-      return b.confidence - a.confidence;
-    });
+  return selectRelevantSkills(skills, { useCaseTag });
 }
 
-function isLoginSkill(s: SkillFileData): boolean {
-  return s.skillType === 'UI_FLOW' &&
-    (s.name.toLowerCase().includes('login') ||
-     (s.scope?.toLowerCase().includes('login') ?? false));
-}
+export { isLoginSkill };
 
 // ── Skills text formatter ──────────────────────────────────────────────────
 

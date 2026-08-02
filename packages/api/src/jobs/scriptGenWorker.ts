@@ -7,6 +7,8 @@ import { runScriptAgent } from '../agents/scriptAgent.js';
 import { saveScript, savePOM, listPOMFiles, readScript, listResourceFiles, readResourceFile, listSkillFiles, readSkillFile } from '../services/scriptFileService.js';
 import type { ResourceFileInfo } from '../agents/scriptAgent.js';
 import { isAgentEnabled } from '../lib/agentConfig.js';
+import { getLocatorsForScope, getKnownSelectorSet } from '../services/locatorRepository.js';
+import { dryRunRobotScript } from '../services/dryRunGate.js';
 
 /**
  * Strips Resource import lines for files that are not in the project's actual resource list.
@@ -59,6 +61,36 @@ function lintRobotScript(content: string, resourceFiles: ResourceFileInfo[]): st
     }
   }
   return result;
+}
+
+// Matches a locator argument (css=/id=/role=/text=/xpath=) anywhere on a line —
+// same shape as the extraction regex used to populate the repository, so what
+// we compare against here is exactly what could have matched a known entry.
+// See the identical fix + rationale in services/scriptDiff.ts: a plain
+// [^\s'"}{]+ class truncates role=xxx[name="..."] and css=[attr='...']
+// locators at their first quote — exactly the two most-recommended
+// strategies in the generation system prompt.
+const LOCATOR_ARG_RE = /(?:css|id|role|text|xpath)=(?:[^\s'"]|"[^"]*"|'[^']*')+/g;
+
+/**
+ * Flags any locator the model wrote that isn't a known, repository-verified
+ * selector for this project. Non-blocking by design: it annotates rather than
+ * rejects, since a sparse/new-project repository would otherwise flag almost
+ * everything. Skipped entirely when the repository has no entries yet.
+ */
+function flagUnknownLocators(content: string, knownSelectors: Set<string>): string {
+  if (knownSelectors.size === 0) return content;
+  return content
+    .split('\n')
+    .map((line) => {
+      if (line.includes('NEW-LOCATOR')) return line;
+      const matches = line.match(LOCATOR_ARG_RE);
+      if (!matches) return line;
+      const hasUnknown = matches.some((m) => !knownSelectors.has(m));
+      if (!hasUnknown) return line;
+      return `${line}  # NEW-LOCATOR: needs review`;
+    })
+    .join('\n');
 }
 
 function extractRobotKeywords(content: string): string[] {
@@ -247,7 +279,7 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
 
     const recentHeals = recentHealRows.map((h) => ({
       type: h.type,
-      summary: h.summary,
+      summary: h.summary ?? '(no summary recorded)',
       tcTitle: h.runResult?.testCase?.title ?? undefined,
       useCaseTag: h.runResult?.testCase?.useCaseTag ?? undefined,
       confidence: h.confidence,
@@ -291,7 +323,15 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       if (rows.length > 0) pinnedSkills = rows;
     }
 
-    const result = await runScriptAgent({
+    // Object/Locator Repository — closed list of verified selectors for this TC's scope
+    const locatorEntries = scriptMode === 'ROBOT'
+      ? (await getLocatorsForScope(project.id, tc.useCaseTag)).map((e) => ({
+          name: e.name, selector: e.selector, strategy: e.strategy,
+          confidence: e.confidence, successCount: e.successCount,
+        }))
+      : undefined;
+
+    const agentInputBase = {
       testCase: {
         id: tc.id,
         tcId: tc.tcId,
@@ -309,19 +349,20 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       qaFeedback,
       domSnippet,
       domRecording,
-      failedStep,
-      failedStepError,
       scriptMode,
       resourceFiles,
       recentHeals: recentHeals.length > 0 ? recentHeals : undefined,
       prerequisiteScript,
       referenceScripts,
       pinnedSkills,
+      locatorEntries,
       patternMemory: project.patternMemory,
       runtimeVariables: tc.runtimeVariables
         ? (() => { try { return JSON.parse(tc.runtimeVariables as string); } catch { return null; } })()
         : null,
-    });
+    };
+
+    let result = await runScriptAgent({ ...agentInputBase, failedStep, failedStepError });
 
     const slug = tc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
     // Use content-derived type (not just requested mode) so an RF response never gets .spec.ts
@@ -333,22 +374,72 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
       ? `${tc.tcId}-${slug}.robot`
       : `${tc.tcId}-${slug}.spec.ts`;
 
-    // Auto-inject missing Resource lines for any resource keywords called in the script,
-    // and strip any invented Resource imports for files that don't exist in the project.
-    if (isRobotContent && resourceFiles && resourceFiles.length > 0) {
-      result.specContent = removePhantomResourceImports(result.specContent, resourceFiles);
-      result.specContent = lintRobotScript(result.specContent, resourceFiles);
-    } else if (isRobotContent) {
-      // No resource files in project — remove ALL Resource imports (LLM may still invent them)
-      result.specContent = result.specContent
-        .split('\n')
-        .filter(line => !/^\s*Resource\s+resources\//.test(line))
-        .join('\n');
-    }
+    // Post-processing, extracted into a closure so the dry-run repair loop
+    // below can re-apply the exact same fixups after each regeneration.
+    const knownSelectors = isRobotContent ? await getKnownSelectorSet(project.id) : new Set<string>();
+    const postProcess = (specContent: string): string => {
+      let content = specContent;
+      // Auto-inject missing Resource lines for any resource keywords called in the script,
+      // and strip any invented Resource imports for files that don't exist in the project.
+      if (isRobotContent && resourceFiles && resourceFiles.length > 0) {
+        content = removePhantomResourceImports(content, resourceFiles);
+        content = lintRobotScript(content, resourceFiles);
+      } else if (isRobotContent) {
+        // No resource files in project — remove ALL Resource imports (LLM may still invent them)
+        content = content
+          .split('\n')
+          .filter(line => !/^\s*Resource\s+resources\//.test(line))
+          .join('\n');
+      }
+      // Flag any locator that isn't a known, repository-verified selector — advisory
+      // only (see flagUnknownLocators), so this never blocks generation.
+      if (isRobotContent) {
+        content = flagUnknownLocators(content, knownSelectors);
+      }
+      return content;
+    };
 
+    result.specContent = postProcess(result.specContent);
     saveScript(project.slug, filename, result.specContent, tc.useCaseTag);
     if (result.pomContent && result.pomFilename) {
       savePOM(project.slug, result.pomFilename, result.pomContent);
+    }
+
+    // ── Dry-run validation gate (Robot only) ──────────────────────────────
+    // Fast, no-browser syntax/keyword-resolution check via `robot --dryrun`
+    // (see services/dryRunGate.ts) — the default flow previously shipped a
+    // generated script to the user with zero execution or syntax validation.
+    // On failure, regenerate with the exact dry-run error fed back into the
+    // SAME agent call chain (mirrors scriptVerifyWorker's heal loop), capped
+    // so a persistently-broken generation escalates to a human instead of
+    // looping forever.
+    let dryRunSuspectedIssue: string | null = null;
+    if (isRobotContent) {
+      const MAX_DRYRUN_REPAIR_ATTEMPTS = 2;
+      const dryRunStart = Date.now();
+      let attempt = 0;
+      let dryRun = await dryRunRobotScript(project.slug, filename);
+      // Always logged — pass, fail, or skipped — specifically so "is the
+      // dry-run gate actually running?" has a direct answer in the logs
+      // instead of only showing up when something goes wrong.
+      console.log(`[script-gen-worker] dry-run for ${tc.tcId}: ${dryRun.skipped ? 'SKIPPED (runner unreachable)' : dryRun.passed ? 'PASS' : 'FAIL'} (attempt 1, ${Date.now() - dryRunStart}ms)${!dryRun.passed && !dryRun.skipped ? ` — ${dryRun.errorMessage}` : ''}`);
+      while (!dryRun.passed && attempt < MAX_DRYRUN_REPAIR_ATTEMPTS) {
+        attempt += 1;
+        result = await runScriptAgent({
+          ...agentInputBase,
+          failedStep: 'Dry-run validation (robot --dryrun)',
+          failedStepError: dryRun.errorMessage,
+        });
+        result.specContent = postProcess(result.specContent);
+        saveScript(project.slug, filename, result.specContent, tc.useCaseTag);
+        const attemptStart = Date.now();
+        dryRun = await dryRunRobotScript(project.slug, filename);
+        console.log(`[script-gen-worker] dry-run for ${tc.tcId}: ${dryRun.skipped ? 'SKIPPED (runner unreachable)' : dryRun.passed ? 'PASS' : 'FAIL'} (repair attempt ${attempt + 1}/${MAX_DRYRUN_REPAIR_ATTEMPTS + 1}, ${Date.now() - attemptStart}ms)${!dryRun.passed && !dryRun.skipped ? ` — ${dryRun.errorMessage}` : ''}`);
+      }
+      if (!dryRun.passed) {
+        dryRunSuspectedIssue = `Dry-run check still failing after ${attempt} repair attempt(s) — needs manual review. ${dryRun.errorMessage ?? ''}`.trim();
+        console.warn(`[script-gen-worker] dry-run gate exhausted for ${tc.tcId}: ${dryRunSuspectedIssue}`);
+      }
     }
 
     const existing = await prisma.script.findFirst({
@@ -364,8 +455,10 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
             content: result.specContent,
             scriptType: result.scriptType,
             useCaseFolder: ucFolder,
-            verificationStatus: withHeal ? 'NOT_VERIFIED' : existing.verificationStatus,
-            suspectedIssue: withHeal ? null : existing.suspectedIssue,
+            // withHeal takes over verification via the real execution pipeline below —
+            // don't let the dry-run gate's preliminary flag get overwritten in that case.
+            verificationStatus: withHeal ? 'NOT_VERIFIED' : (dryRunSuspectedIssue ? 'MANUAL_REVIEW' : existing.verificationStatus),
+            suspectedIssue: withHeal ? null : (dryRunSuspectedIssue ?? existing.suspectedIssue),
             updatedAt: new Date(),
           },
         })
@@ -378,6 +471,8 @@ async function processGenJob(job: Job<ScriptGenJobPayload>): Promise<void> {
             scriptType: result.scriptType,
             useCaseFolder: ucFolder,
             isCustomUpload: false,
+            verificationStatus: (!withHeal && dryRunSuspectedIssue) ? 'MANUAL_REVIEW' : 'NOT_VERIFIED',
+            suspectedIssue: withHeal ? null : dryRunSuspectedIssue,
           },
         });
 

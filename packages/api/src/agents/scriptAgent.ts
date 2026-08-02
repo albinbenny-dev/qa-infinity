@@ -2,9 +2,11 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { createLLM, createAnthropicDirectClient } from '../lib/llm.js';
 import { prisma } from '../lib/prisma.js';
 import { appendAuditLog } from '../lib/llmAudit.js';
-import { readScript, listSkillFiles, readSkillFile } from '../services/scriptFileService.js';
+import { readScript, listSkillFiles, readSkillFile, type SkillFileData } from '../services/scriptFileService.js';
 import type { LoginInstructions, NavNode, PageLocators, AgentLearning } from '../types/scanner.js';
 import type { PatternMemory } from '../services/patternExtractor.js';
+import { selectRelevantSkills } from '../services/skillSelector.js';
+import { truncateScriptForPrompt } from '../services/robotChunking.js';
 
 export interface HealContext {
   /** SELECTOR | FLOW | API_SCHEMA */
@@ -119,6 +121,15 @@ export interface ScriptAgentInput {
     featureGroup?: string | null; tier?: string | null;
     humanContext?: string | null; content: string;
     confidence: number; captureMethod: string;
+  }>;
+  /**
+   * Object/Locator Repository entries for this TC's scope — verified, named
+   * selectors the agent should select FROM rather than inventing new ones.
+   * Populated from passing runs and approved manual corrections.
+   */
+  locatorEntries?: Array<{
+    name: string; selector: string; strategy: string;
+    confidence: number; successCount: number;
   }>;
 }
 
@@ -363,6 +374,24 @@ Choose the FIRST strategy that uniquely identifies the element. Never skip ahead
   GOOD: Click    css=#myProfile
   GOOD: Fill Text    css=#username    value
   GOOD: Wait For Elements State    css=input[type='password']    visible    \${TIMEOUT}
+
+### Verifying a value appears in a table/grid — role=row vs role=cell
+A table row's ARIA accessible name is the CONCATENATION of every cell's text in
+that row, in DOM order, with NO separator — it is never just "the one value you
+care about". Waiting for role=row[name="<single-field-value>"] to verify one
+column's value will time out and fail, because that exact string is not the
+row's name — it only exists inside one of the row's cells.
+  Example: a row with columns [Start Range: "1000112"] [End Range: "1000112"]
+  [Product Code: "100004889"] has accessible name "10001121000112100004889" —
+  not "100004889".
+  BAD:  Wait For Elements State    role=row[name="\${PRODUCT_CODE}"]    visible    \${TIMEOUT}
+        ← waits for a row whose ENTIRE name equals just the product code — never matches
+  GOOD: Wait For Elements State    role=cell[name="\${PRODUCT_CODE}"]    visible    \${TIMEOUT}
+        ← targets the specific cell containing that value — this is what actually exists
+Use role=row[name="..."] ONLY when you deliberately need the full concatenated
+row text (rare — e.g. asserting the whole row is empty/absent). To verify ONE
+column's value appeared after adding/submitting a record, always target
+role=cell[name="<value>"], not role=row.
 
 ### Keyword naming — NEVER duplicate keyword names
 - Every keyword name in *** Keywords *** MUST be unique within the file.
@@ -888,14 +917,99 @@ function stepTextMatches(hintStep: string, currentSteps: string[]): boolean {
   });
 }
 
+// ── Object/Locator Repository injection ────────────────────────────────────
+// Renders the closed list of verified locators for this scope as a section the
+// agent is instructed to select FROM by name, instead of a prose "reuse what you
+// see" hint. Paired with the post-generation lint in scriptGenWorker.ts, which
+// flags any selector the model wrote that isn't in this list.
+
+function buildLocatorRepositorySection(entries: ScriptAgentInput['locatorEntries']): string[] {
+  if (!entries || entries.length === 0) return [];
+  const lines = [
+    '',
+    '### OBJECT REPOSITORY — verified, reusable locators for this application',
+    'Each entry below has already been proven to work in a real run of this project.',
+    'Rules you MUST follow:',
+    '  1. Before writing ANY locator, check this list first. If an entry matches the element you need, copy its selector VERBATIM.',
+    '  2. Only write a brand-new selector when NO entry here applies to the element.',
+    '  3. If you do write a new selector, append the literal comment  # NEW-LOCATOR: needs review  at the end of that line — this is mandatory, not optional.',
+    '',
+  ];
+  for (const e of entries) {
+    lines.push(`  - ${e.name}: ${e.selector}  (confidence ${Math.round(e.confidence * 100)}%, verified ${e.successCount}x)`);
+  }
+  return lines;
+}
+
+// ── Shared truncation budget ────────────────────────────────────────────────
+// Previously each script-bearing section (prerequisite, reference scripts,
+// golden examples, REFERENCE_SCRIPT skill body) truncated independently at a
+// fixed character count regardless of how many other sections were also
+// populated — with several sources present at once the combined prompt could
+// dilute past the point the model reliably follows any single one of them.
+// This computes one shared ceiling and splits it by priority weight instead,
+// so a project with everything populated doesn't just get everything at full
+// size — locked/reference material crowds out lower-signal material rather
+// than every source independently assuming it owns the whole budget.
+
+const TOTAL_SCRIPT_CONTEXT_BUDGET = 16000; // chars, shared across the sections below
+
+interface TruncationBudgetInput {
+  referenceScriptCount: number; // input.referenceScripts.length (0 if absent)
+  hasPrerequisite: boolean;
+  goldenExampleCount: number;   // how many golden examples will actually be fetched (0, 1, or 2)
+  hasReferenceSkill: boolean;
+}
+
+interface TruncationBudget {
+  perReferenceScript: number;
+  prerequisite: number;
+  perGoldenExample: number;
+  referenceSkill: number;
+}
+
+// Weights reflect signal strength: a user-selected reference script or the
+// resolved prerequisite are explicit, high-confidence intent; golden examples
+// and REFERENCE_SCRIPT skills are auto-picked and get comparatively less room.
+const WEIGHT_REFERENCE_SCRIPTS = 4;
+const WEIGHT_PREREQUISITE = 3;
+const WEIGHT_GOLDEN_EXAMPLES = 2;
+const WEIGHT_REFERENCE_SKILL = 2;
+const MIN_SECTION_CHARS = 800; // floor so a present source is never truncated into uselessness
+
+function computeTruncationBudget(input: TruncationBudgetInput): TruncationBudget {
+  const present: Array<{ key: keyof TruncationBudget; weight: number; slots: number }> = [];
+  if (input.referenceScriptCount > 0) present.push({ key: 'perReferenceScript', weight: WEIGHT_REFERENCE_SCRIPTS, slots: input.referenceScriptCount });
+  if (input.hasPrerequisite) present.push({ key: 'prerequisite', weight: WEIGHT_PREREQUISITE, slots: 1 });
+  if (input.goldenExampleCount > 0) present.push({ key: 'perGoldenExample', weight: WEIGHT_GOLDEN_EXAMPLES, slots: input.goldenExampleCount });
+  if (input.hasReferenceSkill) present.push({ key: 'referenceSkill', weight: WEIGHT_REFERENCE_SKILL, slots: 1 });
+
+  const result: TruncationBudget = { perReferenceScript: 0, prerequisite: 0, perGoldenExample: 0, referenceSkill: 0 };
+  if (present.length === 0) return result;
+
+  const totalWeight = present.reduce((sum, p) => sum + p.weight, 0);
+  for (const p of present) {
+    const share = Math.floor((TOTAL_SCRIPT_CONTEXT_BUDGET * p.weight) / totalWeight);
+    const perSlot = Math.max(MIN_SECTION_CHARS, Math.floor(share / p.slots));
+    result[p.key] = perSlot;
+  }
+  return result;
+}
+
 // ── Golden examples (few-shot grounding) ──────────────────────────────────
 
-async function getGoldenExamples(
+interface GoldenScriptRow {
+  filename: string;
+  content: string;
+  testCase: { tcId: string; title: string } | null;
+}
+
+/** Resolves which golden scripts apply — split from formatting so callers can learn the count before deciding a truncation budget. */
+async function resolveGoldenScripts(
   projectId: string,
   useCaseTag?: string | null,
-  selfContained?: boolean,
   isRobot?: boolean,
-): Promise<string> {
+): Promise<{ scripts: GoldenScriptRow[]; projectSlug: string }> {
   const projectSlugRow = await prisma.project.findUnique({ where: { id: projectId }, select: { slug: true } });
   const projectSlug = projectSlugRow?.slug ?? projectId;
 
@@ -924,6 +1038,16 @@ async function getGoldenExamples(
           take: 1,
         });
 
+  return { scripts, projectSlug };
+}
+
+function formatGoldenExamples(
+  scripts: GoldenScriptRow[],
+  projectSlug: string,
+  selfContained: boolean | undefined,
+  isRobot: boolean | undefined,
+  charCap: number,
+): string {
   if (scripts.length === 0) return '';
 
   const fence = isRobot ? 'robot' : 'typescript';
@@ -947,15 +1071,17 @@ async function getGoldenExamples(
     lines.push(`### Example: ${label}`);
     try {
       const content = readScript(projectSlug, s.filename);
+      const { text, truncated } = truncateScriptForPrompt(content, charCap, isRobot ?? false);
       lines.push(`\`\`\`${fence}`);
-      lines.push(content.slice(0, 3000));
-      if (content.length > 3000) lines.push('# … (truncated)');
+      lines.push(text);
+      if (truncated) lines.push('# … (truncated)');
       lines.push('```');
     } catch {
       if (s.content) {
+        const { text, truncated } = truncateScriptForPrompt(s.content, charCap, isRobot ?? false);
         lines.push(`\`\`\`${fence}`);
-        lines.push(s.content.slice(0, 3000));
-        if (s.content.length > 3000) lines.push('# … (truncated)');
+        lines.push(text);
+        if (truncated) lines.push('# … (truncated)');
         lines.push('```');
       }
     }
@@ -1114,7 +1240,18 @@ function annotatePlaywrightCodeForRobot(code: string): { annotated: string; chec
 
 // ── Product Skills injection ──────────────────────────────────────────────
 
-function buildSkillsSection(skills: ScriptAgentInput['skills'], isRobot: boolean): string[] {
+// NOTE: ScriptAgentInput has no `skills` field (only `pinnedSkills`) — this
+// function is fed the merged pinned+auto-detected list built inside
+// runScriptAgent, so it needs its own type rather than referencing a
+// nonexistent `ScriptAgentInput['skills']` indexed type.
+type SkillInjectionList = Array<{
+  skillType: string; name: string; scope: string | null;
+  featureGroup?: string | null; tier?: string | null;
+  humanContext?: string | null; content: string;
+  confidence: number; captureMethod: string;
+}>;
+
+function buildSkillsSection(skills: SkillInjectionList | undefined, isRobot: boolean, refScriptCharCap = 3500): string[] {
   if (!skills || skills.length === 0) return [];
 
   const lines: string[] = [
@@ -1305,8 +1442,7 @@ function buildSkillsSection(skills: ScriptAgentInput['skills'], isRobot: boolean
           }
           if (tc?.expectedResult) lines.push(`  Expected: ${String(tc.expectedResult).slice(0, 200)}`);
           if (scriptBody) {
-            const cap = scriptBody.slice(0, 3500);
-            const truncated = scriptBody.length > 3500;
+            const { text: cap, truncated } = truncateScriptForPrompt(scriptBody, refScriptCharCap, true);
             lines.push('  Verified Robot Framework script:');
             lines.push('  ```robot');
             for (const l of cap.split('\n')) lines.push(`  ${l}`);
@@ -1333,10 +1469,39 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   const baseUrl = input.project.baseUrl ?? 'http://localhost:3000';
   const isRobot = input.scriptMode === 'ROBOT';
   const selfContained = input.existingPOMs.length === 0;
-  const [platformSection, goldenSection] = await Promise.all([
+  const [platformSection, goldenResolved] = await Promise.all([
     getProjectPlatformSection(input.project.id, input.testCase.useCaseTag),
-    getGoldenExamples(input.project.id, input.testCase.useCaseTag, selfContained, isRobot),
+    resolveGoldenScripts(input.project.id, input.testCase.useCaseTag, isRobot),
   ]);
+
+  // Whether a REFERENCE_SCRIPT-type skill is present — needed up front so the
+  // shared truncation budget (below) can account for it. Skills are read again
+  // in full further down; this is a cheap local-disk check, not worth threading
+  // through as shared state for a first pass.
+  let hasReferenceSkillForBudget = false;
+  for (const filename of listSkillFiles(input.project.slug)) {
+    try {
+      if (readSkillFile(input.project.slug, filename).skillType === 'REFERENCE_SCRIPT') {
+        hasReferenceSkillForBudget = true;
+        break;
+      }
+    } catch { /* skip unreadable */ }
+  }
+
+  const truncationBudget = computeTruncationBudget({
+    referenceScriptCount: input.referenceScripts?.length ?? 0,
+    hasPrerequisite: !!input.prerequisiteScript,
+    goldenExampleCount: goldenResolved.scripts.length,
+    hasReferenceSkill: hasReferenceSkillForBudget,
+  });
+
+  const goldenSection = formatGoldenExamples(
+    goldenResolved.scripts,
+    goldenResolved.projectSlug,
+    selfContained,
+    isRobot,
+    truncationBudget.perGoldenExample || 3000,
+  );
   const fullPlatformContext = goldenSection
     ? `${platformSection}\n\n${goldenSection}`
     : platformSection;
@@ -1523,12 +1688,7 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
 
   // Read all active skill files from disk — then filter by tier + TC feature group
   const skillFileList = listSkillFiles(input.project.slug);
-  const skillsFromFiles: Array<{
-    skillType: string; name: string; scope: string | null;
-    featureGroup?: string | null; tier?: string | null;
-    humanContext?: string | null;
-    content: string; confidence: number; captureMethod: string;
-  }> = [];
+  const skillsFromFiles: SkillFileData[] = [];
   for (const filename of skillFileList) {
     try {
       const data = readSkillFile(input.project.slug, filename);
@@ -1536,20 +1696,10 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     } catch { /* skip unreadable */ }
   }
 
-  // Tier-based filtering: GLOBAL always injected; FEATURE/HISTORICAL only when featureGroup matches TC's useCaseTag
-  const tcFeatureGroup = input.testCase.useCaseTag?.toLowerCase().trim();
-  const filteredSkills = skillsFromFiles.filter((skill) => {
-    const tier = skill.tier ?? 'FEATURE';
-    if (tier === 'GLOBAL') return true;
-    if (tier === 'FEATURE' || tier === 'HISTORICAL') {
-      const skillFG = skill.featureGroup?.toLowerCase().trim();
-      // No featureGroup on the skill → applies to all TCs (treat as global)
-      if (!skillFG) return true;
-      // featureGroup set → only inject when TC's useCaseTag matches
-      return !!tcFeatureGroup && skillFG === tcFeatureGroup;
-    }
-    return true;
-  });
+  // GLOBAL tier and unscoped skills always included; FEATURE/HISTORICAL-tier
+  // skills scoped to a featureGroup are matched against the TC's useCaseTag by
+  // relevance score (not exact string equality) — see services/skillSelector.ts.
+  const filteredSkills = selectRelevantSkills(skillsFromFiles, { useCaseTag: input.testCase.useCaseTag });
 
   // Merge pinned skills (always included) with featureGroup-filtered skills, deduping by name
   const pinnedNames = new Set((input.pinnedSkills ?? []).map((s) => s.name.toLowerCase()));
@@ -1568,12 +1718,19 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   });
 
   // Build product skills section — inject BEFORE pattern memory so skills ground general knowledge
-  const skillLines = buildSkillsSection(sortedSkills.length > 0 ? sortedSkills : undefined, isRobot);
+  const skillLines = buildSkillsSection(
+    sortedSkills.length > 0 ? sortedSkills : undefined,
+    isRobot,
+    truncationBudget.referenceSkill || 3500,
+  );
 
   // Build project pattern memory section — inject proven login/locator patterns
   const patternMemoryLines = input.patternMemory?.trim()
     ? buildPatternMemorySection(input.patternMemory.trim())
     : [];
+
+  // Build Object/Locator Repository section — closed list of named, verified locators
+  const locatorRepoLines = buildLocatorRepositorySection(input.locatorEntries);
 
   // Build past heals section — teach the agent which patterns to avoid
   const healLines: string[] = [];
@@ -1590,8 +1747,8 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
   // Build prerequisite script context — teaches the agent the working login/nav pattern
   const prereqLines: string[] = [];
   if (input.prerequisiteScript) {
-    const cap = input.prerequisiteScript.scriptContent.slice(0, 4000);
-    const truncated = input.prerequisiteScript.scriptContent.length > 4000;
+    const prereqCharCap = truncationBudget.prerequisite || 4000;
+    const { text: cap, truncated } = truncateScriptForPrompt(input.prerequisiteScript.scriptContent, prereqCharCap, isRobot);
     const fence = isRobot ? 'robot' : 'typescript';
     const truncMarker = isRobot ? '# … (truncated)' : '// … (truncated)';
     const rfInstructions = [
@@ -1638,8 +1795,8 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
       'Reuse the same locators, waits, and keyword structure wherever applicable.',
     );
     for (const ref of input.referenceScripts) {
-      const cap = ref.scriptContent.slice(0, 3000);
-      const truncated = ref.scriptContent.length > 3000;
+      const refCharCap = truncationBudget.perReferenceScript || 3000;
+      const { text: cap, truncated } = truncateScriptForPrompt(ref.scriptContent, refCharCap, isRobot);
       const truncMarker = isRobot ? '# … (truncated)' : '// … (truncated)';
       refLines.push(
         '',
@@ -1670,6 +1827,7 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     `Expected Result: ${input.testCase.expectedResult}`,
     ...resourceLines,
     ...patternMemoryLines,
+    ...locatorRepoLines,
     ...(contextParts.length > 0 ? [
       '',
       '### LOCKED LOCATORS & Context — HIGHEST PRIORITY — FOLLOW EXACTLY',
@@ -1769,6 +1927,39 @@ function addCssPrefix(locator: string): string {
   return locator;
 }
 
+// A stray double-space (or tab) inside what's meant to be one Log message
+// splits it into multiple RF cells — the fragment right after the message
+// then gets parsed as Log's second positional argument, which is `level`,
+// not more message text. RF throws "Argument 'level' got value '...' that
+// cannot be converted to 'TRACE', 'DEBUG', ..." and the whole test fails at
+// that line. See fixSplitLogMessage below.
+const VALID_LOG_LEVELS = new Set(['TRACE', 'DEBUG', 'INFO', 'CONSOLE', 'HTML', 'WARN', 'ERROR', 'NONE']);
+const NAMED_ARG_RE = /^[a-zA-Z_]\w*=/;
+
+function fixSplitLogMessage(line: string): string {
+  if (!/^\s*Log(\s{2,}|\t)/.test(line)) return line;
+  const indent = line.match(/^(\s*)/)?.[1] ?? '';
+  const cells = line.trim().split(/ {2,}|\t/);
+  if (cells.length <= 2) return line; // already just `Log <message>` — nothing to fix
+
+  const keyword = cells[0];
+  const rest = cells.slice(1);
+
+  // Peel off legitimate trailing cells from the end: named args (console=True,
+  // html=True, ...) are always separate cells, and at most one bare level
+  // token (INFO, WARN, ...) may follow the message as Log's 2nd positional arg.
+  let i = rest.length - 1;
+  const trailing: string[] = [];
+  while (i >= 0 && NAMED_ARG_RE.test(rest[i])) { trailing.unshift(rest[i]); i--; }
+  if (i > 0 && VALID_LOG_LEVELS.has(rest[i].trim().toUpperCase())) { trailing.unshift(rest[i]); i--; }
+
+  const messageParts = rest.slice(0, i + 1);
+  if (messageParts.length <= 1) return line; // nothing was wrongly split
+
+  const message = messageParts.join(' ');
+  return [indent + keyword, message, ...trailing].join('    ');
+}
+
 function sanitizeRobotScript(script: string): string {
   const lines = script.split('\n');
   const out: string[] = [];
@@ -1794,6 +1985,9 @@ function sanitizeRobotScript(script: string): string {
       const indent = fixed.match(/^(\s+)/)?.[1] ?? '    ';
       fixed = `${indent}Keyboard Input    type    \${TC_PASSWORD}`;
     }
+
+    // 2c. Fix Log messages accidentally split across cells by a stray double-space
+    fixed = fixSplitLogMessage(fixed);
 
     // 3. Add css= prefix to bare locators in Browser keyword lines
     const trimmedLine = fixed.trimStart();

@@ -34,6 +34,7 @@ import {
 import { PROMPT_GUIDE_CONTENT } from '../lib/promptGuide.js';
 import { generateContextGuide } from '../lib/contextGuide.js';
 import { convertCodegenToRobot } from '../agents/codegenConverterAgent.js';
+import { recordScriptEdit } from '../services/scriptDiff.js';
 
 const router = Router({ mergeParams: true });
 
@@ -42,8 +43,14 @@ router.use(requireProjectAccess as unknown as RequestHandler);
 
 // ── Zod schemas ────────────────────────────────────────────────────────────
 
+// 50 was an arbitrary cap with no technical basis — generation is queued
+// (BullMQ, concurrency 3), so a bigger batch just takes longer to drain, it
+// doesn't block the request. Raised to a generous sanity ceiling instead of
+// a number picked to match nobody's actual batch size.
+const MAX_GENERATE_BATCH = 200;
+
 const GenerateSchema = z.object({
-  testCaseIds: z.array(z.string().min(1)).min(1).max(50),
+  testCaseIds: z.array(z.string().min(1)).min(1).max(MAX_GENERATE_BATCH),
   withHeal: z.boolean().optional().default(false),
   contextNote: z.string().max(12000).optional(),
   domSnippet: z.string().max(8000).optional(),
@@ -170,7 +177,16 @@ router.post('/generate', async (req: Request, res: Response) => {
   try {
     const parsed = GenerateSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
+      // A plain, human-readable string here matters — the frontend surfaces
+      // this directly in a toast, and Zod's flatten() is an object that
+      // doesn't render as one (this is exactly what silently produced the
+      // unhelpful generic "Request failed with status code 400" toast when
+      // a batch exceeded MAX_GENERATE_BATCH).
+      const tooMany = req.body?.testCaseIds?.length > MAX_GENERATE_BATCH;
+      const message = tooMany
+        ? `You selected ${req.body.testCaseIds.length} test cases — the limit per batch is ${MAX_GENERATE_BATCH}. Split into smaller batches.`
+        : 'Invalid request — check the selected test cases and try again.';
+      res.status(400).json({ error: message, detail: parsed.error.flatten() });
       return;
     }
 
@@ -467,6 +483,26 @@ router.put('/project-file/content', async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /edits/pending — structural script corrections awaiting approval ──
+// STRUCTURAL edits (step/keyword changes, as opposed to a plain locator swap
+// which auto-promotes) sit here until a reviewer marks the script golden
+// (see PATCH /:id/golden) — that toggle is the approval gate that promotes them.
+
+router.get('/edits/pending', async (req: Request, res: Response) => {
+  try {
+    const edits = await prisma.scriptEdit.findMany({
+      where: { projectId: req.project.id, classification: 'STRUCTURAL', promoted: false },
+      include: { script: { select: { id: true, filename: true, isGolden: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    res.json({ edits });
+  } catch (err) {
+    console.error('[scripts] GET /edits/pending', err);
+    res.status(500).json({ error: 'Failed to list pending edits' });
+  }
+});
+
 // ── GET /:id/content — return raw script content ───────────────────────────
 
 router.get('/:id/content', async (req: Request, res: Response) => {
@@ -515,6 +551,7 @@ router.put('/:id/content', async (req: Request, res: Response) => {
     }
 
     const { content } = parsed.data;
+    const previousContent = script.content;
 
     // Update DB and filesystem
     await prisma.script.update({
@@ -526,7 +563,24 @@ router.put('/:id/content', async (req: Request, res: Response) => {
     // Auto-link TCs whose tcId matches [Tags] in this script (non-blocking)
     void autoLinkScriptByTags(req.project.id, script.id, content);
 
-    res.json({ ok: true });
+    // Record + classify this edit so it feeds the correction loop instead of
+    // vanishing on overwrite — locator swaps are promoted into the Object
+    // Repository immediately; structural edits are recorded for review.
+    let editSummary: { classification: string } | null = null;
+    try {
+      editSummary = await recordScriptEdit({
+        scriptId: script.id,
+        projectId: req.project.id,
+        previousContent,
+        newContent: content,
+        page: (script as any).useCaseFolder,
+        editedBy: req.user.id,
+      });
+    } catch (err) {
+      console.error('[scripts] recordScriptEdit failed (non-fatal):', err);
+    }
+
+    res.json({ ok: true, editClassification: editSummary?.classification ?? null });
   } catch (err) {
     console.error('[scripts] PUT /:id/content', err);
     res.status(500).json({ error: 'Failed to save script content' });
@@ -548,6 +602,17 @@ router.patch('/:id/golden', async (req: Request, res: Response) => {
       where: { id: script.id },
       data: { isGolden: !script.isGolden },
     });
+
+    // Marking a script golden IS the human approval gate for any structural
+    // corrections recorded against it — promote them so future generations can
+    // draw on the corrected version via the golden-examples pool.
+    if (updated.isGolden) {
+      await prisma.scriptEdit.updateMany({
+        where: { scriptId: script.id, promoted: false },
+        data: { promoted: true },
+      });
+    }
+
     res.json({ id: updated.id, isGolden: updated.isGolden });
   } catch (err) {
     console.error('[scripts] PATCH /:id/golden', err);

@@ -13,6 +13,8 @@ import suitesRouter from './suites.js';
 import adminRouter from './admin.js';
 import resourcesRouter from './resources.js';
 import skillsRouter from './skills.js';
+import locatorsRouter from './locators.js';
+import extensionRouter from './extension.js';
 import { verifyToken } from '../middleware/auth.js';
 import { requireFullMode } from '../middleware/requireFullMode.js';
 
@@ -64,5 +66,10 @@ router.use('/projects/:projectId/resources', resourcesRouter);
 // ── Product Skills — AI only ──────────────────────────────────────────────
 router.use('/projects/:projectId/skills', requireFullMode, skillsRouter);
 
+// ── Object/Locator Repository ──────────────────────────────────────────────
+router.use('/projects/:projectId/locators', locatorsRouter);
+
+// ── Chrome Extension download ─────────────────────────────────────────────
+router.use('/extension', extensionRouter);
 
 export default router;

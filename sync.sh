@@ -43,6 +43,23 @@ echo ""
 
 cd "$DIR"
 
+# ── 0. Warn before discarding local edits to docker-compose.yml ─────────────
+# docker-compose.yml is meant to be identical on every server — anything that
+# varies per site (ports, target-app extra_hosts, CPU/memory limits) belongs
+# in .env, which git never touches. If this still shows local edits, the next
+# step is about to silently wipe them, same as it always has — this just
+# makes that visible instead of letting it happen quietly.
+if ! git diff --quiet -- docker-compose.yml; then
+  echo "⚠  docker-compose.yml has local edits that are about to be discarded:"
+  echo ""
+  git --no-pager diff --stat -- docker-compose.yml
+  echo ""
+  echo "   Move whatever changed into .env instead (see .env.example) so it"
+  echo "   survives every future sync. Continuing in 5s — Ctrl+C to stop."
+  echo ""
+  sleep 5
+fi
+
 # ── 1. Pull latest code ──────────────────────────────────────────────────────
 echo "⟳ Pulling latest code…"
 git checkout -- .

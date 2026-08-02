@@ -11,6 +11,12 @@ interface HealCardProps {
   retrying?: boolean;
   /** When false (Viewer role), hides approve/reject action buttons */
   canWrite?: boolean;
+  /** Clicking the card (outside its own action buttons) shows this heal's AI Analysis in the parent panel */
+  onSelect?: () => void;
+  /** Whether this card is the one currently shown in the AI Analysis panel */
+  selected?: boolean;
+  /** Opens the full diff in a larger popup — separate from the inline compact preview toggle */
+  onViewFullDiff?: () => void;
 }
 
 const TYPE_META = {
@@ -56,7 +62,7 @@ function ConfBar({ value }: { value: number }) {
   );
 }
 
-export default function HealCard({ heal, onApprove, onReject, onRetryWithContext, busy, retrying, canWrite = true }: HealCardProps) {
+export default function HealCard({ heal, onApprove, onReject, onRetryWithContext, busy, retrying, canWrite = true, onSelect, selected, onViewFullDiff }: HealCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showContext, setShowContext] = useState(false);
   const [contextText, setContextText] = useState('');
@@ -78,9 +84,10 @@ export default function HealCard({ heal, onApprove, onReject, onRetryWithContext
   return (
     <div
       className={`heal-item${heal.confidence >= 90 ? ' healed' : heal.confidence >= 70 ? ' warning' : ' critical'}`}
+      onClick={onSelect}
       style={{
         background: 'var(--surface)',
-        border: '1px solid var(--border)',
+        border: selected ? '1px solid var(--cyan)' : '1px solid var(--border)',
         borderLeft: `3px solid ${rail}`,
         borderRadius: 10,
         padding: '12px 14px',
@@ -88,10 +95,10 @@ export default function HealCard({ heal, onApprove, onReject, onRetryWithContext
         flexDirection: 'column',
         gap: 10,
         transition: 'border-color 0.15s',
-        cursor: 'default',
+        cursor: onSelect ? 'pointer' : 'default',
       }}
-      onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = `var(--amber) var(--border) var(--border) var(--amber)`)}
-      onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = `${rail} var(--border) var(--border) ${rail}`)}
+      onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLDivElement).style.borderColor = `var(--amber) var(--border) var(--border) var(--amber)`; }}
+      onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLDivElement).style.borderColor = `${rail} var(--border) var(--border) ${rail}`; }}
     >
       {/* Header */}
       <div
@@ -419,6 +426,27 @@ export default function HealCard({ heal, onApprove, onReject, onRetryWithContext
         >
           {expanded ? '▲ Less' : '▼ Diff'}
         </button>
+
+        {onViewFullDiff && diff.length > 0 && (
+          <button
+            className="hb-view-full"
+            onClick={(e) => { e.stopPropagation(); onViewFullDiff(); }}
+            title="Open this diff in a larger view"
+            style={{
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              background: 'transparent',
+              color: 'var(--cyan)',
+              fontWeight: 600,
+              fontSize: 11,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ⤢ Full Diff
+          </button>
+        )}
       </div>
     </div>
   );

@@ -41,7 +41,7 @@ export default function DiffViewer({ diff, maxLines, compact = false }: DiffView
       </div>
 
       {/* Diff lines */}
-      <div style={{ overflow: 'auto', maxHeight: compact ? 120 : 340, background: 'var(--surface)' }}>
+      <div style={{ overflow: 'auto', maxHeight: compact ? 120 : '65vh', background: 'var(--surface)' }}>
         {lines.map((dl, i) => {
           const isAdd = dl.type === 'add';
           const isRemove = dl.type === 'remove';

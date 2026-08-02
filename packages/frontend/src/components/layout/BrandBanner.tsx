@@ -5,6 +5,7 @@ import { Minimize2, Maximize2 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { getInitials, PROJECT_GRADIENTS } from '../../lib/utils';
 import type { Project } from '../../types';
+import ExtensionInstallModal from '../extension/ExtensionInstallModal';
 
 function projectColor(p: Project): string {
   return p.color ?? PROJECT_GRADIENTS[p.id.charCodeAt(0) % PROJECT_GRADIENTS.length];
@@ -15,6 +16,7 @@ export default function BrandBanner() {
   const navigate = useNavigate();
   const isLight = theme === 'light';
   const [query, setQuery] = useState('');
+  const [showExtModal, setShowExtModal] = useState(false);
 
   const filteredProjects = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -106,6 +108,31 @@ export default function BrandBanner() {
 
       {/* Right: density toggle + theme toggle + logo */}
       <div className="bb-right">
+        {/* Extension install button */}
+        <button
+          onClick={() => setShowExtModal(true)}
+          title="Get the QA Infinity Chrome Extension"
+          type="button"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '4px 10px', borderRadius: 6,
+            background: 'rgba(139,92,246,0.18)', border: '1px solid rgba(139,92,246,0.4)',
+            color: 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'var(--font-ui)', whiteSpace: 'nowrap',
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(139,92,246,0.32)';
+            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(139,92,246,0.7)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(139,92,246,0.18)';
+            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(139,92,246,0.4)';
+          }}
+        >
+          🧩 Get Extension
+        </button>
+
         <button
           className="density-toggle"
           onClick={toggleDensity}
@@ -135,6 +162,9 @@ export default function BrandBanner() {
           }}
         />
       </div>
+
+      {/* Extension install modal */}
+      {showExtModal && <ExtensionInstallModal onClose={() => setShowExtModal(false)} />}
     </header>
   );
 }

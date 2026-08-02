@@ -90,7 +90,10 @@ function extractPlaywrightLoginBlock(content: string): string | null {
 function extractLocators(content: string, isRobot: boolean): string[] {
   if (isRobot) {
     // Robot Browser library selectors: css=, id=, role=, text=
-    const pattern = /\b(?:css|id|role|text|xpath)=[^\s'"}\n]{4,}/g;
+    // (?:[^\s'"]|"[^"]*"|'[^']*')+ rather than a plain [^\s'"}\n]{4,} class —
+    // role=xxx[name="..."] and css=[attr='...'] both contain quotes (often
+    // with internal spaces) and would otherwise be truncated at the first one.
+    const pattern = /\b(?:css|id|role|text|xpath)=(?:[^\s'"]|"[^"]*"|'[^']*'){4,}/g;
     const raw = content.match(pattern) ?? [];
     return [...new Set(raw)].filter((l) => !l.includes('${') && l.length < 100);
   }
@@ -127,6 +130,12 @@ function inferLabel(selector: string): string {
 // ── Main export ─────────────────────────────────────────────────────────────
 
 export async function updatePatternMemory(projectId: string): Promise<void> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { slug: true },
+  });
+  if (!project) return;
+
   const scripts = await prisma.script.findMany({
     where: {
       projectId,
@@ -140,10 +149,12 @@ export async function updatePatternMemory(projectId: string): Promise<void> {
   if (scripts.length === 0) return;
 
   // Load content from disk (fall back to DB column)
+  // NOTE: readScript takes the project SLUG, not the projectId — passing projectId here
+  // used to silently fail and mask the bug behind the DB-content fallback below.
   const loaded: Array<{ id: string; content: string; title: string; isRobot: boolean }> = [];
   for (const s of scripts) {
     let content = s.content;
-    try { content = readScript(projectId, s.filename); } catch { /* use DB */ }
+    try { content = readScript(project.slug, s.filename); } catch { /* use DB */ }
     if (!content?.trim()) continue;
     loaded.push({
       id: s.id,

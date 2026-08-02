@@ -39,10 +39,20 @@ process.on('uncaughtException', (err) => {
 const app = express();
 const httpServer = createServer(app);
 
+const _corsOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
+  .split(',').map(o => o.trim()).filter(Boolean);
+const _corsWildcard = _corsOrigins.includes('*');
+
+function corsOriginFn(incoming: string | undefined, cb: (err: Error | null, allow?: boolean) => void): void {
+  if (!incoming) return cb(null, true); // server-to-server
+  const ok = _corsWildcard || _corsOrigins.includes(incoming) || incoming.startsWith('chrome-extension://');
+  cb(ok ? null : new Error('Not allowed by CORS'), ok);
+}
+
 // ── Socket.io ──────────────────────────────────────────────────────────────
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    origin: corsOriginFn,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -170,7 +180,7 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    origin: corsOriginFn,
     credentials: true,
   }),
 );

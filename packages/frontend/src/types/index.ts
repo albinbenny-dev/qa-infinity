@@ -573,6 +573,26 @@ export interface ProjectSkill {
   updatedAt: string;
 }
 
+// ── Object/Locator Repository ────────────────────────────────────────────────
+// A persisted, named, per-page store of verified selectors — populated from
+// passing runs, approved manual corrections, or a bulk import of a team's own
+// hand-curated locator map. Script generation selects from this by name
+// instead of inventing selectors fresh each time.
+export interface LocatorEntry {
+  id: string;
+  projectId: string;
+  name: string;               // e.g. "STOCKCREATION.POFIELD"
+  page: string | null;        // scope — matched against a TC's useCaseTag
+  selector: string;           // e.g. "id=sixdee_field_input_poNumber"
+  strategy: string;           // "id" | "css" | "role" | "text" | "xpath"
+  confidence: number;         // 0..1
+  successCount: number;
+  failCount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UIFlowSkillContent {
   targetUrl: string;
   navigationPath: string[];

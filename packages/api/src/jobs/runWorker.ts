@@ -7,6 +7,7 @@ import type { RunJobPayload } from '../lib/queue.js';
 import { generateReport } from '../services/reportService.js';
 import { isAgentEnabled } from '../lib/agentConfig.js';
 import { updatePatternMemory } from '../services/patternExtractor.js';
+import { recordLocatorSuccess, buildLocatorName } from '../services/locatorRepository.js';
 
 const ARTIFACTS_ROOT = process.env.ARTIFACTS_PATH ?? '/artifacts';
 
@@ -439,7 +440,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     if (passed) {
       totalPassed++;
       emitLog(runId, 'pass', `✓ ${scriptName} PASSED · ${(duration / 1000).toFixed(1)}s`);
-      void extractAndLockLocators(testCaseId, scriptPath).catch(() => {});
+      void extractAndLockLocators(testCaseId, scriptPath, projectId, runId).catch(() => {});
       void updatePatternMemory(projectId).catch(() => {});
     } else {
       totalFailed++;
@@ -547,7 +548,12 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
 // Parses css=, text=, xpath= and nth= patterns from the script content, then
 // merges them into testCase.generationHints so the next generation skips the
 // guessing phase and starts with proven selectors.
-async function extractAndLockLocators(testCaseId: string, scriptPath: string): Promise<void> {
+async function extractAndLockLocators(
+  testCaseId: string,
+  scriptPath: string,
+  projectId: string,
+  runId: string,
+): Promise<void> {
   let scriptContent: string;
   try {
     scriptContent = fs.readFileSync(scriptPath, 'utf-8');
@@ -555,8 +561,17 @@ async function extractAndLockLocators(testCaseId: string, scriptPath: string): P
     return;
   }
 
-  // Extract all locator strings assigned to variables or passed to RF Browser keywords
-  const locatorPattern = /(?:css=|text=|xpath=)[^\s'"}{]+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
+  // Extract all locator strings assigned to variables or passed to RF Browser keywords.
+  // Previously this only matched css=/text=/xpath= — missing id= and role=, which are
+  // tiers 1 and 4 of the system prompt's own locator priority order and thus extremely
+  // common in generated scripts. Any passing script whose corrected locator happened to
+  // use id= or role= silently never made it into generationHints OR the Locator
+  // Repository, so the fix could pass a real run and still never get "learned."
+  // The (?:[^\s'"]|"[^"]*"|'[^']*')+ body (rather than a plain [^\s'"}{]+ class) matters
+  // just as much here: role=row[name="..."] and css=[attr='...'] both contain quotes
+  // (often with internal spaces) and would otherwise be truncated at the first one,
+  // silently corrupting exactly the two most-recommended locator strategies.
+  const locatorPattern = /(?:css=|id=|role=|text=|xpath=)(?:[^\s'"]|"[^"]*"|'[^']*')+(?:\s*>>\s*(?:nth=\d+|text="[^"]+"))?/g;
   const matches = scriptContent.match(locatorPattern) ?? [];
   const unique = [...new Set(matches)].filter(
     (l) => !l.includes('${') && l.length > 5,
@@ -566,7 +581,7 @@ async function extractAndLockLocators(testCaseId: string, scriptPath: string): P
 
   const tc = await prisma.testCase.findUnique({
     where: { id: testCaseId },
-    select: { generationHints: true },
+    select: { generationHints: true, useCaseTag: true },
   });
   if (!tc) return;
 
@@ -585,6 +600,20 @@ async function extractAndLockLocators(testCaseId: string, scriptPath: string): P
     where: { id: testCaseId },
     data: { generationHints: JSON.stringify(hints) },
   });
+
+  // Feed the same passing-run evidence into the Object/Locator Repository so
+  // future generations select these selectors by name instead of re-guessing.
+  await Promise.all(
+    unique.map((selector) =>
+      recordLocatorSuccess({
+        projectId,
+        name: buildLocatorName(tc.useCaseTag, selector),
+        page: tc.useCaseTag,
+        selector,
+        runId,
+      }).catch((err) => console.error(`[run-worker] recordLocatorSuccess failed for "${selector}" (TC ${testCaseId}):`, err)),
+    ),
+  );
 }
 
 // ── Helper: emit log line ────────────────────────────────────────────────────

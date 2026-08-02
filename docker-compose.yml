@@ -35,11 +35,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '${QA_POSTGRES_CPU_LIMIT:-0.5}'
+          memory: ${QA_POSTGRES_MEM_LIMIT:-512M}
         reservations:
-          cpus: '0.1'
-          memory: 256M
+          cpus: '${QA_POSTGRES_CPU_RESERVE:-0.1}'
+          memory: ${QA_POSTGRES_MEM_RESERVE:-256M}
     networks:
       - qa-net
 
@@ -64,11 +64,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '${QA_REDIS_CPU_LIMIT:-0.25}'
+          memory: ${QA_REDIS_MEM_LIMIT:-256M}
         reservations:
-          cpus: '0.05'
-          memory: 64M
+          cpus: '${QA_REDIS_CPU_RESERVE:-0.05}'
+          memory: ${QA_REDIS_MEM_RESERVE:-64M}
     networks:
       - qa-net
 
@@ -81,8 +81,8 @@ services:
     container_name: qa-api
     restart: unless-stopped
     ports:
-      - "4100:4000"
-      - "5655:5555"   # Prisma Studio (dev only)
+      - "${API_HOST_PORT:-4100}:4000"
+      - "${PRISMA_STUDIO_HOST_PORT:-5655}:5555"   # Prisma Studio (dev only)
     env_file:
       - .env
     environment:
@@ -113,15 +113,15 @@ services:
       retries: 5
       start_period: 30s
     extra_hosts:
-      - "airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local:10.0.12.244"
+      - "${TARGET_APP_HOSTNAME:-airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local}:${TARGET_APP_IP:-10.0.12.244}"
     deploy:
       resources:
         limits:
-          cpus: '0.75'
-          memory: 1024M
+          cpus: '${QA_API_CPU_LIMIT:-0.75}'
+          memory: ${QA_API_MEM_LIMIT:-1024M}
         reservations:
-          cpus: '0.25'
-          memory: 512M
+          cpus: '${QA_API_CPU_RESERVE:-0.25}'
+          memory: ${QA_API_MEM_RESERVE:-512M}
     networks:
       - qa-net
 
@@ -150,15 +150,15 @@ services:
       - ./scripts:/scripts
       - qa-artifacts:/artifacts
     extra_hosts:
-      - "airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local:10.0.12.244"
+      - "${TARGET_APP_HOSTNAME:-airtel6d-in-ventas-master-int-aavm-alpha-01.ocplab.6d.local}:${TARGET_APP_IP:-10.0.12.244}"
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 6G
+          cpus: '${QA_RUNNER_CPU_LIMIT:-4}'
+          memory: ${QA_RUNNER_MEM_LIMIT:-6G}
         reservations:
-          cpus: '1'
-          memory: 1G
+          cpus: '${QA_RUNNER_CPU_RESERVE:-1}'
+          memory: ${QA_RUNNER_MEM_RESERVE:-1G}
     networks:
       - qa-net
 
@@ -173,7 +173,7 @@ services:
     environment:
       - TZ=Asia/Kolkata
     ports:
-      - "3100:80"
+      - "${UI_HOST_PORT:-3100}:80"
     depends_on:
       qa-api:
         condition: service_healthy
@@ -182,11 +182,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.1'
-          memory: 64M
+          cpus: '${QA_UI_CPU_LIMIT:-0.1}'
+          memory: ${QA_UI_MEM_LIMIT:-64M}
         reservations:
-          cpus: '0.05'
-          memory: 32M
+          cpus: '${QA_UI_CPU_RESERVE:-0.05}'
+          memory: ${QA_UI_MEM_RESERVE:-32M}
     networks:
       - qa-net
 
