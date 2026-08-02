@@ -41,6 +41,9 @@ RUN cd packages/api && ./node_modules/.bin/prisma generate
 COPY packages/api/src ./packages/api/src
 COPY packages/api/tsconfig.json ./packages/api/
 
+# Extension dist — served as a downloadable zip
+COPY packages/extension/dist ./packages/extension/dist
+
 EXPOSE 4000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
