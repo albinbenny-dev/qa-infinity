@@ -185,8 +185,10 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     }
 
     // Create SKIPPED RunResults for TCs with no automation script
-    if (skippedTcIds.length > 0) {
-      for (const tcId of skippedTcIds) {
+    // Filter to only IDs that exist in the DB — stale frontend selections can reference deleted TCs
+    const validSkippedTcIds = skippedTcIds.filter(id => tcReadableId.has(id));
+    if (validSkippedTcIds.length > 0) {
+      for (const tcId of validSkippedTcIds) {
         await prisma.runResult.create({
           data: { runId, testCaseId: tcId, status: 'SKIPPED', errorMessage: 'No automation script — test case skipped' },
         });
