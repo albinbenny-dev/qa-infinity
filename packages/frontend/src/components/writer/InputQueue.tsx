@@ -97,7 +97,7 @@ interface InputQueueProps {
 }
 
 // ── Tab types ─────────────────────────────────────────────────
-type InputTab = 'screen' | 'ref' | 'docs' | 'jira' | 'api' | 'prompt';
+type InputTab = 'prompt' | 'screen' | 'ref' | 'docs' | 'jira' | 'api';
 
 // ── Style helpers ─────────────────────────────────────────────
 const AMBER = '#f59e0b';
@@ -275,8 +275,8 @@ export default function InputQueue({
   const [useCases,         setUseCases]         = useState<string[]>([]);
   const [isAddingGroup,    setIsAddingGroup]    = useState(false);
 
-  // Active tab — default to 'screen' (or 'ref' in standard mode)
-  const [activeTab, setActiveTab] = useState<InputTab>(isStandardMode ? 'ref' : 'screen');
+  // Active tab — default to 'prompt' (or 'ref' in standard mode)
+  const [activeTab, setActiveTab] = useState<InputTab>(isStandardMode ? 'ref' : 'prompt');
 
   // ── Handlers (unchanged from original) ───────────────────
 
@@ -601,12 +601,12 @@ export default function InputQueue({
             borderRadius: '8px',
             padding: '2px',
           }}>
+            <TabBtn tab="prompt" active={activeTab === 'prompt'} count={promptCount} onClick={() => setActiveTab('prompt')} />
             <TabBtn tab="screen" active={activeTab === 'screen'} count={screenCount} onClick={() => setActiveTab('screen')} />
             <TabBtn tab="ref"    active={activeTab === 'ref'}    count={refCount}    onClick={() => setActiveTab('ref')} />
             <TabBtn tab="docs"   active={activeTab === 'docs'}   count={docsCount}   onClick={() => setActiveTab('docs')} />
             <TabBtn tab="jira"   active={activeTab === 'jira'}   count={jiraCount}   onClick={() => setActiveTab('jira')} />
             <TabBtn tab="api"    active={activeTab === 'api'}    count={apiCount}    onClick={() => setActiveTab('api')} />
-            <TabBtn tab="prompt" active={activeTab === 'prompt'} count={promptCount} onClick={() => setActiveTab('prompt')} />
           </div>
         </div>
       )}
