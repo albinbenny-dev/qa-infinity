@@ -99,7 +99,7 @@ export function useGenerateTestCases(projectId: string) {
       const res = await api.post<GenerateResponse>(
         `/projects/${projectId}/test-cases/generate`,
         req,
-        { timeout: 300_000 },
+        { timeout: 900_000 },
       );
       return res.data;
     },

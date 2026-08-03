@@ -31,6 +31,7 @@ import { autoScanPage } from '../services/uiAutoScan.js';
 import type { AgentLearning, RecordedAction } from '../types/scanner.js';
 import { saveScript, deleteScript } from '../services/scriptFileService.js';
 import { z } from 'zod';
+import { compressScreenshot } from '../lib/imageOptimizer.js';
 
 const router = Router({ mergeParams: true });
 
@@ -81,6 +82,8 @@ const GenerateInputSchema = z.object({
   seedTestCases: z.array(SeedTCSchema).optional(),
   /** Optional: IDs of specific skills to inject; omit to auto-select by relevance */
   skillIds: z.array(z.string()).optional(),
+  /** Target use case tag — scopes "existing TC" dedup to this tag only, preventing cross-use-case suppression */
+  useCaseTag: z.string().optional(),
 }).refine(
   (d) => d.inputs.length > 0 || (d.seedTestCases && d.seedTestCases.length > 0),
   { message: 'Provide at least one input source or one seed test case' },
@@ -197,7 +200,11 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const { inputs, testTypes, additionalContext, seedTestCases } = parsed.data;
+    const { inputs, testTypes, additionalContext, seedTestCases, useCaseTag: explicitUseCaseTag } = parsed.data;
+
+    // Scope "existing TC" dedup to the target use case only.
+    // Cross-use-case TCs in the DB must not suppress happy-path generation for a new/different feature.
+    const targetUseCaseTag = explicitUseCaseTag ?? seedTestCases?.find((s) => s.useCaseTag)?.useCaseTag;
 
     const uiSnapshots: UISnapshot[] = [];
 
@@ -223,12 +230,24 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
               // Uploaded screenshot shortcut — skip live capture entirely
               if (inp.meta?.uploadedScreenshot) {
                 const snapLabel = inp.meta.menuContext ?? inp.label ?? inp.content;
+                // Strip data-URI prefix so we work with raw base64, then compress.
+                // Raw 1920×1080 PNG ≈ 2 000–3 000 vision tokens; 1280-wide JPEG q=70 ≈ 400–600.
+                const rawB64 = inp.meta.uploadedScreenshot.replace(/^data:[^;]+;base64,/, '');
+                let finalB64 = rawB64;
+                let finalMedia: 'image/png' | 'image/jpeg' = detectImageMediaType(rawB64);
+                try {
+                  const compressed = await compressScreenshot(Buffer.from(rawB64, 'base64'), { maxWidth: 1280, quality: 70 });
+                  finalB64 = compressed.toString('base64');
+                  finalMedia = 'image/jpeg';
+                } catch {
+                  // compression failed — fall back to original, generation still proceeds
+                }
                 uiSnapshots.push({
                   url: inp.content,
                   pageTitle: snapLabel,
-                  screenshotBase64: inp.meta.uploadedScreenshot,
+                  screenshotBase64: finalB64,
                   interactiveElements: '',
-                  mediaType: detectImageMediaType(inp.meta.uploadedScreenshot),
+                  mediaType: finalMedia,
                   label: snapLabel,
                 });
                 content = `[Uploaded screenshot: "${snapLabel}"]`;
@@ -319,7 +338,10 @@ router.post('/generate', async (req: Request, res: Response, next: NextFunction)
         orderBy: { useCaseTag: 'asc' },
       }),
       prisma.testCase.findMany({
-        where: { projectId: req.project.id },
+        where: {
+          projectId: req.project.id,
+          ...(targetUseCaseTag ? { useCaseTag: targetUseCaseTag } : {}),
+        },
         select: { title: true },
         orderBy: { createdAt: 'asc' },
       }),

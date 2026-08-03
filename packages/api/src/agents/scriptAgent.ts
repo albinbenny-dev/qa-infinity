@@ -1856,6 +1856,7 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     const stream = directClient.messages.stream({
       model,
       max_tokens: 32000,
+      temperature: 0.1,
       system: systemBlocks,
       messages: [{ role: 'user', content: userPromptParts.join('\n') }],
     });

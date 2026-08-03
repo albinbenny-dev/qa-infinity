@@ -500,6 +500,7 @@ export async function runWriterAgent(input: WriterInput): Promise<WriterResult> 
     const message = await directClient.messages.stream({
       model,
       max_tokens: 32000,
+      temperature: 0,
       system: systemBlocks,
       messages: [{ role: 'user', content: sdkContent }],
     }).finalMessage();
