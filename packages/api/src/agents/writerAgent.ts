@@ -234,6 +234,19 @@ function formatSkillContent(skillType: string, content: Record<string, unknown>)
       break;
     }
     case 'TEST_DATA': {
+      // datasets[] — each entry has { label, values } — the primary credential/config format
+      if (Array.isArray(content.datasets) && content.datasets.length) {
+        lines.push('  Datasets (USE THESE EXACT VALUES — do not substitute or invent):');
+        for (const ds of content.datasets as Array<{ label?: string; values?: Record<string, unknown> }>) {
+          if (ds.label) lines.push(`    [${ds.label}]`);
+          if (ds.values) {
+            for (const [k, v] of Object.entries(ds.values)) {
+              lines.push(`      ${k}: ${v}`);
+            }
+          }
+        }
+      }
+      if (content.notes) lines.push(`  Notes: ${content.notes}`);
       if (content.validData) lines.push(`  Valid data: ${JSON.stringify(content.validData)}`);
       if (content.invalidData) lines.push(`  Invalid data: ${JSON.stringify(content.invalidData)}`);
       if (content.boundaryValues) lines.push(`  Boundary values: ${JSON.stringify(content.boundaryValues)}`);
