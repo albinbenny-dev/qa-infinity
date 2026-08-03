@@ -104,6 +104,7 @@ const initialInputState: InputQueueState = {
   uiScreenUrls: [],
   apiInputs: [] as ApiInput[],
   apiSeedTCs: [] as SeedTC[],
+  prompts: [],
 };
 
 // ── SkillsSidePanel ────────────────────────────────────────────────────────
@@ -492,15 +493,15 @@ export default function TestWriter() {
   const hasScanDraft = state.generatedTCs.some((tc) => tc._tempId.startsWith('scan-'));
 
   const inputCount = useMemo(() => {
-    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, seedTCs, apiInputs, apiSeedTCs } = state.inputState;
+    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, seedTCs, apiInputs, apiSeedTCs, prompts } = state.inputState;
     return jiraStories.length + refTCs.length + uploadedDocs.length + uiScreenUrls.length + seedTCs.length
-      + (apiInputs?.length ?? 0) + (apiSeedTCs?.length ?? 0);
+      + (apiInputs?.length ?? 0) + (apiSeedTCs?.length ?? 0) + (prompts?.length ?? 0);
   }, [state.inputState]);
 
   const handleGenerate = useCallback(async () => {
     if (!project) return;
 
-    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes, seedTCs, apiInputs, apiSeedTCs } = state.inputState;
+    const { jiraStories, refTCs, uploadedDocs, uiScreenUrls, additionalContext, testTypes, seedTCs, apiInputs, apiSeedTCs, prompts } = state.inputState;
 
     const activeTypes = (Object.entries(testTypes) as ['UI' | 'API' | 'SIT', boolean][])
       .filter(([, v]) => v)
@@ -584,6 +585,11 @@ export default function TestWriter() {
           : 'upload';
         inputs.push({ type, content: apiInp.filePath, label: apiInp.label });
       }
+    }
+
+    // Prompt tab inputs
+    for (const p of (prompts ?? [])) {
+      inputs.push({ type: 'prompt', content: p.text, label: 'Prompt' });
     }
 
     const allSeeds = [

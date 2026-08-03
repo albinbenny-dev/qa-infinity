@@ -76,6 +76,7 @@ export interface InputQueueState {
   testTypes: { UI: boolean; API: boolean; SIT: boolean };
   apiInputs: ApiInput[];
   apiSeedTCs: SeedTC[];
+  prompts: Array<{ tempId: string; text: string }>;
 }
 
 interface InputQueueProps {
@@ -96,7 +97,7 @@ interface InputQueueProps {
 }
 
 // ── Tab types ─────────────────────────────────────────────────
-type InputTab = 'screen' | 'ref' | 'docs' | 'jira' | 'api';
+type InputTab = 'screen' | 'ref' | 'docs' | 'jira' | 'api' | 'prompt';
 
 // ── Style helpers ─────────────────────────────────────────────
 const AMBER = '#f59e0b';
@@ -135,6 +136,7 @@ const TAB_COLOR: Record<InputTab, string> = {
   docs:   'var(--cyan)',
   jira:   'var(--sky)',
   api:    'var(--amber)',
+  prompt: 'var(--violet)',
 };
 const TAB_DIM: Record<InputTab, string> = {
   screen: 'var(--emerald-dim)',
@@ -142,6 +144,7 @@ const TAB_DIM: Record<InputTab, string> = {
   docs:   'var(--cyan-dim)',
   jira:   'var(--cyan-dim)',
   api:    AMBER_BG,
+  prompt: 'var(--violet-dim)',
 };
 
 // ── Tab button (icon + label, equal-width columns) ────────────
@@ -151,6 +154,7 @@ const TAB_META: Record<InputTab, { icon: string; short: string }> = {
   docs:   { icon: '📄', short: 'Docs'    },
   jira:   { icon: '🎫', short: 'Jira'    },
   api:    { icon: '⚡', short: 'API'     },
+  prompt: { icon: '✍', short: 'Prompt'  },
 };
 
 function TabBtn({
@@ -261,6 +265,9 @@ export default function InputQueue({
   const [curlText,          setCurlText]         = useState('');
   const [isParsingApiSeed,  setIsParsingApiSeed]  = useState(false);
   const [apiSeedParseError, setApiSeedParseError] = useState<string | null>(null);
+
+  // Prompt tab state
+  const [promptText, setPromptText] = useState('');
 
   // Style Ref search
   const [refSearchResults, setRefSearchResults] = useState<{ id: string; tcId: string; title: string; useCaseTag?: string }[]>([]);
@@ -544,11 +551,12 @@ export default function InputQueue({
   };
 
   // Tab badge counts
-  const screenCount = state.uiScreenUrls.length;
-  const refCount    = state.refTCs.length + state.seedTCs.length;
-  const docsCount   = state.uploadedDocs.length;
-  const jiraCount   = state.jiraStories.length;
-  const apiCount    = state.apiInputs.length + state.apiSeedTCs.length;
+  const screenCount  = state.uiScreenUrls.length;
+  const refCount     = state.refTCs.length + state.seedTCs.length;
+  const docsCount    = state.uploadedDocs.length;
+  const jiraCount    = state.jiraStories.length;
+  const apiCount     = state.apiInputs.length + state.apiSeedTCs.length;
+  const promptCount  = state.prompts?.length ?? 0;
 
   // ── Render ────────────────────────────────────────────────
   return (
@@ -598,6 +606,7 @@ export default function InputQueue({
             <TabBtn tab="docs"   active={activeTab === 'docs'}   count={docsCount}   onClick={() => setActiveTab('docs')} />
             <TabBtn tab="jira"   active={activeTab === 'jira'}   count={jiraCount}   onClick={() => setActiveTab('jira')} />
             <TabBtn tab="api"    active={activeTab === 'api'}    count={apiCount}    onClick={() => setActiveTab('api')} />
+            <TabBtn tab="prompt" active={activeTab === 'prompt'} count={promptCount} onClick={() => setActiveTab('prompt')} />
           </div>
         </div>
       )}
@@ -1454,6 +1463,64 @@ export default function InputQueue({
               </div>
             )}
           </div>
+        )}
+
+        {/* ════════════════════════════
+            PROMPT PANEL
+        ═══════════════════════════ */}
+        {activeTab === 'prompt' && !isStandardMode && (
+          <>
+            <p style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', lineHeight: 1.5 }}>
+              Describe what to test in plain language. The most direct way to focus the LLM — pair with skills for best results.
+            </p>
+
+            {/* Added prompts */}
+            {(state.prompts ?? []).map((p, i) => (
+              <div key={p.tempId} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                <div style={{
+                  flex: 1, padding: '7px 10px',
+                  background: 'var(--violet-dim)', border: '1px solid rgba(139,92,246,0.3)',
+                  borderRadius: 'var(--radius)', fontSize: '11px', color: 'var(--text)',
+                  lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>
+                  {p.text}
+                </div>
+                <div
+                  style={iconBtn('var(--rose)', 'var(--rose-dim)', 'rgba(220,38,38,0.2)')}
+                  onClick={() => onChange({ prompts: state.prompts.filter((_, idx) => idx !== i) })}
+                >✕</div>
+              </div>
+            ))}
+
+            {/* Input area */}
+            <textarea
+              className="input-field"
+              placeholder={"Describe what to test, e.g.:\n\"Generate POS Sales test cases for the order creation flow. Focus on payment methods (Cash and Airtel Money). Exclude login and cash register setup — those are handled by suite setup.\""}
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              style={{ fontSize: '11px', lineHeight: '1.6', minHeight: '100px', resize: 'vertical', borderColor: 'rgba(139,92,246,0.35)' }}
+            />
+            <button
+              onClick={() => {
+                const text = promptText.trim();
+                if (!text) return;
+                onChange({ prompts: [...(state.prompts ?? []), { tempId: `prompt-${Date.now()}`, text }] });
+                setPromptText('');
+              }}
+              disabled={!promptText.trim()}
+              style={{
+                width: '100%', padding: '7px', borderRadius: 'var(--radius)',
+                background: promptText.trim() ? 'var(--violet-dim)' : 'var(--surface3)',
+                border: `1px solid ${promptText.trim() ? 'rgba(139,92,246,0.4)' : 'var(--border)'}`,
+                color: promptText.trim() ? 'var(--violet)' : 'var(--text-dim)',
+                fontSize: '11px', fontWeight: 700,
+                cursor: promptText.trim() ? 'pointer' : 'default',
+                transition: 'all 0.15s',
+              }}
+            >
+              + Add Prompt
+            </button>
+          </>
         )}
 
       </div>{/* /panel body */}
