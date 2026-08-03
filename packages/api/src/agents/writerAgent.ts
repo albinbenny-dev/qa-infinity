@@ -122,10 +122,14 @@ against that list. Do NOT generate a test case that is substantially similar (sa
 to any existing one. If all obvious scenarios are already covered, generate tests for edge cases, negative paths, or
 combinations not yet represented.
 
-When UI screenshots are provided, carefully analyse the actual screen:
-- Identify every form, input field, button, dropdown, and navigation element visible.
-- Derive test cases that cover the visible happy paths, form validations, empty states, and error conditions.
-- Note any visible labels, placeholders, or hint text and use them in step descriptions.
+When UI screenshots are provided:
+- If MULTIPLE screenshots are provided, treat them as sequential steps of a single user flow — read them in order
+  and derive end-to-end test cases that navigate through ALL the screens in sequence, not one test per screen.
+  Use the screenshots to identify the exact page order, field names, button labels, and transitions so each
+  generated TC reflects the real navigation path from start to finish.
+- If a single screenshot is provided, analyse the visible forms, inputs, buttons, and dropdowns and derive
+  tests covering happy paths, validations, empty states, and error conditions for that screen.
+- In all cases, note the exact labels, placeholders, and button text visible and use them verbatim in step descriptions.
 
 Coverage strategy — for each use case, ensure:
 1. At least one happy-path (end-to-end success) test
