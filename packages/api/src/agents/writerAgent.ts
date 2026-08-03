@@ -234,23 +234,46 @@ function formatSkillContent(skillType: string, content: Record<string, unknown>)
       break;
     }
     case 'TEST_DATA': {
-      // datasets[] — each entry has { label, values } — the primary credential/config format
-      if (Array.isArray(content.datasets) && content.datasets.length) {
-        lines.push('  Datasets (USE THESE EXACT VALUES — do not substitute or invent):');
-        for (const ds of content.datasets as Array<{ label?: string; values?: Record<string, unknown> }>) {
-          if (ds.label) lines.push(`    [${ds.label}]`);
-          if (ds.values) {
-            for (const [k, v] of Object.entries(ds.values)) {
-              lines.push(`      ${k}: ${v}`);
+      // Flatten any JSON structure into key: value lines.
+      // Supports flat objects, nested objects, datasets[] with {label,values}, and legacy fields.
+      lines.push('  USE THESE EXACT VALUES in test steps — do not invent substitutes or use placeholders:');
+      const skipKeys = new Set(['scope', 'dataSetupInstructions', 'notes']);
+      function emitKV(node: unknown, indent: string): void {
+        if (node === null || node === undefined || node === '') return;
+        if (typeof node !== 'object') {
+          // bare scalar — caller already printed the key
+          return;
+        }
+        if (Array.isArray(node)) {
+          for (const item of node as unknown[]) {
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              const rec = item as Record<string, unknown>;
+              // { label, values } pattern
+              if (rec['label'] || rec['values']) {
+                if (rec['label']) lines.push(`${indent}[${rec['label']}]`);
+                emitKV(rec['values'] ?? rec, indent + '  ');
+              } else {
+                emitKV(rec, indent);
+              }
+            } else {
+              lines.push(`${indent}- ${item}`);
+            }
+          }
+        } else {
+          for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+            if (skipKeys.has(k)) continue;
+            if (v === null || v === undefined || v === '') continue;
+            if (typeof v === 'object') {
+              lines.push(`${indent}${k}:`);
+              emitKV(v, indent + '  ');
+            } else {
+              lines.push(`${indent}${k}: ${v}`);
             }
           }
         }
       }
+      emitKV(content, '    ');
       if (content.notes) lines.push(`  Notes: ${content.notes}`);
-      if (content.validData) lines.push(`  Valid data: ${JSON.stringify(content.validData)}`);
-      if (content.invalidData) lines.push(`  Invalid data: ${JSON.stringify(content.invalidData)}`);
-      if (content.boundaryValues) lines.push(`  Boundary values: ${JSON.stringify(content.boundaryValues)}`);
-      if (content.referenceData) lines.push(`  Reference data (exact dropdown values): ${JSON.stringify(content.referenceData)}`);
       if (content.dataSetupInstructions) lines.push(`  Setup: ${content.dataSetupInstructions}`);
       break;
     }
