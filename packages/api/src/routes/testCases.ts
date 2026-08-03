@@ -904,7 +904,12 @@ router.post('/parse-seed', seedUpload.single('file'), async (req: Request, res: 
     }
 
     const wb = xlsx.read(req.file.buffer, { type: 'buffer' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    // Prefer a sheet explicitly named "Test Cases"; fall back to the first sheet.
+    // Exported QA Infinity workbooks have a Dashboard sheet first, so [0] is wrong.
+    const tcSheetName = wb.SheetNames.find(
+      (n) => n.toLowerCase().replace(/\s+/g, '') === 'testcases',
+    ) ?? wb.SheetNames[0];
+    const ws = wb.Sheets[tcSheetName];
     const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(ws);
 
     const tcIdKeys        = ['tc id', 'tcid', 'tc_id', 'test case id', 'id'];
