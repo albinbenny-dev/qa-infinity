@@ -655,6 +655,7 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [skillDropOpen, setSkillDropOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState('');
+  const [collapsedSkillGroups, setCollapsedSkillGroups] = useState<Set<string>>(new Set());
   const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const skillTriggerRef = React.useRef<HTMLButtonElement>(null);
   const skillDropRef = React.useRef<HTMLDivElement>(null);
@@ -709,6 +710,14 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
     setSelectedSkillIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
+  function toggleSkillGroup(group: string) {
+    setCollapsedSkillGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group); else next.add(group);
+      return next;
+    });
+  }
+
   async function handleSubmit() {
     setBusy(true);
     await onConfirm({ contextNote: note, saveHints: save, scriptMode, skillIds: selectedSkillIds });
@@ -722,6 +731,17 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
     s.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
     (s.featureGroup ?? '').toLowerCase().includes(skillSearch.toLowerCase()),
   );
+
+  // Group unselected skills by feature group for a collapsible dropdown list
+  const groupedUnselected = useMemo(() => {
+    const map = new Map<string, ProjectSkill[]>();
+    for (const s of filteredUnselected) {
+      const key = s.featureGroup?.trim() || 'Ungrouped';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(s);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredUnselected]);
 
   const autoCount = singleTc?.useCaseTag
     ? allSkills.filter((s: ProjectSkill) => s.featureGroup?.toLowerCase().trim() === singleTc.useCaseTag?.toLowerCase().trim()).length
@@ -930,32 +950,61 @@ function GenerateContextModal({ count, initialNote, projectId, singleTc, onConfi
               <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-dim)' }}>
                 {unselectedSkills.length === 0 ? 'All skills selected' : 'No matching skills'}
               </div>
-            ) : filteredUnselected.map((s: ProjectSkill) => (
-              <div
-                key={s.id}
-                onClick={() => { toggleSkill(s.id); setSkillSearch(''); }}
-                style={{
-                  padding: '7px 12px', fontSize: 11, cursor: 'pointer',
-                  borderTop: '1px solid var(--border)',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  color: 'var(--text)',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--surface3)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
-              >
-                <span style={{
-                  fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
-                  background: 'rgba(42,157,143,0.12)', color: SKILL_TYPE_COLOR[s.skillType] ?? 'var(--text-dim)',
-                  flexShrink: 0,
-                }}>
-                  {SKILL_TYPE_SHORT[s.skillType] ?? s.skillType}
-                </span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                {s.featureGroup && (
-                  <span style={{ fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>{s.featureGroup}</span>
-                )}
-              </div>
-            ))}
+            ) : groupedUnselected.map(([group, skills]) => {
+              const groupOpen = skillSearch !== '' || !collapsedSkillGroups.has(group);
+              return (
+                <div key={group}>
+                  {/* Group header */}
+                  <div
+                    onClick={() => toggleSkillGroup(group)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '6px 12px', cursor: 'pointer',
+                      borderTop: '1px solid var(--border)',
+                      background: 'var(--surface3)',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 9, color: 'var(--text-dim)', flexShrink: 0,
+                      transition: 'transform 0.15s', display: 'inline-block',
+                      transform: groupOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    }}>▼</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-mid)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {group}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>
+                      {skills.length}
+                    </span>
+                  </div>
+
+                  {/* Skill rows */}
+                  {groupOpen && skills.map((s) => (
+                    <div
+                      key={s.id}
+                      onClick={() => { toggleSkill(s.id); setSkillSearch(''); }}
+                      style={{
+                        padding: '7px 12px 7px 26px', fontSize: 11, cursor: 'pointer',
+                        borderTop: '1px solid var(--border)',
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        color: 'var(--text)',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--surface3)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+                    >
+                      <span style={{
+                        fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
+                        background: 'rgba(42,157,143,0.12)', color: SKILL_TYPE_COLOR[s.skillType] ?? 'var(--text-dim)',
+                        flexShrink: 0,
+                      }}>
+                        {SKILL_TYPE_SHORT[s.skillType] ?? s.skillType}
+                      </span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
