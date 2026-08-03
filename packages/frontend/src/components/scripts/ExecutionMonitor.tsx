@@ -8,6 +8,8 @@ interface ExecutionMonitorProps {
   projectId?: string;
   scriptName: string;
   onClose: () => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }
 
 // ── Step indicator helpers ─────────────────────────────────────────────────
@@ -33,7 +35,7 @@ function formatTs(ts: string): string {
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function ExecutionMonitor({
-  runId, scriptName, onClose,
+  runId, scriptName, onClose, onCancel, cancelling,
 }: ExecutionMonitorProps) {
   const { logs, stats, status, joinRun, leaveRun } = useRunSocket();
 
@@ -93,11 +95,12 @@ export default function ExecutionMonitor({
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const isRunning = status === 'running' || status === 'connecting' || status === 'idle';
+  const isCancelled = status === 'cancelled';
   const hasFailed = stats.failed > 0 || status === 'error';
   const hasPassed = status === 'complete' && stats.failed === 0;
 
-  const statusColor = hasPassed ? 'var(--emerald)' : hasFailed ? 'var(--rose)' : 'var(--amber)';
-  const statusLabel = hasPassed ? 'PASSED' : hasFailed ? 'FAILED' : isRunning ? 'RUNNING' : 'DONE';
+  const statusColor = hasPassed ? 'var(--emerald)' : hasFailed ? 'var(--rose)' : isCancelled ? 'var(--text-dim)' : 'var(--amber)';
+  const statusLabel = hasPassed ? 'PASSED' : hasFailed ? 'FAILED' : isCancelled ? 'CANCELLED' : isRunning ? 'RUNNING' : 'DONE';
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -128,7 +131,22 @@ export default function ExecutionMonitor({
         <span style={{ flex: 1, fontSize: 11, color: 'var(--text-mid)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {scriptName}
         </span>
-        <div style={{ display: 'flex', gap: 6, cursor: 'default' }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'default' }}>
+          {isRunning && onCancel && (
+            <button
+              onClick={onCancel}
+              disabled={cancelling}
+              title="Cancel this run"
+              style={{
+                background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.35)',
+                color: 'var(--rose)', fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
+                borderRadius: 4, padding: '3px 8px', cursor: cancelling ? 'wait' : 'pointer',
+                opacity: cancelling ? 0.6 : 1, fontFamily: 'var(--font-ui)',
+              }}
+            >
+              {cancelling ? 'CANCELLING…' : '■ CANCEL'}
+            </button>
+          )}
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}>×</button>
         </div>
       </div>

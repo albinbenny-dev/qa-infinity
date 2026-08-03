@@ -10,7 +10,7 @@ import TCDetailModal from '../components/tc-library/TCDetailModal';
 import EditorTabs, { type EditorTab } from '../components/scripts/EditorTabs';
 import { useProject, useProjectEnvConfigs } from '../hooks/useProjects';
 import { useRBAC } from '../hooks/useRBAC';
-import { useCreateIndividualRun, useRun } from '../hooks/useRuns';
+import { useCreateIndividualRun, useRun, useCancelRun } from '../hooks/useRuns';
 import { useTestCases, useUseCases } from '../hooks/useTestCases';
 import {
   useScripts,
@@ -2097,6 +2097,8 @@ export default function Scripts() {
   const save = useSaveScriptContent(projectId ?? '');
   const deleteScriptMutation = useDeleteScript(projectId ?? '');
   const createIndividualRun = useCreateIndividualRun(projectId ?? '');
+  const cancelRun = useCancelRun(projectId ?? '');
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const { data: envConfigs = [] } = useProjectEnvConfigs(projectId);
 
   // ── Resources state ────────────────────────────────────────────────────────
@@ -3169,6 +3171,18 @@ export default function Scripts() {
     }
   }
 
+  async function handleCancelMonitorRun(runId: string) {
+    setCancellingRunId(runId);
+    try {
+      await cancelRun.mutateAsync(runId);
+      toast('Run cancelled');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to cancel run');
+    } finally {
+      setCancellingRunId(null);
+    }
+  }
+
   // ── Rename feature group ──────────────────────────────────────────────────
 
   async function handleRenameGroup(newName: string) {
@@ -3276,6 +3290,8 @@ export default function Scripts() {
           projectId={projectId}
           scriptName={monitorScript}
           onClose={() => setShowMonitor(false)}
+          onCancel={() => handleCancelMonitorRun(monitorRunId)}
+          cancelling={cancellingRunId === monitorRunId}
         />
       )}
 
