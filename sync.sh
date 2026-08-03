@@ -63,6 +63,7 @@ fi
 # ── 1. Pull latest code ──────────────────────────────────────────────────────
 echo "⟳ Pulling latest code…"
 git checkout -- .
+git config pull.rebase true
 git pull
 echo "✔ Code up to date  ($(git log -1 --format='%h %s'))"
 echo ""
