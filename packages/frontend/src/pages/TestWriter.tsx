@@ -344,14 +344,6 @@ export default function TestWriter() {
   const allSkills = allSkillsData?.skills ?? [];
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
 
-  // Auto-select all active skills on first load
-  useEffect(() => {
-    if (allSkills.length > 0 && selectedSkillIds.size === 0) {
-      setSelectedSkillIds(new Set(allSkills.filter((s) => s.isActive).map((s) => s.id)));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allSkills.length]);
-
   const [activeAgentTraceId, setActiveAgentTraceId] = useState<string | null>(null);
   const [agentSteps, setAgentSteps] = useState<AgentTraceStep[]>([]);
   const [showAgentProgress, setShowAgentProgress] = useState(false);
