@@ -1790,9 +1790,13 @@ export async function runScriptAgent(input: ScriptAgentInput): Promise<ScriptAge
     const fence = isRobot ? 'robot' : 'typescript';
     refLines.push(
       '',
-      '### REFERENCE SCRIPTS — LEARN PATTERNS FROM THESE VERIFIED SCRIPTS',
-      'The following passing scripts demonstrate selectors and keywords that work in this application.',
-      'Reuse the same locators, waits, and keyword structure wherever applicable.',
+      '### REFERENCE SCRIPTS — COPY THESE EXACTLY (SECOND-HIGHEST PRIORITY AFTER LOCKED LOCATORS)',
+      'The following scripts are verified and passing in this application.',
+      'RULES:',
+      '  1. Copy every locator, Wait For Elements State, and Click verbatim from these scripts unless a LOCKED LOCATOR above explicitly overrides it for that step.',
+      '  2. Do NOT substitute your own selectors (role=, css=, id=, etc.) if a working one already exists in the reference.',
+      '  3. Do NOT add or remove steps that are present in the reference unless the test-case steps above explicitly require it.',
+      '  4. If the reference uses `text=X` prefer it over a css or role equivalent.',
     );
     for (const ref of input.referenceScripts) {
       const refCharCap = truncationBudget.perReferenceScript || 3000;
