@@ -1532,7 +1532,7 @@ export default function InputQueue({
 
       {/* ════════════════════════════════════
           BOTTOM — always visible
-          Additional Context · Test Types · Generate
+          Test Types · Generate
       ══════════════════════════════════════ */}
       <div style={{
         borderTop: '1px solid var(--border)',
@@ -1543,18 +1543,6 @@ export default function InputQueue({
         flexDirection: 'column',
         gap: '9px',
       }}>
-
-        {/* Additional Context */}
-        <div>
-          <label style={FL}>💬 Additional Context</label>
-          <textarea
-            className="input-field"
-            style={{ minHeight: '50px', fontSize: '11px', lineHeight: '1.6', resize: 'vertical', width: '100%', boxSizing: 'border-box' }}
-            placeholder="Scope, constraints, edge case focus..."
-            value={state.additionalContext}
-            onChange={(e) => onChange({ additionalContext: e.target.value })}
-          />
-        </div>
 
         {/* Test Types */}
         <div>
