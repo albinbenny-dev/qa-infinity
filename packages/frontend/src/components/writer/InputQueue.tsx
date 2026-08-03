@@ -837,12 +837,12 @@ export default function InputQueue({
                   inp.multiple = true;
                   inp.onchange = (e) => {
                     const files = Array.from((e.target as HTMLInputElement).files ?? []);
-                    files.forEach(file => {
+                    if (!files.length) return;
+                    const readAll = files.map(file => new Promise<UIScreenEntry>(resolve => {
                       const reader = new FileReader();
                       reader.onload = () => {
-                        const dataUrl = reader.result as string;
-                        const base64 = dataUrl.split(',')[1];
-                        const newScreen: UIScreenEntry = {
+                        const base64 = (reader.result as string).split(',')[1];
+                        resolve({
                           url: state.uiScreenUrls[0]?.url ?? '(uploaded screenshot)',
                           label: file.name.replace(/\.[^.]+$/, ''),
                           envName: state.uiScreenUrls[0]?.envName ?? '',
@@ -850,10 +850,12 @@ export default function InputQueue({
                           password: state.uiScreenUrls[0]?.password ?? '',
                           menuContext: file.name.replace(/\.[^.]+$/, ''),
                           imageBase64: base64,
-                        };
-                        onChange({ uiScreenUrls: [...state.uiScreenUrls, newScreen] });
+                        });
                       };
                       reader.readAsDataURL(file);
+                    }));
+                    void Promise.all(readAll).then(newScreens => {
+                      onChange({ uiScreenUrls: [...state.uiScreenUrls, ...newScreens] });
                     });
                   };
                   inp.click();
@@ -862,12 +864,12 @@ export default function InputQueue({
                 onDrop={e => {
                   e.preventDefault();
                   const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-                  files.forEach(file => {
+                  if (!files.length) return;
+                  const readAll = files.map(file => new Promise<UIScreenEntry>(resolve => {
                     const reader = new FileReader();
                     reader.onload = () => {
-                      const dataUrl = reader.result as string;
-                      const base64 = dataUrl.split(',')[1];
-                      onChange({ uiScreenUrls: [...state.uiScreenUrls, {
+                      const base64 = (reader.result as string).split(',')[1];
+                      resolve({
                         url: state.uiScreenUrls[0]?.url ?? '(dropped screenshot)',
                         label: file.name.replace(/\.[^.]+$/, ''),
                         envName: state.uiScreenUrls[0]?.envName ?? '',
@@ -875,9 +877,12 @@ export default function InputQueue({
                         password: '',
                         menuContext: file.name.replace(/\.[^.]+$/, ''),
                         imageBase64: base64,
-                      }]});
+                      });
                     };
                     reader.readAsDataURL(file);
+                  }));
+                  void Promise.all(readAll).then(newScreens => {
+                    onChange({ uiScreenUrls: [...state.uiScreenUrls, ...newScreens] });
                   });
                 }}
               >
