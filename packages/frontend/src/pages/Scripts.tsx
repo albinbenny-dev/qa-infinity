@@ -2138,21 +2138,22 @@ export default function Scripts() {
   const groups = useMemo(() => buildGroups(allTCs, useCases), [allTCs, useCases]);
 
   const [tcSearch, setTcSearch] = useState('');
+  const [scriptFilter, setScriptFilter] = useState<'all' | 'scripted' | 'pending'>('all');
 
   const filteredGroups = useMemo(() => {
     const q = tcSearch.trim().toLowerCase();
-    if (!q) return groups;
     return groups
       .map((g) => ({
         ...g,
-        tcs: g.tcs.filter(
-          (tc) =>
-            tc.title.toLowerCase().includes(q) ||
-            tc.tcId.toLowerCase().includes(q),
-        ),
+        tcs: g.tcs.filter((tc) => {
+          if (scriptFilter === 'scripted' && !scriptedTcIds.has(tc.id)) return false;
+          if (scriptFilter === 'pending' && scriptedTcIds.has(tc.id)) return false;
+          if (q && !tc.title.toLowerCase().includes(q) && !tc.tcId.toLowerCase().includes(q)) return false;
+          return true;
+        }),
       }))
       .filter((g) => g.tcs.length > 0);
-  }, [groups, tcSearch]);
+  }, [groups, tcSearch, scriptFilter, scriptedTcIds]);
 
   // ── Left panel state ─────────────────────────────────────────────────────
 
@@ -3636,21 +3637,36 @@ export default function Scripts() {
                     borderBottom: '1px solid var(--border)', flexShrink: 0,
                     background: 'var(--surface2)',
                   }}>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-                      background: 'rgba(42,157,143,0.12)', color: 'var(--emerald)',
-                      border: '1px solid rgba(42,157,143,0.25)',
-                    }}>
+                    <button
+                      onClick={() => setScriptFilter((f) => f === 'scripted' ? 'all' : 'scripted')}
+                      style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                        background: scriptFilter === 'scripted' ? 'rgba(42,157,143,0.3)' : 'rgba(42,157,143,0.12)',
+                        color: 'var(--emerald)',
+                        border: scriptFilter === 'scripted' ? '1px solid rgba(42,157,143,0.7)' : '1px solid rgba(42,157,143,0.25)',
+                        cursor: 'pointer', outline: 'none',
+                        boxShadow: scriptFilter === 'scripted' ? '0 0 0 1px rgba(42,157,143,0.4)' : 'none',
+                      }}
+                    >
                       ✓ {allTCs.length - pendingCount} scripted
-                    </span>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-                      background: pendingCount > 0 ? 'var(--violet-dim)' : 'var(--surface3)',
-                      color: pendingCount > 0 ? 'var(--violet)' : 'var(--text-dim)',
-                      border: pendingCount > 0 ? '1px solid rgba(244,123,32,0.25)' : '1px solid var(--border)',
-                    }}>
+                    </button>
+                    <button
+                      onClick={() => setScriptFilter((f) => f === 'pending' ? 'all' : 'pending')}
+                      style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                        background: scriptFilter === 'pending'
+                          ? 'var(--violet)'
+                          : pendingCount > 0 ? 'var(--violet-dim)' : 'var(--surface3)',
+                        color: scriptFilter === 'pending' ? 'white' : pendingCount > 0 ? 'var(--violet)' : 'var(--text-dim)',
+                        border: scriptFilter === 'pending'
+                          ? '1px solid var(--violet)'
+                          : pendingCount > 0 ? '1px solid rgba(244,123,32,0.25)' : '1px solid var(--border)',
+                        cursor: 'pointer', outline: 'none',
+                        boxShadow: scriptFilter === 'pending' ? '0 0 0 1px rgba(139,92,246,0.4)' : 'none',
+                      }}
+                    >
                       ○ {pendingCount} pending
-                    </span>
+                    </button>
                     {pendingCount > 0 && (
                       <button
                         onClick={handleSelectAllPending}
