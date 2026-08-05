@@ -31,6 +31,8 @@ export interface RunJobPayload {
   skippedTcIds?: string[];
   /** Maps each representative tcId → mirror tcIds that share the same script. Mirror TCs receive a copy of the representative's pass/fail result without re-running the script. */
   mirroredTcIds?: Record<string, string[]>;
+  /** Suite stages in execution order. When present the worker runs each stage as a barrier before starting the next, respecting per-stage mode. */
+  stages?: Array<{ id: string; useCaseTag: string; tcIds: string[]; mode: 'parallel' | 'sequential' }>;
   environment: string;
   envBaseUrl: string;
   envUsername?: string;

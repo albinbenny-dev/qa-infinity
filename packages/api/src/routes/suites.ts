@@ -192,6 +192,8 @@ router.post('/:suiteId/run', (async (req, res) => {
   // Parse stages (fall back to flat testCaseIds for older suites)
   let stages: SuiteStage[] = [];
   try { stages = JSON.parse(suite.stages) as SuiteStage[]; } catch { /* noop */ }
+  // Sort by the explicit order field so execution always matches the configured sequence
+  stages = stages.slice().sort((a, b) => a.order - b.order);
 
   let testCaseIds: string[] = [];
   if (stages.length > 0) {
@@ -248,7 +250,10 @@ router.post('/:suiteId/run', (async (req, res) => {
     testCaseIds: scriptPairs.map(r => r.testCaseId),
     scriptPaths: scriptPairs.map(r => r.scriptPath),
     skippedTcIds,
-      mirroredTcIds: mirrorMap,
+    mirroredTcIds: mirrorMap,
+    stages: stages.length > 0
+      ? stages.map(s => ({ id: s.id, useCaseTag: s.useCaseTag, tcIds: s.tcIds, mode: s.mode }))
+      : undefined,
     environment,
     envBaseUrl: envConfig.baseUrl,
     envUsername: envConfig.username,

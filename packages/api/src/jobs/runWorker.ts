@@ -488,17 +488,61 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     });
   }
 
-  const laneCount = Math.max(1, Math.min(hostBrowser ? 1 : (parallelWorkers || 1), scriptPaths.length || 1));
-  let nextIndex = 0;
-  async function workerLane(laneNum: number): Promise<void> {
-    while (true) {
-      if (runAbortController.signal.aborted) return;
-      const i = nextIndex++;
-      if (i >= scriptPaths.length) return;
-      await runOneScript(i, laneNum);
+  const { stages } = job.data;
+
+  if (stages && stages.length > 0) {
+    // Stage-aware execution: each stage is a barrier — stage N+1 only starts after
+    // stage N finishes. Within a stage, mode=sequential runs TCs one at a time;
+    // mode=parallel runs up to parallelWorkers TCs concurrently.
+    const tcIdToIdx = new Map<string, number>(testCaseIds.map((id, i) => [id, i]));
+    const executedIdxs = new Set<number>();
+
+    for (const stage of stages) {
+      if (runAbortController.signal.aborted) break;
+
+      const idxs = stage.tcIds
+        .map(tcId => tcIdToIdx.get(tcId))
+        .filter((i): i is number => i !== undefined && !executedIdxs.has(i));
+
+      if (idxs.length === 0) continue;
+
+      emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · ${stage.mode} · ${idxs.length} test(s)`);
+
+      if (stage.mode === 'sequential') {
+        for (const i of idxs) {
+          if (runAbortController.signal.aborted) break;
+          executedIdxs.add(i);
+          await runOneScript(i, 1);
+        }
+      } else {
+        const stageWorkers = Math.max(1, Math.min(hostBrowser ? 1 : parallelWorkers, idxs.length));
+        let sNext = 0;
+        const stageLane = async (laneNum: number): Promise<void> => {
+          while (true) {
+            if (runAbortController.signal.aborted) return;
+            const j = sNext++;
+            if (j >= idxs.length) return;
+            executedIdxs.add(idxs[j]);
+            await runOneScript(idxs[j], laneNum);
+          }
+        };
+        await Promise.all(Array.from({ length: stageWorkers }, (_, k) => stageLane(k + 1)));
+      }
     }
+  } else {
+    // Flat cursor execution for non-suite runs (schedules, manual, individual, etc.)
+    const laneCount = Math.max(1, Math.min(hostBrowser ? 1 : (parallelWorkers || 1), scriptPaths.length || 1));
+    let nextIndex = 0;
+    const workerLane = async (laneNum: number): Promise<void> => {
+      while (true) {
+        if (runAbortController.signal.aborted) return;
+        const i = nextIndex++;
+        if (i >= scriptPaths.length) return;
+        await runOneScript(i, laneNum);
+      }
+    };
+    await Promise.all(Array.from({ length: laneCount }, (_, idx) => workerLane(idx + 1)));
   }
-  await Promise.all(Array.from({ length: laneCount }, (_, idx) => workerLane(idx + 1)));
 
   // Stop the cancel watcher and abort any in-flight fetch
   clearInterval(cancelWatcher);
