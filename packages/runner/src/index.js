@@ -760,7 +760,9 @@ const server = http.createServer(async (req, res) => {
       });
 
       if (hasHierarchy && fs.existsSync(pageObjectsDir)) {
-        robotEnv.PYTHONPATH = [pageObjectsDir, process.env.PYTHONPATH || ''].filter(Boolean).join(':');
+        robotEnv.PYTHONPATH = [projectRoot, pageObjectsDir, process.env.PYTHONPATH || ''].filter(Boolean).join(':');
+      } else if (hasHierarchy) {
+        robotEnv.PYTHONPATH = [projectRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(':');
       }
 
       let spawnCmd, spawnArgs;
