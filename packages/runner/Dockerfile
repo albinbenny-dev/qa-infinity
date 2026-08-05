@@ -44,7 +44,7 @@ RUN python3 -m venv /opt/rfbrowser \
        robotframework-sshlibrary paramiko \
        urllib3 robotframework-requests robotframework-seleniumlibrary \
        robotframework-databaselibrary oracledb \
-       pymysql robotframework-jsonlibrary PyPDF2
+       pymysql robotframework-jsonlibrary PyPDF2 tabulate
 
 # Initialise RF Browser — downloads Playwright browsers managed by RF Browser
 RUN /opt/rfbrowser/bin/python -m Browser.entry init || true
