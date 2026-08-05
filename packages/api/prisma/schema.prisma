@@ -302,6 +302,7 @@ model Schedule {
   projectId       String
   name            String
   cronExpression  String
+  suiteId         String?
   testCaseIds     String   @default("[]")
   environment     String
   isActive        Boolean  @default(true)

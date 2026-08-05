@@ -173,7 +173,7 @@ export function useCreateSchedule(projectId: string) {
     mutationFn: async (data: {
       name: string;
       cronExpression: string;
-      testCaseIds: string[];
+      suiteId: string;
       environment: string;
       isActive?: boolean;
       emailRecipients?: string[];
@@ -192,7 +192,7 @@ export interface UpdateSchedulePayload {
   id: string;
   name?: string;
   cronExpression?: string;
-  testCaseIds?: string[];
+  suiteId?: string;
   environment?: string;
   isActive?: boolean;
   emailRecipients?: string[];

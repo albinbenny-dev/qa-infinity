@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import type { Project, EnvConfig, ProjectMember, RequirementDoc } from '../types';
+import { useProjectStore } from '../stores/projectStore';
 
 export function useProjects() {
   return useQuery({
@@ -57,12 +58,17 @@ export function useCreateProject() {
 
 export function useUpdateProject(projectId: string) {
   const qc = useQueryClient();
+  const { activeProject, setActiveProject } = useProjectStore();
   return useMutation({
     mutationFn: async (data: Partial<Project>) => {
       const res = await api.put<{ project: Project }>(`/projects/${projectId}`, data);
       return res.data.project;
     },
-    onSuccess: () => {
+    onSuccess: (updatedProject) => {
+      // Sync store so UI reads fresh values without a full page navigate
+      if (activeProject?.id === projectId) {
+        setActiveProject({ ...activeProject, ...updatedProject });
+      }
       qc.invalidateQueries({ queryKey: ['projects'] });
       qc.invalidateQueries({ queryKey: ['project-by-id', projectId] });
     },

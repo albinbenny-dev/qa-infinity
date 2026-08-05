@@ -32,14 +32,41 @@ const CreateGroupRunSchema = z.object({
 const CreateScheduleSchema = z.object({
   name: z.string().min(1).max(100),
   cronExpression: z.string().min(9).max(100),
-  testCaseIds: z.array(z.string()).min(1),
+  suiteId: z.string().optional(),
+  testCaseIds: z.array(z.string()).optional(),
   environment: z.string().min(1),
   isActive: z.boolean().default(true),
   emailRecipients: z.array(z.string().email()).default([]),
   parallelWorkers: z.number().int().min(1).max(16).default(2),
+}).refine(d => d.suiteId || (d.testCaseIds && d.testCaseIds.length > 0), {
+  message: 'Either suiteId or testCaseIds (min 1) must be provided',
 });
 
-const UpdateScheduleSchema = CreateScheduleSchema.partial();
+const UpdateScheduleSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  cronExpression: z.string().min(9).max(100).optional(),
+  suiteId: z.string().optional(),
+  testCaseIds: z.array(z.string()).optional(),
+  environment: z.string().min(1).optional(),
+  isActive: z.boolean().optional(),
+  emailRecipients: z.array(z.string().email()).optional(),
+  parallelWorkers: z.number().int().min(1).max(16).optional(),
+});
+
+// ── Suite helper ───────────────────────────────────────────────────────────
+
+interface _SuiteStageRow { tcIds: string[]; order: number; }
+
+async function tcIdsFromSuite(projectId: string, suiteId: string): Promise<string[] | null> {
+  const suite = await prisma.suite.findFirst({ where: { id: suiteId, projectId } });
+  if (!suite) return null;
+  let stages: _SuiteStageRow[] = [];
+  try { stages = JSON.parse(suite.stages) as _SuiteStageRow[]; } catch { /* noop */ }
+  if (stages.length > 0) {
+    return Array.from(new Set(stages.sort((a, b) => a.order - b.order).flatMap(s => s.tcIds)));
+  }
+  try { return JSON.parse(suite.testCaseIds) as string[]; } catch { return []; }
+}
 
 // ── Router setup ───────────────────────────────────────────────────────────
 
@@ -233,14 +260,24 @@ router.post('/schedules', async (req: Request, res: Response, next: NextFunction
       res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
       return;
     }
-    const { name, cronExpression, testCaseIds, environment, isActive, emailRecipients, parallelWorkers } = parsed.data;
+    const { name, cronExpression, suiteId, testCaseIds: rawTcIds, environment, isActive, emailRecipients, parallelWorkers } = parsed.data;
+
+    let resolvedTcIds: string[];
+    if (suiteId) {
+      const ids = await tcIdsFromSuite(req.project.id, suiteId);
+      if (!ids) { res.status(400).json({ error: 'Suite not found' }); return; }
+      resolvedTcIds = ids;
+    } else {
+      resolvedTcIds = rawTcIds ?? [];
+    }
 
     const schedule = await prisma.schedule.create({
       data: {
         projectId: req.project.id,
         name,
         cronExpression,
-        testCaseIds: JSON.stringify(testCaseIds),
+        suiteId: suiteId ?? null,
+        testCaseIds: JSON.stringify(resolvedTcIds),
         environment,
         isActive,
         emailRecipients: JSON.stringify(emailRecipients),
@@ -254,6 +291,7 @@ router.post('/schedules', async (req: Request, res: Response, next: NextFunction
         projectId: schedule.projectId,
         name: schedule.name,
         cronExpression: schedule.cronExpression,
+        suiteId: schedule.suiteId,
         testCaseIds: schedule.testCaseIds,
         environment: schedule.environment,
         parallelWorkers: schedule.parallelWorkers,
@@ -276,12 +314,23 @@ router.put('/schedules/:id', async (req: Request, res: Response, next: NextFunct
     const existing = await prisma.schedule.findFirst({ where: { id, projectId: req.project.id } });
     if (!existing) { res.status(404).json({ error: 'Schedule not found' }); return; }
 
+    // Resolve testCaseIds from suiteId when changing the suite
+    let resolvedTcIds: string[] | undefined;
+    if (parsed.data.suiteId !== undefined) {
+      const ids = await tcIdsFromSuite(req.project.id, parsed.data.suiteId);
+      if (!ids) { res.status(400).json({ error: 'Suite not found' }); return; }
+      resolvedTcIds = ids;
+    } else if (parsed.data.testCaseIds !== undefined) {
+      resolvedTcIds = parsed.data.testCaseIds;
+    }
+
     const updated = await prisma.schedule.update({
       where: { id },
       data: {
         ...(parsed.data.name !== undefined && { name: parsed.data.name }),
         ...(parsed.data.cronExpression !== undefined && { cronExpression: parsed.data.cronExpression }),
-        ...(parsed.data.testCaseIds !== undefined && { testCaseIds: JSON.stringify(parsed.data.testCaseIds) }),
+        ...(parsed.data.suiteId !== undefined && { suiteId: parsed.data.suiteId }),
+        ...(resolvedTcIds !== undefined && { testCaseIds: JSON.stringify(resolvedTcIds) }),
         ...(parsed.data.environment !== undefined && { environment: parsed.data.environment }),
         ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
         ...(parsed.data.emailRecipients !== undefined && { emailRecipients: JSON.stringify(parsed.data.emailRecipients) }),
@@ -296,6 +345,7 @@ router.put('/schedules/:id', async (req: Request, res: Response, next: NextFunct
         projectId: updated.projectId,
         name: updated.name,
         cronExpression: updated.cronExpression,
+        suiteId: updated.suiteId,
         testCaseIds: updated.testCaseIds,
         environment: updated.environment,
         parallelWorkers: updated.parallelWorkers,
@@ -315,7 +365,16 @@ router.post('/schedules/:id/run-now', async (req: Request, res: Response, next: 
     });
     if (!schedule) { res.status(404).json({ error: 'Schedule not found' }); return; }
 
-    const testCaseIds: string[] = JSON.parse(schedule.testCaseIds);
+    // If suite-linked, fetch live TCs from the suite; otherwise use stored testCaseIds
+    let testCaseIds: string[];
+    if (schedule.suiteId) {
+      const liveIds = await tcIdsFromSuite(req.project.id, schedule.suiteId);
+      if (!liveIds) { res.status(400).json({ error: 'Linked suite not found' }); return; }
+      testCaseIds = liveIds;
+    } else {
+      testCaseIds = JSON.parse(schedule.testCaseIds);
+    }
+
     if (testCaseIds.length === 0) {
       res.status(400).json({ error: 'Schedule has no test cases configured.' });
       return;

@@ -1352,12 +1352,13 @@ function RunNowPanel({ suites, testCases, scriptedTcIds, envConfigs, projectId, 
 
 // ── Schedule card ──────────────────────────────────────────────────────────
 
-function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onToggle, runNowPending, canWrite = true }: {
-  schedule: Schedule; isSelected: boolean;
+function ScheduleCard({ schedule, suites, isSelected, onEdit, onRunNow, onDelete, onToggle, runNowPending, canWrite = true }: {
+  schedule: Schedule; suites: Suite[]; isSelected: boolean;
   onEdit: () => void; onRunNow: () => void; onDelete: () => void; onToggle: () => void;
   runNowPending: boolean; canWrite?: boolean;
 }) {
   const tcIds = useMemo(() => parseTcIds(schedule.testCaseIds), [schedule.testCaseIds]);
+  const suiteName = useMemo(() => suites.find(s => s.id === schedule.suiteId)?.name, [suites, schedule.suiteId]);
   const emails = useMemo(() => { try { return JSON.parse(schedule.emailRecipients) as string[]; } catch { return []; } }, [schedule.emailRecipients]);
   const freq = useMemo(() => parseCronToFreq(schedule.cronExpression), [schedule.cronExpression]);
 
@@ -1394,7 +1395,10 @@ function ScheduleCard({ schedule, isSelected, onEdit, onRunNow, onDelete, onTogg
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(37,99,171,0.12)', color: 'var(--cyan)' }}>{schedule.environment}</span>
-        <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(244,123,32,0.1)', color: 'var(--skip)' }}>{tcIds.length} test{tcIds.length !== 1 ? 's' : ''}</span>
+        {suiteName
+          ? <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(42,157,143,0.1)', color: 'var(--pass)' }}>📦 {suiteName}</span>
+          : <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(244,123,32,0.1)', color: 'var(--skip)' }}>{tcIds.length} test{tcIds.length !== 1 ? 's' : ''}</span>
+        }
         <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(139,92,246,0.1)', color: 'var(--violet)' }}>W: {schedule.parallelWorkers}</span>
         {emails.length > 0 && <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(42,157,143,0.1)', color: 'var(--pass)' }}>📧 {emails.length}</span>}
         {!schedule.isActive && <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 100, background: 'rgba(100,116,139,0.12)', color: 'var(--text-dim)' }}>PAUSED</span>}
@@ -1422,19 +1426,17 @@ interface ScheduleFormState {
   name: string;
   freq: FreqConfig;
   environment: string;
-  selectedTcIds: string[];
+  suiteId: string;
   emailRecipients: string;
   isActive: boolean;
   parallelWorkers: number;
 }
 
-function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTcIds, onSave, onCancel: _onCancel, isSaving }: {
+function ScheduleForm({ mode, initial, envConfigs, suites, onSave, onCancel: _onCancel, isSaving }: {
   mode: 'create' | 'edit';
   initial?: Partial<ScheduleFormState>;
   envConfigs: EnvConfig[];
-  testCases: TestCase[];
   suites: Suite[];
-  scriptedTcIds: Set<string>;
   onSave: (d: ScheduleFormState) => void;
   onCancel: () => void;
   isSaving: boolean;
@@ -1444,7 +1446,7 @@ function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTc
     name: initial?.name ?? '',
     freq: initial?.freq ?? DEFAULT_FREQ,
     environment: initial?.environment ?? defaultEnv,
-    selectedTcIds: initial?.selectedTcIds ?? [],
+    suiteId: initial?.suiteId ?? '',
     emailRecipients: initial?.emailRecipients ?? '',
     isActive: initial?.isActive ?? true,
     parallelWorkers: initial?.parallelWorkers ?? 2,
@@ -1454,10 +1456,12 @@ function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTc
   const inputStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', boxSizing: 'border-box', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 12, outline: 'none', fontFamily: 'var(--font-ui)' };
   const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)', marginBottom: 5, display: 'block' };
 
+  const selectedSuite = suites.find(s => s.id === form.suiteId);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name.trim()) { toast.error('Schedule name is required'); return; }
-    if (form.selectedTcIds.length === 0) { toast.error('Select at least one test case'); return; }
+    if (!form.suiteId) { toast.error('Select a test suite'); return; }
     if (!form.environment.trim()) { toast.error('Select an environment'); return; }
     onSave(form);
   }
@@ -1501,37 +1505,35 @@ function ScheduleForm({ mode, initial, envConfigs, testCases, suites, scriptedTc
         </div>
       </div>
 
-      <SuiteSelector
-        suites={suites}
-        testCases={testCases}
-        selectedIds={form.selectedTcIds}
-        onChange={ids => set({ selectedTcIds: ids })}
-      />
-
-      <TcLibrarySelector
-        testCases={testCases}
-        selected={form.selectedTcIds}
-        onChange={ids => set({ selectedTcIds: ids })}
-        scriptedTcIds={scriptedTcIds}
-      />
-
-      {/* Run Order — drag to set execution sequence */}
-      {form.selectedTcIds.length > 0 && (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>⠿ Run Order</span>
-            <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{form.selectedTcIds.length} TCs · drag to reorder</span>
+      {/* Suite picker — the schedule runs exactly what the suite defines */}
+      <div>
+        <label style={labelStyle}>Test Suite</label>
+        {suites.length > 0 ? (
+          <>
+            <select
+              value={form.suiteId}
+              onChange={e => set({ suiteId: e.target.value })}
+              style={inputStyle}
+            >
+              <option value="">Select a suite…</option>
+              {suites.map(s => {
+                const count = parseTcIds(s.testCaseIds).length;
+                return <option key={s.id} value={s.id}>{s.name} ({count} test{count !== 1 ? 's' : ''})</option>;
+              })}
+            </select>
+            {selectedSuite && (
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span>📦</span>
+                <span>Runs <strong style={{ color: 'var(--text)' }}>{parseTcIds(selectedSuite.testCaseIds).length} test cases</strong> in the order defined by the suite</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic', padding: '8px 0' }}>
+            No suites yet — create one using the <strong>New Suite</strong> button first.
           </div>
-          <div style={{ padding: '8px 10px' }}>
-            <SortableTcList
-              tcIds={form.selectedTcIds}
-              allTcs={testCases}
-              onChange={ids => set({ selectedTcIds: ids })}
-              onRemove={id => set({ selectedTcIds: form.selectedTcIds.filter(x => x !== id) })}
-            />
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div>
         <label style={labelStyle}>Email Recipients</label>
@@ -1637,7 +1639,6 @@ export default function Scheduler() {
 
   const { activeProject } = useProjectStore();
   const envConfigs: EnvConfig[] = activeProject?.envConfigs ?? [];
-  const defaultEnv = envConfigs.find(e => e.isDefault)?.name ?? envConfigs[0]?.name ?? 'Dev';
 
   const { data: testCases = [] } = useQuery<TestCase[]>({
     queryKey: ['test-cases', projectId, 'scheduler-all'],
@@ -1659,7 +1660,6 @@ export default function Scheduler() {
   const { mutateAsync: createSuite, isPending: creatingSuite } = useCreateSuite(projectId);
   const { mutateAsync: updateSuite, isPending: updatingSuite } = useUpdateSuite(projectId);
   const { mutateAsync: deleteSuite } = useDeleteSuite(projectId);
-  const { mutateAsync: createRun } = useCreateRun(projectId);
 
   const activeCount = schedules.filter(s => s.isActive).length;
   const runs7d = scheduledRuns.filter(r => {
@@ -1672,11 +1672,9 @@ export default function Scheduler() {
 
   const editInitial: Partial<ScheduleFormState> | undefined = useMemo(() => {
     if (!editingSchedule) return undefined;
-    let tcIds: string[] = [];
     let emails = '';
-    try { tcIds = JSON.parse(editingSchedule.testCaseIds); } catch { /* noop */ }
     try { emails = (JSON.parse(editingSchedule.emailRecipients) as string[]).join(', '); } catch { /* noop */ }
-    return { name: editingSchedule.name, freq: parseCronToFreq(editingSchedule.cronExpression), environment: editingSchedule.environment, selectedTcIds: tcIds, emailRecipients: emails, isActive: editingSchedule.isActive, parallelWorkers: editingSchedule.parallelWorkers };
+    return { name: editingSchedule.name, freq: parseCronToFreq(editingSchedule.cronExpression), environment: editingSchedule.environment, suiteId: editingSchedule.suiteId ?? '', emailRecipients: emails, isActive: editingSchedule.isActive, parallelWorkers: editingSchedule.parallelWorkers };
   }, [editingSchedule]);
 
   const editSuiteInitial = useMemo(() => {
@@ -1693,10 +1691,10 @@ export default function Scheduler() {
     const emailRecipients = formData.emailRecipients.split(',').map(e => e.trim()).filter(Boolean);
     try {
       if (mode === 'create') {
-        await createSchedule({ name: formData.name, cronExpression, testCaseIds: formData.selectedTcIds, environment: formData.environment, isActive: formData.isActive, emailRecipients, parallelWorkers: formData.parallelWorkers });
+        await createSchedule({ name: formData.name, cronExpression, suiteId: formData.suiteId, environment: formData.environment, isActive: formData.isActive, emailRecipients, parallelWorkers: formData.parallelWorkers });
         toast.success('Schedule created');
       } else if (editingId) {
-        await updateSchedule({ id: editingId, name: formData.name, cronExpression, testCaseIds: formData.selectedTcIds, environment: formData.environment, isActive: formData.isActive, emailRecipients, parallelWorkers: formData.parallelWorkers });
+        await updateSchedule({ id: editingId, name: formData.name, cronExpression, suiteId: formData.suiteId, environment: formData.environment, isActive: formData.isActive, emailRecipients, parallelWorkers: formData.parallelWorkers });
         toast.success('Schedule updated');
       }
       closeForm();
@@ -1843,6 +1841,7 @@ export default function Scheduler() {
                   <ScheduleCard
                     key={schedule.id}
                     schedule={schedule}
+                    suites={suites}
                     isSelected={editingId === schedule.id && mode === 'edit'}
                     onEdit={() => { setEditingId(schedule.id); setEditingSuiteId(null); setMode('edit'); }}
                     onRunNow={() => handleRunNow(schedule.id)}
@@ -2000,9 +1999,7 @@ export default function Scheduler() {
                       mode={mode}
                       initial={editInitial}
                       envConfigs={envConfigs}
-                      testCases={testCases}
                       suites={suites}
-                      scriptedTcIds={scriptedTcIds}
                       onSave={handleSaveSchedule}
                       onCancel={closeForm}
                       isSaving={creating || updating}

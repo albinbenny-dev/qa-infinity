@@ -129,6 +129,7 @@ export interface Schedule {
   projectId: string;
   name: string;
   cronExpression: string;
+  suiteId?: string | null;
   testCaseIds: string;
   environment: string;
   isActive: boolean;

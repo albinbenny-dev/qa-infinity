@@ -52,10 +52,23 @@ interface ScheduleRow {
   projectId: string;
   name: string;
   cronExpression: string;
+  suiteId?: string | null;
   testCaseIds: string;
   environment: string;
   parallelWorkers: number;
   project?: { baseUrl?: string | null; slug?: string | null } | null;
+}
+
+async function resolveSuiteTcIds(projectId: string, suiteId: string): Promise<string[]> {
+  const suite = await prisma.suite.findFirst({ where: { id: suiteId, projectId } });
+  if (!suite) return [];
+  interface _Stage { tcIds: string[]; order: number; }
+  let stages: _Stage[] = [];
+  try { stages = JSON.parse(suite.stages) as _Stage[]; } catch { /* noop */ }
+  if (stages.length > 0) {
+    return Array.from(new Set(stages.sort((a, b) => a.order - b.order).flatMap(s => s.tcIds)));
+  }
+  try { return JSON.parse(suite.testCaseIds) as string[]; } catch { return []; }
 }
 
 export function registerSchedule(schedule: ScheduleRow): void {
@@ -72,7 +85,10 @@ export function registerSchedule(schedule: ScheduleRow): void {
   const task = cron.schedule(schedule.cronExpression, async () => {
     console.log(`[scheduler] Firing schedule "${schedule.name}" (${schedule.id})`);
     try {
-      const testCaseIds: string[] = JSON.parse(schedule.testCaseIds);
+      // If suite-linked, fetch fresh TCs from the suite at fire time
+      const testCaseIds: string[] = schedule.suiteId
+        ? await resolveSuiteTcIds(schedule.projectId, schedule.suiteId)
+        : JSON.parse(schedule.testCaseIds);
       if (testCaseIds.length === 0) return;
 
       // Fetch project slug for resolveScriptPath
