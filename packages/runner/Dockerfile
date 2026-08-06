@@ -63,8 +63,7 @@ WORKDIR /app
 # Copy workspace files for dependency resolution
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/runner/package.json ./packages/runner/
-RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # Copy runner HTTP server source
 COPY packages/runner/src ./packages/runner/src
