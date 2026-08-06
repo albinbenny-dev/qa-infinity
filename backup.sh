@@ -19,9 +19,13 @@ POSTGRES_USER="${POSTGRES_USER:-qauser}"
 POSTGRES_DB="${POSTGRES_DB:-qa_infinity}"
 
 # Load .env if present (picks up POSTGRES_USER, POSTGRES_DB, POSTGRES_PASSWORD)
+# Use grep instead of source to avoid issues with values containing spaces or special chars
 ENV_FILE="$(dirname "${BASH_SOURCE[0]}")/.env"
 if [ -f "$ENV_FILE" ]; then
-  set -a; source "$ENV_FILE"; set +a
+  _get_env() { grep -m1 "^$1=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'"; }
+  POSTGRES_USER="${POSTGRES_USER:-$(_get_env POSTGRES_USER)}"
+  POSTGRES_DB="${POSTGRES_DB:-$(_get_env POSTGRES_DB)}"
+  POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(_get_env POSTGRES_PASSWORD)}"
 fi
 
 # ── Restore mode ─────────────────────────────────────────────────────────────
