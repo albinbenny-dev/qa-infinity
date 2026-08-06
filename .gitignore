@@ -22,3 +22,6 @@ qa-dom-recorder.html
 sync-from-server.ps1
 sync-scripts-from-db.js
 Airtel Ventas - RF Scripts*/
+
+# Database backups
+backups/
