@@ -69,7 +69,7 @@ echo ""
 
 # ── 2. Build updated images (layer-cached — only changed layers rebuild) ─────
 echo "⟳ Building images…"
-$SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
+DOCKER_BUILDKIT=0 $SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
 echo "✔ Build done"
 echo ""
 

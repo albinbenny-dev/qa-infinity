@@ -14,8 +14,7 @@ WORKDIR /app
 # Copy workspace files for dependency resolution
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/api/package.json ./packages/api/
-RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --no-frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 # Symlink system ffmpeg into the path Playwright expects for video recording.
 # The required version is read from playwright-core's browsers.json so this
