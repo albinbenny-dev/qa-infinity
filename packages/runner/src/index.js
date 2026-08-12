@@ -169,8 +169,19 @@ async function startVncStack() {
       console.log(`[qa-runner] Starting Xvfb on ${display}`);
       spawnLogged('Xvfb', [display, '-screen', '0', '1600x900x24', '-ac']);
       await new Promise((resolve) => waitForXvfb(display, resolve));
-      // Start openbox WM so Chrome is placed at (0,0) and can be maximized
-      spawnLogged('openbox', ['--display', display]);
+      // Start openbox WM with auto-maximize so every new window fills the Xvfb
+      const obCfgPath = `/tmp/openbox-${displayNum}.xml`;
+      const obCfg = `<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*">
+      <maximized>yes</maximized>
+      <decor>no</decor>
+    </application>
+  </applications>
+</openbox_config>`;
+      try { fs.writeFileSync(obCfgPath, obCfg, 'utf8'); } catch {}
+      spawnLogged('openbox', ['--display', display, '--config-file', obCfgPath]);
     }
 
     const vncAlive = await checkPort(vncPort);
