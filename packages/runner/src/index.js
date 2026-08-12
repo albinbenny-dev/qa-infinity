@@ -169,6 +169,8 @@ async function startVncStack() {
       console.log(`[qa-runner] Starting Xvfb on ${display}`);
       spawnLogged('Xvfb', [display, '-screen', '0', '1600x900x24', '-ac']);
       await new Promise((resolve) => waitForXvfb(display, resolve));
+      // Start openbox WM so Chrome is placed at (0,0) and can be maximized
+      spawnLogged('openbox', ['--display', display]);
     }
 
     const vncAlive = await checkPort(vncPort);
@@ -1228,7 +1230,7 @@ const server = http.createServer(async (req, res) => {
 
     const pwBin = findPlaywrightBin();
     const systemChromium = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
-    const codegenProc = spawn(pwBin, ['codegen', '--ignore-https-errors', '--viewport-size=1600,900', `--browser-executable-path=${systemChromium}`, '--output', outputPath, url], {
+    const codegenProc = spawn(pwBin, ['codegen', '--ignore-https-errors', '--viewport-size=1600,770', `--browser-executable-path=${systemChromium}`, '--output', outputPath, url], {
       stdio: ['ignore', 'pipe', 'pipe'],
       // detached=true creates a new process group so we can kill the whole group
       // (parent playwright codegen + its Chromium child) with a single negative-PID signal
