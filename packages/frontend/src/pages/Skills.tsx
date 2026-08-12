@@ -721,7 +721,7 @@ function CreateSkillModal({
       setActiveRecording({ sessionId: result.sessionId, novncPort: result.novncPort, vncToken: result.vncToken ?? null });
       if (result.vncToken) {
         const novncUrl = `http://${window.location.hostname}:${result.novncPort}/vnc.html?path=websockify%3Ftoken%3D${result.vncToken}&autoconnect=1&resize=scale`;
-        window.open(novncUrl, '_blank');
+        window.open(novncUrl, '_blank', 'width=1280,height=760,resizable=yes');
         toast.success('Recording started — interact with the browser tab that opened');
       } else {
         toast.error('VNC sessions are all in use — recording cannot start. Stop another active session first.');
@@ -1414,7 +1414,7 @@ function CreateSkillModal({
                         const novncUrl = activeRecording.vncToken
                           ? `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?path=websockify%3Ftoken%3D${activeRecording.vncToken}&autoconnect=1&resize=scale`
                           : `http://${window.location.hostname}:${activeRecording.novncPort}/vnc.html?autoconnect=1&resize=scale`;
-                        window.open(novncUrl, '_blank');
+                        window.open(novncUrl, '_blank', 'width=1280,height=760,resizable=yes');
                       }}
                       style={{
                         padding: '5px 12px',

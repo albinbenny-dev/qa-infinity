@@ -2302,7 +2302,7 @@ export default function Scripts() {
       await api.post(`/projects/${projectId}/scripts/record/start`, { url: recordUrl, sessionId: sid });
       setRecordSessionId(sid);
       setRecordingActive(true);
-      window.open(`http://${window.location.hostname}:${novncPort}/vnc.html?autoconnect=1&resize=remote&quality=6`, '_blank');
+      window.open(`http://${window.location.hostname}:${novncPort}/vnc.html?autoconnect=1&resize=remote&quality=6`, '_blank', 'width=1280,height=760,resizable=yes');
       toast.success('Recording started — interact with the browser in the noVNC tab');
     } catch {
       toast.error('Failed to start recording — is the runner container running?');
@@ -2451,7 +2451,7 @@ export default function Scripts() {
         sock.disconnect();
         if (data.token) {
           const vncUrl = `http://${window.location.hostname}:${novncPort}/vnc.html?path=websockify%3Ftoken%3D${data.token}&autoconnect=1&resize=scale`;
-          window.open(vncUrl, 'qa-vnc-viewer');
+          window.open(vncUrl, 'qa-vnc-viewer', 'width=1280,height=760,resizable=yes');
         } else {
           toast(`VNC viewer unavailable — all ${maxVncSessions} sessions in use. Run executing without visual monitoring.`, { icon: '⚠️' });
         }
