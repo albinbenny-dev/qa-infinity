@@ -73,6 +73,17 @@ git reset --hard origin/main
 echo "✔ Code up to date  ($(git log -1 --format='%h %s'))"
 echo ""
 
+# git reset --hard rewrites this very file on disk when sync.sh itself has
+# changed upstream. Bash buffers script reads, so the already-running
+# process keeps executing bytes from the OLD, buffered copy for everything
+# after this point — any new logic added below silently never runs on the
+# sync that pulls it in, even though the file on disk is correct. Re-exec
+# fresh from the (now up to date) file so every step below is guaranteed to
+# be the version we just pulled. Guarded by an env var to prevent looping.
+if [ -z "${SYNC_SH_REEXECED:-}" ]; then
+  exec env SYNC_SH_REEXECED=1 bash "$DIR/sync.sh" "$@"
+fi
+
 # git checkout writes files using this process's umask, not the mode git has
 # recorded (100644). On hosts with a restrictive umask this silently drops
 # the world-read bit — harmless for most files, but nginx/nginx.conf is
