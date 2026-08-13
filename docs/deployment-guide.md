@@ -17,6 +17,12 @@ the VIL dev-environment bring-up.
 7. [CORS Configuration](#7-cors-configuration)
 8. [Air-Gapped Docker Build](#8-air-gapped-docker-build)
 9. [APP_MODE=runner for Air-Gapped Sites](#9-app_moderunner-for-air-gapped-sites)
+10. [Fresh Linux Server Setup](#10-fresh-linux-server-setup)
+11. [Day-to-Day Git Workflow](#11-day-to-day-git-workflow)
+12. [When to Rebuild vs Restart](#12-when-to-rebuild-vs-restart)
+13. [Database Migrations](#13-database-migrations)
+14. [Sync Script (DB & Volumes)](#14-sync-script-db--volumes)
+15. [GitHub Personal Access Token](#15-github-personal-access-token)
 
 ---
 
@@ -333,3 +339,204 @@ Strip these keys from the `.env` before deployment to avoid confusing error logs
 - `ANTHROPIC_API_KEY`
 - `JIRA_HOST` / `JIRA_EMAIL` / `JIRA_API_TOKEN`
 - `SMTP_HOST` / `SMTP_USER` / `SMTP_PASS`
+
+---
+
+## 10. Fresh Linux Server Setup
+
+Use this section when deploying QA Infinity onto a brand-new RHEL / CentOS server.
+
+### Prerequisites
+
+```bash
+# Install Docker
+sudo yum install -y docker
+sudo systemctl enable docker --now
+sudo usermod -aG docker $USER
+# Log out and back in so group membership takes effect, then verify:
+docker info
+
+# Install git
+sudo yum install -y git
+```
+
+> **Log out after `usermod`:** The group change only applies after you log out and back in. Without this, all `docker` commands need `sudo`.
+
+### Clone the repository
+
+```bash
+sudo mkdir -p /data/autoab
+cd /data/autoab
+git clone https://github.com/albinbenny-dev/qa-infinity.git
+cd qa-infinity
+```
+
+If the repo is private, git prompts for your GitHub username and a Personal Access Token as the password (see [§13 — GitHub Personal Access Token](#13-github-personal-access-token)).
+
+### Configure `.env`
+
+The `.env` file is not tracked in git. Create it manually on every new server.
+
+**Option A — Copy from an existing server:**
+```bash
+scp existing-server:/data/autoab/qa-infinity/.env \
+    /data/autoab/qa-infinity/.env
+```
+
+**Option B — Create from template:**
+```bash
+cp .env.example .env
+nano .env    # fill in all required values
+```
+
+> **Never commit `.env` to git.** It is in `.gitignore` and must never be pushed.
+
+### Build and start
+
+```bash
+cd /data/autoab/qa-infinity
+docker compose up -d --build
+```
+
+What happens automatically on first boot:
+
+1. **Redis** starts and becomes healthy
+2. **qa-api** runs `prisma migrate deploy` (applies all migrations), then starts on port 4000
+3. **qa-runner** starts once api is healthy
+4. **qa-ui** (nginx) serves the frontend on port 3100
+
+> **First build takes 3–5 minutes.** Docker pulls base images and compiles TypeScript. Subsequent restarts are much faster.
+
+### Verify
+
+```bash
+docker compose ps                    # all containers should be "running"
+docker compose logs -f qa-api        # watch for errors
+curl http://localhost:4000/health    # should return {"status":"ok"}
+```
+
+| Service | URL | Notes |
+|---|---|---|
+| Frontend | `http://<server-ip>:3100` | Main app |
+| API | `http://<server-ip>:4100` | REST + WebSocket |
+| Prisma Studio | `http://<server-ip>:5655` | DB browser (dev only — do not expose) |
+| noVNC | `http://<server-ip>:6180` | Live browser viewer during test runs |
+
+---
+
+## 11. Day-to-Day Git Workflow
+
+### Changes made on the server → pull locally
+
+```bash
+# On the server
+cd /data/autoab/qa-infinity
+git add .
+git commit -m "feat: describe what changed"
+git push
+```
+
+```powershell
+# On your local Windows machine
+git pull
+```
+
+### Changes made locally → deploy to server
+
+```bash
+# Local machine
+git add .
+git commit -m "feat: describe what changed"
+git push
+
+# On the server — pull and apply
+./sync.sh          # pulls latest and restarts affected services
+```
+
+---
+
+## 12. When to Rebuild vs Restart
+
+| What changed | Command on server |
+|---|---|
+| TypeScript / JS source files only (`src/`) | `docker compose restart` |
+| `package.json`, `pnpm-lock.yaml` | `docker compose up -d --build` |
+| Any `Dockerfile` | `docker compose up -d --build` |
+| New Prisma migration | `docker compose exec qa-api npx prisma migrate deploy` |
+| `nginx/nginx.conf` | `docker compose restart qa-ui` |
+| `.env` values changed | `docker compose up -d` (re-reads env) |
+
+---
+
+## 13. Database Migrations
+
+All schema changes must go through Prisma migrations — **never alter the database directly**.
+
+### Workflow (from local)
+
+1. Edit `packages/api/prisma/schema.prisma`
+2. Generate migration:
+   ```bash
+   docker compose exec qa-api npx prisma migrate dev --name add_your_column
+   ```
+   This creates a new timestamped file under `packages/api/prisma/migrations/`.
+3. Commit and push:
+   ```bash
+   git add packages/api/prisma/
+   git commit -m "feat: add column xyz to table abc"
+   git push
+   ```
+4. Apply on the server:
+   ```bash
+   git pull
+   docker compose exec qa-api npx prisma migrate deploy
+   ```
+
+### Making a change directly on the server
+
+```bash
+nano packages/api/prisma/schema.prisma
+docker compose exec qa-api npx prisma migrate dev --name add_column
+git add packages/api/prisma/
+git commit -m "feat: add column xyz"
+git push
+```
+
+Local machines pull the migration and it auto-applies on next container start.
+
+> **Never edit the database file directly.** Direct edits cause schema drift and are lost on the next deploy.
+
+---
+
+## 14. Sync Script (DB & Volumes)
+
+`git pull` syncs code only. The PostgreSQL data and uploaded files (scripts, artifacts) live in Docker named volumes and need the `sync.sh` script.
+
+```bash
+# Pull latest code + restart affected services (standard update)
+./sync.sh
+
+# On Windows (PowerShell)
+.\sync.sh
+```
+
+`sync.sh` does: `git pull → docker compose up -d --build` for services whose images changed, or `docker compose restart` for source-only changes.
+
+---
+
+## 15. GitHub Personal Access Token
+
+GitHub requires a token (not your account password) for git operations from the server.
+
+1. GitHub → avatar → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** → **Generate new token (classic)**
+2. Check the **`repo`** scope. Set an expiry date.
+3. Copy the token immediately — GitHub only shows it once.
+4. Use it as the **Password** when `git push` prompts for credentials.
+
+To avoid re-entering credentials on every push:
+
+```bash
+git config --global credential.helper store
+```
+
+After the first authenticated push, git caches the token permanently on disk.
