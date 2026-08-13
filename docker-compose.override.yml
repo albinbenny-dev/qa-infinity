@@ -1,8 +1,0 @@
-# Local development overrides — applied automatically by `docker compose up`.
-# This file is NOT transferred to remote servers. Keep dev-only bind mounts here.
-services:
-  qa-api:
-    volumes:
-      # Hot-reload: mounts source over the image's baked copy so tsx watch picks
-      # up changes without a full rebuild. Remote deploys use the image's own source.
-      - ./packages/api/src:/app/packages/api/src:ro

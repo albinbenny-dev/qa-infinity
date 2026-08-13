@@ -8,6 +8,8 @@ qa-infinity-offline-*.zip
 qa-infinity-v*.tar.gz
 .deploy-tmp/
 .env
+# Dev-only bind-mount overrides — must never reach remote deploys (see file header).
+docker-compose.override.yml
 packages/api/prisma/*.db-journal
 packages/api/prisma/*.db
 .claude/
