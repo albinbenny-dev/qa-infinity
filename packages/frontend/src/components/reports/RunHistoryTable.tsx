@@ -172,6 +172,78 @@ function ErrorCell({ errorMessage }: { errorMessage: string | null }) {
 
 // ── Expanded run detail (lazy-fetched) ─────────────────────────────────────
 
+// ── Screenshot lightbox ───────────────────────────────────────────────────
+
+function ScreenshotModal({ url, title, onClose, onDownload }: { url: string; title: string; onClose: () => void; onDownload: () => void }) {
+  // Close on Escape
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'rgba(0,0,0,0.82)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        padding: 24,
+      }}
+    >
+      {/* Header bar */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          width: '100%', maxWidth: 1100, marginBottom: 10, gap: 12,
+        }}
+      >
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          📷 {title}
+        </span>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <button
+            onClick={onDownload}
+            style={{
+              padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              background: 'rgba(37,99,171,0.3)', color: '#93c5fd',
+              border: '1px solid rgba(37,99,171,0.5)', cursor: 'pointer',
+            }}
+          >
+            ⬇ Download
+          </button>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)',
+              border: '1px solid rgba(255,255,255,0.15)', cursor: 'pointer',
+            }}
+          >
+            ✕ Close
+          </button>
+        </div>
+      </div>
+      {/* Image */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 1100, maxHeight: 'calc(100vh - 120px)', overflow: 'auto', borderRadius: 8, boxShadow: '0 8px 48px rgba(0,0,0,0.6)' }}
+      >
+        <img
+          src={url}
+          alt={title}
+          style={{ display: 'block', maxWidth: '100%', height: 'auto', borderRadius: 8 }}
+        />
+      </div>
+      <p style={{ marginTop: 10, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Click outside or press Esc to close</p>
+    </div>
+  );
+}
+
+// ── Expanded run detail (lazy-fetched) ─────────────────────────────────────
+
 function ExpandedRunDetail({
   projectId,
   runId,
@@ -190,6 +262,7 @@ function ExpandedRunDetail({
   const { data: run, isLoading } = useReportRun(projectId, runId);
   const [query, setQuery] = useState('');
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [screenshotModal, setScreenshotModal] = useState<{ url: string; title: string; resultId: string; tcId: string } | null>(null);
   const individualRun = useCreateIndividualRun(projectId ?? '');
 
   async function handleRerunTC(testCaseId: string) {
@@ -233,6 +306,24 @@ function ExpandedRunDetail({
       }
       toast.error(`RF report download failed: ${msg}`);
     }
+  }
+
+  async function openScreenshot(resultId: string, tcId: string) {
+    try {
+      const response = await api.get(
+        `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/screenshot`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(response.data as Blob);
+      setScreenshotModal({ url, title: `screenshot-${tcId}.png`, resultId, tcId });
+    } catch {
+      toast.error('Failed to load screenshot');
+    }
+  }
+
+  function closeScreenshot() {
+    if (screenshotModal) URL.revokeObjectURL(screenshotModal.url);
+    setScreenshotModal(null);
   }
 
   async function downloadAsset(resultId: string, type: 'screenshot' | 'trace' | 'video', filename: string, videoIndex?: number) {
@@ -392,8 +483,8 @@ function ExpandedRunDetail({
                   <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                     {r.screenshotPath && (
                       <button
-                        onClick={() => downloadAsset(r.id, 'screenshot', `screenshot-${r.testCase.tcId}.png`)}
-                        title="Download screenshot"
+                        onClick={() => openScreenshot(r.id, r.testCase.tcId)}
+                        title="View screenshot"
                         style={{
                           padding: '2px 7px',
                           borderRadius: 5,
@@ -498,6 +589,16 @@ function ExpandedRunDetail({
           {runId.slice(0, 20)}…
         </span>
       </div>
+
+      {/* Screenshot lightbox — renders as a fixed overlay so it escapes the table */}
+      {screenshotModal && (
+        <ScreenshotModal
+          url={screenshotModal.url}
+          title={screenshotModal.title}
+          onClose={closeScreenshot}
+          onDownload={() => downloadAsset(screenshotModal.resultId, 'screenshot', screenshotModal.title)}
+        />
+      )}
     </div>
   );
 }
