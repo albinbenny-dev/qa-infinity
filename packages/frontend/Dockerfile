@@ -35,6 +35,13 @@ RUN chmod -R a+rX /usr/share/nginx/html
 # via docker-compose: nginx/nginx.conf → /etc/nginx/conf.d/default.conf
 COPY packages/frontend/nginx-main.conf /etc/nginx/nginx.conf
 
+# Same restrictive-permission risk as the html dir above, but for the main
+# config: COPY preserves the source file's mode from the build host's
+# checkout, so a restrictive umask there (common on hardened admin accounts)
+# can land this as non-world-readable — nginx running as 'nobody' then fails
+# with "open() /etc/nginx/nginx.conf failed (13: Permission denied)".
+RUN chmod a+r /etc/nginx/nginx.conf
+
 # Listen on 8080 (unprivileged port) — matches nginx/nginx.conf server block
 EXPOSE 8080
 
