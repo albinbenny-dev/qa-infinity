@@ -49,7 +49,13 @@ services:
     container_name: qa-redis
     restart: unless-stopped
     command: >
-      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then redis-server --requirepass "$$REDIS_PASSWORD"; else redis-server; fi'
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then redis-server --requirepass "$$REDIS_PASSWORD" --dir /tmp --stop-writes-on-bgsave-error no; else redis-server --dir /tmp --stop-writes-on-bgsave-error no; fi'
+      # --dir /tmp           → RDB snapshot writes to /tmp (world-writable) rather than the
+      #                        default /data which is root-owned and fails under non-root PSPs.
+      # --stop-writes-on-bgsave-error no → Redis continues accepting writes even if the
+      #                        background save fails (e.g. on a read-only /data mount).
+      #                        Without this flag, a failed bgsave silently blocks ALL writes
+      #                        while the pod reports healthy (PING succeeds), causing 500s.
     environment:
       - TZ=Asia/Kolkata
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -173,7 +179,7 @@ services:
     environment:
       - TZ=Asia/Kolkata
     ports:
-      - "${UI_HOST_PORT:-3100}:80"
+      - "${UI_HOST_PORT:-3100}:8080"  # nginx now listens on 8080 (unprivileged) — see nginx/nginx.conf
     depends_on:
       qa-api:
         condition: service_healthy

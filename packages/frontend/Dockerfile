@@ -28,8 +28,17 @@ COPY --from=builder /app/packages/frontend/dist /usr/share/nginx/html
 # readable file 403s even though it exists. Normalize to world-readable.
 RUN chmod -R a+rX /usr/share/nginx/html
 
-# Nginx config is mounted via docker-compose (nginx/nginx.conf → /etc/nginx/conf.d/default.conf)
+# Replace the default (root-requiring) nginx main config with an unprivileged
+# one that writes pid and temp files to /tmp. This lets the container run as
+# any non-root UID without needing to bind port 80 or touch root-owned paths.
+# The server-block config (listen 8080, proxy rules) is still mounted at runtime
+# via docker-compose: nginx/nginx.conf → /etc/nginx/conf.d/default.conf
+COPY packages/frontend/nginx-main.conf /etc/nginx/nginx.conf
 
-EXPOSE 80
+# Listen on 8080 (unprivileged port) — matches nginx/nginx.conf server block
+EXPOSE 8080
+
+# Run as nobody (uid 65534) — satisfies runAsNonRoot Pod Security constraints
+USER nobody
 
 CMD ["nginx", "-g", "daemon off;"]

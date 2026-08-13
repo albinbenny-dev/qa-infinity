@@ -26,8 +26,10 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y unzip \
   && ln -sf /opt/chrome-linux64/chrome /usr/bin/google-chrome-stable \
   && ln -sf /opt/chromedriver-linux64/chromedriver /usr/bin/chromedriver
 
-# Container runs as root; Chrome refuses to start as root without --no-sandbox.
-# Wrap the real CfT binary so every Open Browser call gets the flag automatically.
+# Wrap the real CfT binary to inject --no-sandbox (required when Chrome cannot
+# use user namespaces — true both when running as root AND when running as a
+# non-root UID inside a restricted Pod Security context that drops capabilities).
+# --disable-dev-shm-usage routes shared memory to /tmp, which every UID can write.
 RUN real=/opt/chrome-linux64/chrome \
   && mv "$real" "${real}-orig" \
   && printf '#!/bin/sh\nexec "%s-orig" --no-sandbox --disable-dev-shm-usage --disable-gpu "$@"\n' "$real" > "$real" \
@@ -44,7 +46,8 @@ RUN python3 -m venv /opt/rfbrowser \
        robotframework-sshlibrary paramiko \
        urllib3 robotframework-requests robotframework-seleniumlibrary \
        robotframework-databaselibrary oracledb \
-       pymysql robotframework-jsonlibrary PyPDF2 tabulate
+       pymysql robotframework-jsonlibrary PyPDF2 tabulate \
+       robotframework-csvlibrary
 
 # Initialise RF Browser — downloads Playwright browsers managed by RF Browser
 RUN /opt/rfbrowser/bin/python -m Browser.entry init || true
@@ -67,6 +70,18 @@ RUN pnpm install --frozen-lockfile
 
 # Copy runner HTTP server source
 COPY packages/runner/src ./packages/runner/src
+
+# Create a non-root user (uid 1000) and transfer ownership of everything the
+# runner writes to at runtime. /ms-playwright is owned by root in the base image
+# so we use chmod (world-readable) rather than chown to avoid copying the whole
+# layer. /opt contains Chrome, ChromeDriver, and the rfbrowser venv — all ours.
+RUN useradd -m -u 1000 -s /bin/bash runner \
+  && chown -R runner:runner /app /opt/rfbrowser /opt/chrome-linux64 /opt/chromedriver-linux64 \
+  && chmod -R a+rX /ms-playwright
+
+# Switch to the non-root runner user. Kubernetes pod-security runAsNonRoot
+# enforcement will also enforce this at scheduling time.
+USER runner
 
 # Volumes mounted at runtime:
 #   /scripts    → compiled .spec.js files partitioned by projectId

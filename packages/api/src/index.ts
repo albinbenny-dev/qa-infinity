@@ -224,6 +224,12 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
+    // CORS rejections come through as Error('Not allowed by CORS') from corsOriginFn.
+    // Return 403 (not 500) so the client and logs correctly identify the cause.
+    if (err.message === 'Not allowed by CORS') {
+      res.status(403).json({ error: 'Forbidden', message: 'Origin not allowed by CORS policy' });
+      return;
+    }
     console.error('[qa-api] Unhandled error:', err.stack ?? err.message);
     res.status(500).json({
       error: 'Internal server error',
@@ -231,6 +237,20 @@ app.use(
     });
   },
 );
+
+// ── Startup config validation ──────────────────────────────────────────────
+// Log a clear warning when CORS_ORIGIN is not set or looks like it won't match
+// the actual browser origin — catches this common misconfiguration at boot rather
+// than at the first browser request (which would surface as a mysterious 403).
+{
+  const appUrl   = process.env.APP_URL?.trim();
+  const corsOrig = process.env.CORS_ORIGIN?.trim();
+  if (!corsOrig) {
+    console.warn('[qa-api] WARNING: CORS_ORIGIN is not set — defaulting to http://localhost:3000. Set CORS_ORIGIN to your external https origin in production.');
+  } else if (appUrl && corsOrig !== '*' && !corsOrig.split(',').map(o => o.trim()).includes(appUrl)) {
+    console.warn(`[qa-api] WARNING: CORS_ORIGIN ("${corsOrig}") does not include APP_URL ("${appUrl}"). Browser requests from APP_URL will be rejected with 403.`);
+  }
+}
 
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
