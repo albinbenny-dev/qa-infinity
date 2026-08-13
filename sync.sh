@@ -73,6 +73,16 @@ git reset --hard origin/main
 echo "✔ Code up to date  ($(git log -1 --format='%h %s'))"
 echo ""
 
+# git checkout writes files using this process's umask, not the mode git has
+# recorded (100644). On hosts with a restrictive umask this silently drops
+# the world-read bit — harmless for most files, but nginx/nginx.conf is
+# bind-mounted read-only straight into qa-ui's container (see
+# docker-compose.yml), which runs nginx as non-root 'nobody'. A non-world-
+# readable copy makes nginx fail at startup with "Permission denied" on
+# every single sync, since the reset above re-lands it with the host's
+# umask each time. Force it back to world-readable after every pull.
+chmod 644 nginx/nginx.conf
+
 # ── 2. Build updated images (layer-cached — only changed layers rebuild) ─────
 echo "⟳ Building images…"
 DOCKER_BUILDKIT=0 $SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
