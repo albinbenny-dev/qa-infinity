@@ -193,6 +193,7 @@ export default function Sidebar({ slug }: SidebarProps) {
           borderRadius: 9, padding: '3px',
           display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4,
         }}>
+          <TileItem label="Overview" fullLabel="Overall Dashboard" icon={LayoutDashboard} active={location.pathname === '/overview'} path="/overview" title="Overall Dashboard" expanded={expanded} />
           <TileItem label="Projects"  fullLabel="All Projects"     icon={Globe}       active={location.pathname === '/projects'} path="/projects"
             title="All Projects" badge={projects.length || undefined} badgeVariant="blue" expanded={expanded} />
           {!isRunner && (

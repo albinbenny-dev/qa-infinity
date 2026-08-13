@@ -21,6 +21,7 @@ import RunMonitor from './pages/RunMonitor';
 import Skills from './pages/Skills';
 import Locators from './pages/Locators';
 import CopyExport from './pages/CopyExport';
+import OverallDashboard from './pages/OverallDashboard';
 import { isAuthenticated } from './lib/auth';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { AppConfigProvider, useAppConfig } from './context/AppConfig';
@@ -80,6 +81,7 @@ export default function App() {
           <Route path="/projects/:slug/locators"     element={<AiRoute element={<Locators />} />} />
           <Route path="/projects/:slug/copy-export"  element={<CopyExport />} />
           <Route path="/projects/:slug/settings"     element={<ProjectSettings />} />
+          <Route path="/overview"                    element={<OverallDashboard />} />
           <Route path="/usage"                       element={<AiRoute element={<Usage />} />} />
           <Route path="/admin/users"                 element={<UserManagement />} />
           <Route path="/admin/runs"                  element={<RunMonitor />} />
