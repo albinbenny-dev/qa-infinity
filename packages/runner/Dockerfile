@@ -75,7 +75,12 @@ COPY packages/runner/src ./packages/runner/src
 # runner writes to at runtime. /ms-playwright is owned by root in the base image
 # so we use chmod (world-readable) rather than chown to avoid copying the whole
 # layer. /opt contains Chrome, ChromeDriver, and the rfbrowser venv — all ours.
-RUN useradd -m -u 1000 -s /bin/bash runner \
+#
+# Ubuntu 22.04 (Jammy) base images ship an 'ubuntu' user at UID 1000; the
+# mcr.microsoft.com/playwright:*-jammy image inherits it. Remove any existing
+# UID 1000 occupant first so useradd -u 1000 runner never collides.
+RUN getent passwd 1000 | cut -d: -f1 | xargs -r userdel -f \
+  && useradd -m -u 1000 -s /bin/bash runner \
   && chown -R runner:runner /app /opt/rfbrowser /opt/chrome-linux64 /opt/chromedriver-linux64 \
   && chmod -R a+rX /ms-playwright
 

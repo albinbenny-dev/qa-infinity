@@ -5,6 +5,7 @@ local_artifacts/
 *.log
 qa-infinity-deploy.zip
 qa-infinity-offline-*.zip
+qa-infinity-v*.tar.gz
 .deploy-tmp/
 .env
 packages/api/prisma/*.db-journal

@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# sync.sh — pull latest code and redeploy on the remote server
+# sync.sh — pull latest code from 6D git and redeploy on the remote server
 #
 # Run this directly on the server:
 #   ./sync.sh                        # redeploy qa-api + qa-ui (most common)
 #   ./sync.sh qa-runner              # runner only (Dockerfile changed)
 #   ./sync.sh qa-api qa-ui qa-runner # all three app services
+#
+# One-time setup — point the server's repo at 6D GitLab (token auth):
+#   git remote set-url origin https://oauth2:<YOUR_TOKEN>@gitlab.sixdee/automation/ai-automation-testing/qa-infinity.git
+#   git fetch origin       # confirm credentials work
+#   chmod 600 .git/config  # protect the token in config
+#   ./sync.sh
 #
 # The script auto-detects Docker Compose V1 vs V2.
 
