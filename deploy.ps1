@@ -466,6 +466,24 @@ cd /opt/qa-infinity          # your existing install directory
 docker compose -p qa-infinity up -d --no-build qa-api qa-ui
 ``````
 
+## Step 3b - Fix volume ownership (only if this server predates non-root images)
+
+qa-api now runs as non-root (uid 1000) inside its container. Skip this step
+if the server was already running a non-root qa-api image before this
+update. If it wasn't, its qa-data / qa-reqdocs / qa-artifacts volumes and
+``./scripts`` bind mount are still owned by root from the old container, and
+qa-api will fail to start with errors like ``EACCES: permission denied``.
+Fix once (safe to re-run - a no-op once ownership is already correct):
+
+``````bash
+cd /opt/qa-infinity
+[ -d scripts ] && sudo find scripts -not -uid 1000 -exec chown 1000:1000 {} +
+for vol in qa-artifacts qa-data qa-reqdocs; do
+  docker run --rm -v qa-infinity_$vol:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
+done
+docker compose -p qa-infinity restart qa-api qa-ui
+``````
+
 ## Step 4 - Verify
 
 ``````bash
@@ -553,6 +571,25 @@ Open ``.env`` and check/adjust for this target, at minimum:
 cd /opt/qa-infinity
 docker compose up -d
 docker compose ps          # all 5 containers should be healthy
+``````
+
+## Step 4b - Fix volume ownership (only if reusing an existing install's volumes)
+
+qa-runner and qa-api run as non-root (uid 1000) inside their containers. On a
+genuinely brand-new install this is already correct - skip this step. If
+you pointed this package at an EXISTING install's volumes (reusing them from
+an older package built before this hardening), qa-runner will crash-loop
+with errors like ``EACCES: permission denied, mkdir '/artifacts/...'``
+because those volumes are still owned by root from the old containers.
+Fix once (safe to re-run - a no-op once ownership is already correct):
+
+``````bash
+cd /opt/qa-infinity
+[ -d scripts ] && sudo find scripts -not -uid 1000 -exec chown 1000:1000 {} +
+for vol in qa-artifacts qa-data qa-reqdocs; do
+  docker run --rm -v qa-infinity_$vol:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
+done
+docker compose restart qa-runner qa-api
 ``````
 
 ## Step 5 - Verify
