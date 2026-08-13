@@ -94,6 +94,26 @@ fi
 # umask each time. Force it back to world-readable after every pull.
 chmod 644 nginx/nginx.conf
 
+# 168fe5d switched qa-runner and qa-api to run as non-root uid 1000 (users
+# 'runner' and 'node'). Any site that already had a running stack from
+# before that change has its ./scripts bind mount and its qa-artifacts /
+# qa-data / qa-reqdocs named volumes still owned by root (or whatever user
+# ran the old root-based containers) — the non-root process then crash-loops
+# trying to write into them, e.g.:
+#   Error: EACCES: permission denied, mkdir '/artifacts/<project>/RUN-.../'
+# A brand-new deployment never hits this (volumes are created already owned
+# by uid 1000), so this is a no-op there. `-not -uid 1000` keeps repeat runs
+# cheap — only files still wrongly owned get touched.
+echo "⟳ Normalizing volume ownership for uid 1000 (runner/node)…"
+if [ -d scripts ]; then
+  $SUDO find scripts -not -uid 1000 -exec chown 1000:1000 {} + 2>/dev/null || true
+fi
+for vol in qa-artifacts qa-data qa-reqdocs; do
+  $SUDO docker run --rm -v "${PROJECT_NAME}_${vol}:/vol" alpine \
+    sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +" >/dev/null 2>&1 || true
+done
+echo ""
+
 # ── 2. Build updated images (layer-cached — only changed layers rebuild) ─────
 echo "⟳ Building images…"
 DOCKER_BUILDKIT=0 $SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
