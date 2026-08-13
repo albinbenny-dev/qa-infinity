@@ -60,4 +60,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
 # Start via tsx directly — no pnpm invocation at runtime, no corepack network calls.
 # HOME=/tmp ensures any npm/corepack/prisma cache writes land in a writable path
 # for a non-root UID. prisma db push applies schema migrations before the server starts.
-CMD ["sh", "-c", "HOME=/tmp /app/packages/api/node_modules/.bin/prisma db push --accept-data-loss && exec /app/packages/api/node_modules/.bin/tsx /app/packages/api/src/index.ts"]
+# Prisma resolves prisma/schema.prisma relative to the CWD (not the binary's path),
+# so we must cd into packages/api first or it looks for /app/prisma/schema.prisma.
+CMD ["sh", "-c", "cd /app/packages/api && HOME=/tmp ./node_modules/.bin/prisma db push --accept-data-loss && cd /app && exec /app/packages/api/node_modules/.bin/tsx /app/packages/api/src/index.ts"]
