@@ -15,7 +15,7 @@
 #   .\deploy.ps1 -Mode release                    # full image build+transfer (first run, or runner changed)
 #   .\deploy.ps1 -Mode full                       # release + DB dump/restore
 #   .\deploy.ps1 -Mode package                    # build+save -> single zip, no SSH/SCP needed (~2.5 GB)
-#   .\deploy.ps1 -Mode package -AppOnly           # api+ui only zip, no runner/infra (~300-500 MB) — routine releases
+#   .\deploy.ps1 -Mode package -AppOnly           # api+runner+ui zip, no postgres/redis (~600-800 MB) — routine releases
 #   .\deploy.ps1 -Services qa-api                 # sync api only (~90s)
 #   .\deploy.ps1 -SSH my-alias                    # override SSH alias/host
 #   .\deploy.ps1 -CorsOrigin http://10.0.0.5:3100 # set CORS origin for remote server (see below)
@@ -52,17 +52,17 @@
 #     team you have no network path to - email, USB, file share, whatever.
 #     Use for: a new team/client with no SSH access from this machine at all.
 #
-#   package + AppOnly - Only builds and saves qa-api and qa-ui. The runner,
-#     postgres, and redis images are already on the server from a prior full
-#     package deploy - no need to ship them again. Use for routine code releases
-#     to air-gapped servers. Reduces zip size from ~2.5 GB to ~300-500 MB.
-#     The server-side steps are also faster: only two images to load, and only
-#     qa-api + qa-ui are restarted - runner and DB are untouched.
+#   package + AppOnly - Builds and saves qa-api, qa-runner, and qa-ui.
+#     postgres and redis are already on the server from a prior full package
+#     deploy - no need to ship them again. Use for routine code releases
+#     to air-gapped servers. Reduces zip size from ~2.5 GB to ~600-800 MB.
+#     The server-side steps restart api + runner + ui; the DB is untouched.
 #
 # AppOnly flag:
-#   Use -AppOnly with -Mode package (or release) to skip qa-runner, postgres,
-#   and redis. Only valid when those are already present on the target server
-#   from a prior full deploy. The generated zip and INSTALL.md reflect this.
+#   Use -AppOnly with -Mode package (or release) to skip postgres and redis.
+#   Only valid when those are already present on the target server from a prior
+#   full deploy. api + runner + ui are always included. The generated zip and
+#   INSTALL.md reflect this.
 #
 # CorsOrigin:
 #   docker-compose.yml reads CORS_ORIGIN from .env (env_file + a localhost
@@ -99,7 +99,7 @@ param(
     [string]$RemoteComposeCmd,
     # Strip the extra_hosts entries from the packaged docker-compose.yml (release/full only).
     [switch]$StripExtraHosts,
-    # Only build and include qa-api + qa-ui. Skips qa-runner, postgres, redis.
+    # Only skip postgres + redis. Builds and includes qa-api, qa-runner, qa-ui.
     # Use for routine code releases to air-gapped servers where those images are
     # already present from a prior full deploy. Cuts zip size from ~2.5 GB to ~300-500 MB.
     [switch]$AppOnly,
@@ -153,7 +153,7 @@ function Read-EnvVar {
 # -- Banner --------------------------------------------------------------------
 Write-Host ""
 Write-Host "  QA Infinity - Deploy" -ForegroundColor DarkCyan
-Write-Host "  Mode   : $Mode$(if ($AppOnly) { ' (app-only: api + ui)' })" -ForegroundColor White
+Write-Host "  Mode   : $Mode$(if ($AppOnly) { ' (app-only: api + runner + ui)' })" -ForegroundColor White
 if ($Mode -eq 'package') {
     Write-Host "  Output : local zip package (no SSH/SCP)" -ForegroundColor White
 } else {
@@ -163,7 +163,7 @@ if ($CorsOrigin) {
     Write-Host "  CORS   : $CorsOrigin" -ForegroundColor White
 }
 if ($AppOnly) {
-    Write-Host "  AppOnly: skipping qa-runner, postgres, redis (must already be on server)" -ForegroundColor Yellow
+    Write-Host "  AppOnly: skipping postgres, redis (must already be on server)" -ForegroundColor Yellow
 }
 Write-Host ""
 
@@ -285,11 +285,11 @@ New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 # PHASE 1 - Build images
 # ==============================================================================
 if ($AppOnly) {
-    Log-Step "Building Docker images (api + ui only — AppOnly mode)"
+    Log-Step "Building Docker images (api + runner + ui — AppOnly mode)"
     Push-Location $PSScriptRoot
-    docker compose build qa-api qa-ui
+    docker compose build qa-api qa-runner qa-ui
     if ($LASTEXITCODE -ne 0) { Log-Error "Docker build failed" }
-    Log-Ok "Images built (qa-runner skipped)"
+    Log-Ok "Images built (postgres/redis skipped)"
 } else {
     Log-Step "Building Docker images (api, runner, ui)"
     Push-Location $PSScriptRoot
@@ -304,13 +304,15 @@ if ($AppOnly) {
 # remote) and bundled the same way as the custom images, so the remote never
 # needs to reach Docker Hub for anything - safe for a fully air-gapped target.
 # ==============================================================================
-Log-Step "Saving images to tar files$(if ($AppOnly) { ' (api + ui only)' })"
+Log-Step "Saving images to tar files$(if ($AppOnly) { ' (api + runner + ui — no postgres/redis)' })"
 
 if ($AppOnly) {
-    # Routine code release — runner/infra already on server from a prior full deploy.
+    # App-only release — includes runner so script execution changes are also shipped.
+    # postgres and redis are already on the server from a prior full deploy.
     $images = @(
-        @{ name = 'qa-infinity-qa-api:latest'; tar = "$TmpDir\qa-api.tar" },
-        @{ name = 'qa-infinity-qa-ui:latest';  tar = "$TmpDir\qa-ui.tar"  }
+        @{ name = 'qa-infinity-qa-api:latest';    tar = "$TmpDir\qa-api.tar"    },
+        @{ name = 'qa-infinity-qa-runner:latest'; tar = "$TmpDir\qa-runner.tar" },
+        @{ name = 'qa-infinity-qa-ui:latest';     tar = "$TmpDir\qa-ui.tar"     }
     )
 } else {
     $images = @(
@@ -422,26 +424,27 @@ if ($Mode -eq 'package') {
     $buildDate = Get-Date -Format 'yyyy-MM-dd HH:mm'
     $corsNote = if ($CorsOrigin) { "$CorsOrigin (already patched into .env)" } else { 'NOT set - edit CORS_ORIGIN/APP_URL in .env before starting (see Step 3)' }
     $extraHostsNote = if ($StripExtraHosts) { 'Stripped - none of this deployment''s internal extra_hosts entries are included.' } else { 'Kept as-is - check docker-compose.yml for extra_hosts entries specific to the original deployment and remove/edit any that don''t apply to your network.' }
-    $releaseType = if ($AppOnly) { 'APP UPDATE (api + ui only)' } else { 'FULL' }
+    $releaseType = if ($AppOnly) { 'APP UPDATE (api + runner + ui)' } else { 'FULL' }
 
     if ($AppOnly) {
         $installGuide = @"
 # QA Infinity - App Update Package
 
 Built: $buildDate (git $currentSha)
-Release type: APP UPDATE — api + ui images only
+Release type: APP UPDATE — api + runner + ui images
 
 This is a routine code update. It assumes the server already has a working
 qa-infinity stack from a prior FULL package deploy.
 
-qa-runner, postgres, and redis are NOT in this zip — they are already on the
-server and do not need to be touched.
+postgres and redis are NOT in this zip — they are already on the server
+and do not need to be touched.
 
 ## What's in this zip
 
 | File | Purpose |
 |---|---|
 | ``qa-api.tar`` | Updated API image |
+| ``qa-runner.tar`` | Updated runner image (Playwright + Robot Framework) |
 | ``qa-ui.tar`` | Updated UI (frontend) image |
 | ``docker-compose.yml`` | Stack definition (keep in sync with server) |
 
@@ -456,23 +459,23 @@ cd /opt/qa-infinity-update
 
 ``````bash
 docker load -i qa-api.tar
+docker load -i qa-runner.tar
 docker load -i qa-ui.tar
 ``````
 
-## Step 3 - Restart only api + ui (db and runner stay running)
+## Step 3 - Restart api + runner + ui (db stays running)
 
 ``````bash
 cd /opt/qa-infinity          # your existing install directory
-docker compose -p qa-infinity up -d --no-build qa-api qa-ui
+docker compose -p qa-infinity up -d --no-build qa-api qa-runner qa-ui
 ``````
 
 ## Step 3b - Fix volume ownership (only if this server predates non-root images)
 
-qa-api now runs as non-root (uid 1000) inside its container. Skip this step
-if the server was already running a non-root qa-api image before this
-update. If it wasn't, its qa-data / qa-reqdocs / qa-artifacts volumes and
-``./scripts`` bind mount are still owned by root from the old container, and
-qa-api will fail to start with errors like ``EACCES: permission denied``.
+qa-api and qa-runner run as non-root (uid 1000) inside their containers. Skip
+this step if the server was already running non-root images before this update.
+If it wasn't, volumes owned by root from the old containers will cause startup
+errors like ``EACCES: permission denied``.
 Fix once (safe to re-run - a no-op once ownership is already correct):
 
 ``````bash
@@ -481,7 +484,7 @@ cd /opt/qa-infinity
 for vol in qa-artifacts qa-data qa-reqdocs; do
   docker run --rm -v qa-infinity_${vol}:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
 done
-docker compose -p qa-infinity restart qa-api qa-ui
+docker compose -p qa-infinity restart qa-api qa-runner qa-ui
 ``````
 
 ## Step 4 - Verify
@@ -490,7 +493,7 @@ docker compose -p qa-infinity restart qa-api qa-ui
 curl -sf http://localhost:4100/health && echo OK
 ``````
 
-Done. The database, runner, and all test scripts are untouched.
+Done. The database and all test scripts are untouched.
 "@
     } else {
         $installGuide = @"
@@ -674,8 +677,9 @@ chmod +x scripts/backup-db.sh
     if ($AppOnly) {
         Write-Host "  On the server:" -ForegroundColor Cyan
         Write-Host "    docker load -i qa-api.tar" -ForegroundColor White
+        Write-Host "    docker load -i qa-runner.tar" -ForegroundColor White
         Write-Host "    docker load -i qa-ui.tar" -ForegroundColor White
-        Write-Host "    docker compose -p qa-infinity up -d --no-build qa-api qa-ui" -ForegroundColor White
+        Write-Host "    docker compose -p qa-infinity up -d --no-build qa-api qa-runner qa-ui" -ForegroundColor White
     } else {
         Write-Host "  [!!] This zip contains .env with real secrets (DB password, JWT" -ForegroundColor Yellow
         Write-Host "       secret, etc.) - share it over a secure channel, not open chat/email." -ForegroundColor Yellow
