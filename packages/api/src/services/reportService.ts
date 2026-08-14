@@ -40,6 +40,8 @@ export async function saveEmailConfig(projectId: string, config: EmailConfig): P
 
 export interface ProjectStats {
   totalTests: number;
+  automatedCount: number;
+  coveragePct: number;
   scriptsGenerated: number;
   totalRuns: number;
   lastRunPassCount: number;
@@ -159,9 +161,18 @@ export async function generateReport(runId: string): Promise<void> {
 // ── getProjectStats ────────────────────────────────────────────────────────
 
 export async function getProjectStats(projectId: string): Promise<ProjectStats> {
-  const [totalTests, scriptsGenerated, totalRuns, activeSchedules, pendingHeals, lastRun, allResults] =
+  const [totalTests, automatedCount, scriptsGenerated, totalRuns, activeSchedules, pendingHeals, lastRun, allResults] =
     await Promise.all([
       prisma.testCase.count({ where: { projectId } }),
+      prisma.testCase.count({
+        where: {
+          projectId,
+          OR: [
+            { linkedScriptId: { not: null } },
+            { scripts: { some: {} } },
+          ],
+        },
+      }),
       prisma.script.count({ where: { projectId } }),
       prisma.run.count({ where: { projectId } }),
       prisma.schedule.count({ where: { projectId, isActive: true } }),
@@ -252,6 +263,8 @@ export async function getProjectStats(projectId: string): Promise<ProjectStats> 
 
   return {
     totalTests,
+    automatedCount,
+    coveragePct: totalTests > 0 ? Math.round((automatedCount / totalTests) * 100) : 0,
     scriptsGenerated,
     totalRuns,
     lastRunPassCount,

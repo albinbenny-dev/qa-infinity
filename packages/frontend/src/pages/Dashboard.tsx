@@ -477,12 +477,22 @@ export default function Dashboard() {
           </div>
         ) : (
           <>
-            {/* ── 5-up stat tiles ───────────────────────────────────────── */}
+            {/* ── stat tiles ────────────────────────────────────────────── */}
             <div style={{ display: 'flex', gap: 12 }}>
               <StatTile
                 label="Total Tests"
                 value={stats?.totalTests ?? 0}
                 accent="linear-gradient(90deg, var(--cyan), #2563AB)"
+              />
+              <StatTile
+                label="Automated"
+                value={stats?.automatedCount ?? 0}
+                accent="linear-gradient(90deg, var(--pass), #1a7a6e)"
+              />
+              <StatTile
+                label="TC Coverage"
+                value={`${stats?.coveragePct ?? 0}%`}
+                accent="linear-gradient(90deg, var(--pass), #1a7a6e)"
               />
               <StatTile
                 label="Last Run Pass"
