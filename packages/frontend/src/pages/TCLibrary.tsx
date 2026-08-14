@@ -530,10 +530,20 @@ export default function TCLibrary() {
         }}
       >
         {/* Stats row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '12px', flexShrink: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '12px', flexShrink: 0 }}>
           <StatTile label="Total TCs" value={stats?.totalTCs ?? allTCs.length} colorClass="sc-cyan" valueColor="var(--cyan)" />
           <StatTile label="UseCases" value={stats?.useCaseCount ?? useCases.length} colorClass="sc-violet" valueColor="var(--violet)" />
           <StatTile label="Automated" value={stats?.automatedCount ?? allTCs.filter(tc => !!tc.linkedScriptId).length} colorClass="sc-pass" valueColor="var(--pass)" />
+          <StatTile
+            label="Coverage %"
+            value={(() => {
+              const total = stats?.totalTCs ?? allTCs.length;
+              const auto = stats?.automatedCount ?? allTCs.filter(tc => !!tc.linkedScriptId).length;
+              return total > 0 ? `${Math.round((auto / total) * 100)}%` : '0%';
+            })()}
+            colorClass="sc-pass"
+            valueColor="var(--pass)"
+          />
           <StatTile label="Last Pass" value={stats?.passedLast ?? 0} colorClass="sc-pass" valueColor="var(--pass)" />
           <StatTile label="Last Fail" value={stats?.failedLast ?? 0} colorClass="sc-fail" valueColor="var(--fail)" />
           <StatTile label="Never Run" value={stats?.neverRun ?? allTCs.length} colorClass="sc-skip" valueColor="var(--amber)" />
