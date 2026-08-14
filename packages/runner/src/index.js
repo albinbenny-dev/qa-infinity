@@ -400,18 +400,35 @@ function parseRobotXmlReport(xmlPath) {
     if (!nameMatch) continue;
     const name = decodeXmlEntities(nameMatch[1]);
 
-    // RF puts one <tags><tag>...</tag>...</tags> block directly under <test> (used
-    // downstream to match this specific test back to a TestCase by tcId tag).
-    const tagsMatch = body.match(/<tags>([\s\S]*?)<\/tags>/);
-    const tags = tagsMatch
-      ? [...tagsMatch[1].matchAll(/<tag>([^<]*)<\/tag>/g)].map((tm) => decodeXmlEntities(tm[1]).trim())
-      : [];
+    // Extract tags — support both RF4-6 format (<tags><tag>…</tag></tags>) and
+    // RF7 format where <tag> elements appear directly inside <test> with no wrapper.
+    const tagsWrapperMatch = body.match(/<tags>([\s\S]*?)<\/tags>/);
+    let tags;
+    if (tagsWrapperMatch) {
+      // RF4-6 format: tags wrapped in <tags>
+      tags = [...tagsWrapperMatch[1].matchAll(/<tag>([^<]*)<\/tag>/g)]
+        .map((tm) => decodeXmlEntities(tm[1]).trim());
+    } else {
+      // RF7 format: bare <tag> elements appear directly inside <test>, before <kw>/<status> blocks.
+      // Slice the body up to the first keyword/status element to avoid picking up anything else.
+      const preambleEnd = body.search(/<(?:kw|setup|teardown|if|for|status)[\s>]/);
+      const preamble = preambleEnd > 0 ? body.slice(0, preambleEnd) : body;
+      tags = [...preamble.matchAll(/<tag>([^<]*)<\/tag>/g)]
+        .map((tm) => decodeXmlEntities(tm[1]).trim());
+    }
 
-    // Status is in the direct child <status> of <test> (not nested keyword statuses)
-    const statusMatch = body.match(/<status\s+status="(PASS|FAIL)"[^>]*(?:start(?:time)?="([^"]*)")?[^>]*(?:end(?:time)?="([^"]*)")?/);
-    const status = statusMatch ? statusMatch[1] : 'FAIL';
-    const startStr = statusMatch ? statusMatch[2] : null;
-    const endStr = statusMatch ? statusMatch[3] : null;
+    // The test-level <status> is always the LAST element inside the <test> block.
+    // Keyword-level <status> elements appear earlier (inside <kw> blocks). Using the
+    // last match avoids incorrectly reading a keyword's internal FAIL status (e.g. from
+    // Run Keyword And Continue On Failure / Wait Until Keyword Succeeds retries) as the
+    // test's own outcome.
+    const allStatusMatches = [
+      ...body.matchAll(/<status\s+status="(PASS|FAIL)"[^>]*(?:start(?:time)?="([^"]*)")?[^>]*(?:end(?:time)?="([^"]*)")?/g),
+    ];
+    const statusMatch = allStatusMatches.length > 0 ? allStatusMatches[allStatusMatches.length - 1] : null;
+    const status   = statusMatch ? statusMatch[1] : 'FAIL';
+    const startStr = statusMatch ? (statusMatch[2] ?? null) : null;
+    const endStr   = statusMatch ? (statusMatch[3] ?? null) : null;
 
     let durationMs = 0;
     if (startStr && endStr) {

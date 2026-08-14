@@ -368,7 +368,17 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       // sharing one blanket pass/fail. Falls back to the aggregate when the
       // script doesn't tag tests this way (single-TC scripts, legacy scripts).
       const ownTcId = tcReadableId.get(testCaseId);
-      const ownTest = ownTcId ? rfTests.find((t) => t.tags?.includes(ownTcId)) : undefined;
+      let ownTest = ownTcId ? rfTests.find((t) => t.tags?.includes(ownTcId)) : undefined;
+      // Fallback: match by test name prefix when the tag isn't found (handles legacy scripts
+      // where [Tags] is absent or uses a different format). Robot file convention is
+      // "TC_32 - Title Text", so a name that starts with the tcId followed by a space or dash.
+      if (!ownTest && ownTcId) {
+        ownTest = rfTests.find(
+          (t) => t.name === ownTcId
+            || t.name.startsWith(ownTcId + ' ')
+            || t.name.startsWith(ownTcId + '-'),
+        );
+      }
       if (ownTest) {
         passed = ownTest.status === 'PASS';
         duration = ownTest.durationMs || duration;
@@ -461,9 +471,17 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       let mirrorDuration = duration;
       let mirrorErrorMessage = errorMessage;
       const mirrorTcReadableId = tcReadableId.get(mirrorTcId);
-      const mirrorTest = mirrorTcReadableId
+      let mirrorTest = mirrorTcReadableId
         ? rfTestsForTagMatch?.find((t) => t.tags?.includes(mirrorTcReadableId))
         : undefined;
+      // Same name-prefix fallback as the representative TC above
+      if (!mirrorTest && mirrorTcReadableId) {
+        mirrorTest = rfTestsForTagMatch?.find(
+          (t) => t.name === mirrorTcReadableId
+            || t.name.startsWith(mirrorTcReadableId + ' ')
+            || t.name.startsWith(mirrorTcReadableId + '-'),
+        );
+      }
       if (mirrorTest) {
         mirrorStatus = mirrorTest.status === 'PASS' ? 'PASSED' : 'FAILED';
         mirrorDuration = mirrorTest.durationMs || mirrorDuration;
