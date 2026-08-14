@@ -1650,7 +1650,14 @@ export default function Scheduler() {
   });
 
   const { data: scripts = [] } = useScripts(projectId);
-  const scriptedTcIds = useMemo(() => new Set(scripts.filter(s => s.testCaseId).map(s => s.testCaseId!)), [scripts]);
+  const scriptedTcIds = useMemo(() => {
+    const ids = new Set<string>();
+    // Direction 1: Script.testCaseId → TC was created alongside the script
+    scripts.filter(s => s.testCaseId).forEach(s => ids.add(s.testCaseId!));
+    // Direction 2: TestCase.linkedScriptId → TC was linked via tag auto-link or manual link
+    testCases.filter(tc => tc.linkedScriptId).forEach(tc => ids.add(tc.id));
+    return ids;
+  }, [scripts, testCases]);
   const existingTcIdSet = useMemo(() => new Set(testCases.map(tc => tc.id)), [testCases]);
 
   const { mutateAsync: createSchedule, isPending: creating } = useCreateSchedule(projectId);

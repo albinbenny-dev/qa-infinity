@@ -176,11 +176,10 @@ export default function TCLibrary() {
   // Set of TC IDs that have an agent-generated script
   const scriptedTcIds = useMemo(() => {
     const set = new Set<string>();
-    for (const s of scripts) {
-      if (s.testCaseId) set.add(s.testCaseId);
-    }
+    for (const s of scripts) { if (s.testCaseId) set.add(s.testCaseId); }
+    for (const tc of allTCs) { if (tc.linkedScriptId) set.add(tc.id); }
     return set;
-  }, [scripts]);
+  }, [scripts, allTCs]);
 
   // Map scriptId → Script for Script Link column display
   const scriptById = useMemo(() => new Map(scripts.map((s) => [s.id, s])), [scripts]);
