@@ -203,21 +203,24 @@ export default function OverallDashboard() {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Topbar
-        breadcrumbs={[{ label: '📊 Overall Dashboard' }]}
-        actions={
-          <TbBtn
-            variant="ghost"
-            onClick={() => window.location.reload()}
-            style={{ background: 'rgba(37,99,171,0.1)', color: 'var(--cyan)', border: '1px solid rgba(37,99,171,0.25)' }}
-          >
-            ↺ Refresh
-          </TbBtn>
-        }
-      />
+    <>
+      {/* Sticky topbar — anchors to <main>'s scroll container */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+        <Topbar
+          breadcrumbs={[{ label: '📊 Overall Dashboard' }]}
+          actions={
+            <TbBtn
+              variant="ghost"
+              onClick={() => window.location.reload()}
+              style={{ background: 'rgba(37,99,171,0.1)', color: 'var(--cyan)', border: '1px solid rgba(37,99,171,0.25)' }}
+            >
+              ↺ Refresh
+            </TbBtn>
+          }
+        />
+      </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ padding: '20px 24px 40px', display: 'flex', flexDirection: 'column', gap: 20 }}>
         {isLoading ? (
           <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, paddingTop: 60 }}>
             Loading overview…
@@ -316,12 +319,14 @@ export default function OverallDashboard() {
               {/* Per-project last run panel */}
               <div style={{
                 background: 'var(--surface)', border: '1px solid var(--border)',
-                borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)',
+                borderRadius: 12, boxShadow: 'var(--shadow-card)',
+                display: 'flex', flexDirection: 'column',
               }}>
-                <div style={{ height: 3, background: 'var(--warm-accent)' }} />
-                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                <div style={{ height: 3, background: 'var(--warm-accent)', borderRadius: '12px 12px 0 0', flexShrink: 0 }} />
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--text)', flexShrink: 0 }}>
                   Last Run — Per Project
                 </div>
+                <div style={{ overflowY: 'auto' }}>
                 {rows.map(({ project: p, stats, recentRun }) => {
                   const status   = recentRun?.status ?? 'PENDING';
                   const pass     = stats?.lastRunPassCount ?? 0;
@@ -363,13 +368,14 @@ export default function OverallDashboard() {
                     </div>
                   );
                 })}
+                </div>
               </div>
             </div>
 
             {/* ── Project breakdown table ─────────────────────────────── */}
             <div style={{
               background: 'var(--surface)', border: '1px solid var(--border)',
-              borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)',
+              borderRadius: 12, boxShadow: 'var(--shadow-card)',
             }}>
               <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))' }} />
               <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
@@ -503,6 +509,6 @@ export default function OverallDashboard() {
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }
