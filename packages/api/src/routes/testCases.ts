@@ -697,7 +697,15 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
         select: { testCaseId: true, status: true },
         orderBy: { run: { createdAt: 'desc' } },
       }),
-      prisma.testCase.count({ where: { projectId, linkedScriptId: { not: null } } }),
+      prisma.testCase.count({
+        where: {
+          projectId,
+          OR: [
+            { linkedScriptId: { not: null } },
+            { scripts: { some: {} } },
+          ],
+        },
+      }),
     ]);
 
     // First occurrence per testCaseId = most recent run result (ordered desc above)
