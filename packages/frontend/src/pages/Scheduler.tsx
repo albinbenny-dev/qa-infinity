@@ -1643,7 +1643,7 @@ export default function Scheduler() {
   const { data: testCases = [] } = useQuery<TestCase[]>({
     queryKey: ['test-cases', projectId, 'scheduler-all'],
     queryFn: async () => {
-      const res = await api.get<{ testCases: TestCase[] }>(`/projects/${projectId}/test-cases?limit=500`);
+      const res = await api.get<{ testCases: TestCase[] }>(`/projects/${projectId}/test-cases?limit=2000`);
       return (res.data.testCases ?? []).filter(tc => tc.status !== 'DEPRECATED');
     },
     enabled: !!projectId,
