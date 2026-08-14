@@ -95,11 +95,25 @@ const TRIGGER_META: Record<string, { label: string; color: string; bg: string }>
 
 // ── Job queue panel (shown above live log when runs are active) ────────────
 
-function JobQueuePanel({ runs, watchedRunId, onSelect }: {
+function JobQueuePanel({ runs, watchedRunId, onSelect, watchedLogs }: {
   runs: RunListItem[];
   watchedRunId: string | null;
   onSelect: (runId: string) => void;
+  watchedLogs: import('../hooks/useRunSocket').LogLine[];
 }) {
+  // Derive the real active lane count from live log lines — [W1], [W2], etc.
+  // Only the last ~30 lines matter: once a lane emits "→ [Wn]" it's active;
+  // we count distinct lane numbers seen in the tail so that sequential runs
+  // (where only W1 ever fires) correctly show 1 instead of the configured max.
+  const liveActiveLanes = useMemo(() => {
+    const tail = watchedLogs.slice(-30);
+    const seen = new Set<number>();
+    for (const l of tail) {
+      const m = l.text.match(/\[W(\d+)\]/);
+      if (m) seen.add(Number(m[1]));
+    }
+    return seen.size;
+  }, [watchedLogs]);
   return (
     <div style={{
       background: '#04183a',
@@ -141,7 +155,11 @@ function JobQueuePanel({ runs, watchedRunId, onSelect }: {
           const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
           const pw          = run.parallelWorkers ?? null;
           const remaining   = Math.max(0, total - done);
-          const activeLanes = (pw && run.status === 'RUNNING') ? Math.min(pw, remaining) : 0;
+          // For the watched run use the live log-derived count (accurate for sequential stages).
+          // For other runs fall back to the DB-snapshot estimate.
+          const activeLanes = (pw && run.status === 'RUNNING')
+            ? (watched ? Math.min(pw, liveActiveLanes || 1) : Math.min(pw, remaining))
+            : 0;
 
           return (
             <div
@@ -770,6 +788,7 @@ export default function Execution() {
               runs={activeRuns}
               watchedRunId={watchedRunId}
               onSelect={switchToRun}
+              watchedLogs={logs}
             />
           )}
           <LiveLog
