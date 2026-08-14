@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react';
+import { useState, useCallback, useEffect, useMemo, Fragment } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ListChecks, CheckCircle2, XCircle, MinusCircle, TrendingUp, type LucideIcon } from 'lucide-react';
 import Topbar, { TbBtn } from '../components/layout/Topbar';
@@ -83,6 +83,49 @@ function StatTile({ label, value, accent, valueColor, icon: Icon, active, onClic
 
 type Result = ReturnType<typeof useReportRun>['data'] extends { results: (infer R)[] } | undefined ? R : never;
 
+// ── Screenshot lightbox ─────────────────────────────────────────────────────
+
+interface SsModal { url: string; filename: string }
+
+function ScreenshotModal({ modal, onClose }: { modal: SsModal; onClose: () => void }) {
+  function download() {
+    const a = document.createElement('a');
+    a.href = modal.url; a.download = modal.filename; a.click();
+  }
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'rgba(0,0,0,0.82)', display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }}>
+        <img
+          src={modal.url}
+          alt="Screenshot"
+          style={{ maxWidth: '90vw', maxHeight: '82vh', objectFit: 'contain', borderRadius: 6, display: 'block' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, gap: 8 }}>
+          <button
+            onClick={download}
+            style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, background: 'rgba(37,99,171,0.35)', color: '#e2e8f0', border: '1px solid rgba(37,99,171,0.55)', cursor: 'pointer' }}
+          >
+            ⬇ Download
+          </button>
+          <button
+            onClick={onClose}
+            style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, background: 'rgba(255,255,255,0.08)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.18)', cursor: 'pointer' }}
+          >
+            ✕ Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Group header row (renders as <tr> inside the flat table) ───────────────
 
 interface GroupHeaderRowProps {
@@ -103,7 +146,7 @@ function GroupHeaderRow({ groupKey, groupResults, isOpen, onToggle }: GroupHeade
   return (
     <tr onClick={onToggle} style={{ cursor: 'pointer' }}>
       <td
-        colSpan={4}
+        colSpan={5}
         style={{
           padding: '8px 14px',
           background: 'var(--surface2)',
@@ -177,7 +220,13 @@ function GroupHeaderRow({ groupKey, groupResults, isOpen, onToggle }: GroupHeade
 
 // ── Result row (table row) ─────────────────────────────────────────────────
 
-function ResultRow({ r }: { r: Result }) {
+interface ResultRowProps {
+  r: Result;
+  onOpenScreenshot: (resultId: string, tcId: string) => void;
+  onOpenRfLog:      (resultId: string, tcId: string) => void;
+}
+
+function ResultRow({ r, onOpenScreenshot, onOpenRfLog }: ResultRowProps) {
   const statusBg = r.status === 'PASSED'  ? 'rgba(42,157,143,0.1)'
     : r.status === 'FAILED'   ? 'rgba(220,38,38,0.1)'
     : r.status === 'SKIPPED'  ? 'rgba(251,191,36,0.1)'
@@ -225,7 +274,7 @@ function ResultRow({ r }: { r: Result }) {
       </td>
 
       {/* Status */}
-      <td style={{ padding: '8px 14px 8px 8px', textAlign: 'center', verticalAlign: 'middle' }}>
+      <td style={{ padding: '8px 8px 8px 8px', textAlign: 'center', verticalAlign: 'middle' }}>
         <span style={{
           display: 'inline-block',
           fontSize: 9.5, fontWeight: 700, padding: '2px 9px', borderRadius: 100,
@@ -235,6 +284,39 @@ function ResultRow({ r }: { r: Result }) {
         }}>
           {r.status}
         </span>
+      </td>
+
+      {/* Assets */}
+      <td style={{ padding: '6px 10px 6px 4px', textAlign: 'center', verticalAlign: 'middle' }}>
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center', flexWrap: 'nowrap' }}>
+          {(r as any).screenshotPath && (
+            <button
+              onClick={() => onOpenScreenshot(r.id, r.testCase.tcId)}
+              title="View screenshot"
+              style={{
+                fontSize: 10, padding: '2px 7px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap',
+                background: 'rgba(37,99,171,0.15)', color: 'var(--cyan)', border: '1px solid rgba(37,99,171,0.3)',
+              }}
+            >
+              📷 PNG
+            </button>
+          )}
+          {(r as any).rfLogPath && (
+            <button
+              onClick={() => onOpenRfLog(r.id, r.testCase.tcId)}
+              title="Download RF log"
+              style={{
+                fontSize: 10, padding: '2px 7px', borderRadius: 5, cursor: 'pointer', whiteSpace: 'nowrap',
+                background: 'rgba(251,191,36,0.1)', color: 'var(--amber)', border: '1px solid rgba(251,191,36,0.3)',
+              }}
+            >
+              Log
+            </button>
+          )}
+          {!(r as any).screenshotPath && !(r as any).rfLogPath && (
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', opacity: 0.4 }}>—</span>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -464,6 +546,42 @@ export default function RunDetail() {
   const [search, setSearch]             = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string> | null>(null);
   const [exporting, setExporting]       = useState(false);
+  const [ssModal, setSsModal]           = useState<SsModal | null>(null);
+
+  // Close screenshot modal on Escape
+  useEffect(() => {
+    if (!ssModal) return;
+    const modal = ssModal; // capture for closure — TS can't narrow across async boundaries
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { URL.revokeObjectURL(modal.url); setSsModal(null); } }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [ssModal]);
+
+  const openScreenshot = useCallback(async (resultId: string, tcId: string) => {
+    if (!projectId || !runId) return;
+    try {
+      const res = await api.get(
+        `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/screenshot`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(new Blob([res.data as BlobPart]));
+      setSsModal({ url, filename: `screenshot-${tcId}.png` });
+    } catch { /* silent */ }
+  }, [projectId, runId]);
+
+  const openRfLog = useCallback(async (resultId: string, tcId: string) => {
+    if (!projectId || !runId) return;
+    try {
+      const res = await api.get(
+        `/projects/${projectId}/reports/runs/${runId}/results/${resultId}/rf-log`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(new Blob([res.data as BlobPart]));
+      const a   = document.createElement('a');
+      a.href = url; a.download = `rf-log-${tcId}.html`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch { /* silent */ }
+  }, [projectId, runId]);
 
   const results = run?.results ?? [];
 
@@ -647,6 +765,7 @@ export default function RunDetail() {
                   <col style={{ width: 108 }} />
                   <col />
                   <col style={{ width: 82 }} />
+                  <col style={{ width: 90 }} />
                   <col style={{ width: 96 }} />
                 </colgroup>
                 <thead>
@@ -654,7 +773,8 @@ export default function RunDetail() {
                     <th style={{ ...colHeadStyle, textAlign: 'left', paddingLeft: 17 }}>TC ID</th>
                     <th style={{ ...colHeadStyle, textAlign: 'left' }}>Test Case</th>
                     <th style={{ ...colHeadStyle, textAlign: 'right' }}>Duration</th>
-                    <th style={{ ...colHeadStyle, textAlign: 'center', paddingRight: 14 }}>Status</th>
+                    <th style={{ ...colHeadStyle, textAlign: 'center' }}>Status</th>
+                    <th style={{ ...colHeadStyle, textAlign: 'center', paddingRight: 10 }}>Assets</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -668,7 +788,9 @@ export default function RunDetail() {
                           isOpen={isOpen}
                           onToggle={() => toggleGroup(groupKey)}
                         />
-                        {isOpen && groupResults.map(r => <ResultRow key={r.id} r={r} />)}
+                        {isOpen && groupResults.map(r => (
+                          <ResultRow key={r.id} r={r} onOpenScreenshot={openScreenshot} onOpenRfLog={openRfLog} />
+                        ))}
                       </Fragment>
                     );
                   })}
@@ -678,6 +800,13 @@ export default function RunDetail() {
           )}
 
         </div>
+      )}
+
+      {ssModal && (
+        <ScreenshotModal
+          modal={ssModal}
+          onClose={() => { URL.revokeObjectURL(ssModal!.url); setSsModal(null); }}
+        />
       )}
     </div>
   );
