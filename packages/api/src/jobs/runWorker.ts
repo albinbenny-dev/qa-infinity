@@ -312,7 +312,16 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
         reportFile,
         outputDir,
         { parallelWorkers, headless, browser, hostBrowser, envBaseUrl, envUsername, envPassword, environment, projectSlug },
-        (line) => emitLog(runId, 'run', line),
+        (line) => {
+          // ConsoleStepListener emits "[STEP] {depth} {text}" — route these with kind='step'
+          // so the frontend can render and filter them separately from regular run output.
+          const stepMatch = line.match(/^\[STEP\] (-?\d+) ([\s\S]*)$/);
+          if (stepMatch) {
+            emitLog(runId, 'step', stepMatch[2], parseInt(stepMatch[1], 10));
+          } else {
+            emitLog(runId, 'run', line);
+          }
+        },
         runAbortController.signal,
         hostBrowser ? (vncData) => emitToRun(runId, 'run:vnc', vncData) : undefined,
       ),
@@ -681,8 +690,14 @@ async function extractAndLockLocators(
 }
 
 // ── Helper: emit log line ────────────────────────────────────────────────────
-function emitLog(runId: string, kind: 'info' | 'pass' | 'fail' | 'run' | 'warn', text: string): void {
-  emitToRun(runId, 'run:log', { kind, text, ts: new Date().toISOString() });
+// `depth` is only meaningful for kind='step' (populated by ConsoleStepListener):
+//   -1 = test lifecycle event (start / end)
+//    0 = top-level user keyword (the test step as written)
+//   1+ = nested library-internal keyword
+function emitLog(runId: string, kind: 'info' | 'pass' | 'fail' | 'run' | 'warn' | 'step', text: string, depth?: number): void {
+  const payload: Record<string, unknown> = { kind, text, ts: new Date().toISOString() };
+  if (depth !== undefined) payload.depth = depth;
+  emitToRun(runId, 'run:log', payload);
 }
 
 // ── Helper: spawn playwright ─────────────────────────────────────────────────

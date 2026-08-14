@@ -784,6 +784,63 @@ const server = http.createServer(async (req, res) => {
       const listenerPath = path.join(effectiveOutputDir, 'QaRunnerListener.py');
       try { fs.writeFileSync(listenerPath, listenerCode, 'utf8'); } catch { /* non-fatal */ }
 
+      // Step-level execution trace listener — emits [STEP] prefixed lines to stdout
+      // so the API can route them to the frontend live log with per-step depth info.
+      // depth -1 = test lifecycle (start/end), 0 = user test steps, 1+ = library internals.
+      const stepListenerCode = [
+        'import sys as _sys',
+        '',
+        '',
+        'class ConsoleStepListener:',
+        '    """Streams per-keyword events to stdout as [STEP] tagged lines.',
+        '    The QA Infinity runner reads these and forwards them to the',
+        '    live log view via Socket.IO, keyed per run so concurrent runs',
+        '    never cross-contaminate each other\'s streams."""',
+        '    ROBOT_LISTENER_API_VERSION = 2',
+        '',
+        '    def __init__(self):',
+        '        self._depth = 0',
+        '',
+        '    def _emit(self, depth, text):',
+        "        line = '[STEP] ' + str(depth) + ' ' + text + '\\n'",
+        '        try:',
+        '            _sys.stdout.buffer.write(line.encode("utf-8", "replace"))',
+        '            _sys.stdout.buffer.flush()',
+        '        except AttributeError:',
+        '            _sys.stdout.write(line)',
+        '            _sys.stdout.flush()',
+        '',
+        '    def start_test(self, name, attrs):',
+        '        self._depth = 0',
+        "        self._emit(-1, '\\u25b6 ' + name)",
+        '',
+        '    def end_test(self, name, attrs):',
+        "        status = attrs.get('status', '?')",
+        "        elapsed = attrs.get('elapsedtime', 0)",
+        "        icon = '\\u2713' if status == 'PASS' else '\\u2717'",
+        "        self._emit(-1, icon + ' ' + name + '  ' + status + '  ' + str(elapsed) + 'ms')",
+        '',
+        '    def start_keyword(self, name, attrs):',
+        '        d = self._depth',
+        "        args_raw = attrs.get('args', [])",
+        '        args_display = [str(a)[:100] for a in args_raw[:5]]',
+        '        if len(args_raw) > 5:',
+        "            args_display.append('...')",
+        "        arg_str = '  |  ' + '  |  '.join(args_display) if args_display else ''",
+        "        self._emit(d, '\\u2192 ' + name + arg_str)",
+        '        self._depth += 1',
+        '',
+        '    def end_keyword(self, name, attrs):',
+        '        self._depth = max(0, self._depth - 1)',
+        '        d = self._depth',
+        "        status = attrs.get('status', '?')",
+        "        icon = '\\u2713' if status == 'PASS' else '\\u2717'",
+        "        self._emit(d, icon + ' ' + name)",
+      ].join('\n');
+
+      const stepListenerPath = path.join(effectiveOutputDir, 'ConsoleStepListener.py');
+      try { fs.writeFileSync(stepListenerPath, stepListenerCode, 'utf8'); } catch { /* non-fatal */ }
+
       // Only inject env credentials when the script doesn't declare its own —
       // scripts with multi-persona flows declare ${TC_USERNAME} / ${TC_PASSWORD}
       // in their *** Variables *** section and must not be overridden.
@@ -797,6 +854,7 @@ const server = http.createServer(async (req, res) => {
         '--report', 'NONE',
         '--log', 'log.html',
         '--listener', `${listenerPath}:${effectiveOutputDir}`,
+        '--listener', stepListenerPath,
         '--variable', `OUTPUTDIR:${effectiveOutputDir}`,
         '--variable', `HEADLESS:${(hostBrowser && !dryRun) ? 'False' : 'True'}`,
       ];
@@ -820,6 +878,7 @@ const server = http.createServer(async (req, res) => {
         TC_USERNAME: username || '',
         TC_PASSWORD: password || '',
         TEST_ENV: environment || '',
+        PYTHONIOENCODING: 'utf-8', // ensure Unicode step icons (▶ → ✓ ✗) survive the listener stdout pipe
       });
 
       if (hasHierarchy && fs.existsSync(pageObjectsDir)) {

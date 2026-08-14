@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LogLine, RunStats, RunSocketStatus } from '../../hooks/useRunSocket';
 
 interface LiveLogProps {
@@ -19,7 +19,18 @@ const KIND_STYLE: Record<string, { color: string; prefix: string }> = {
   run:  { color: '#60a5fa', prefix: '→' },
   warn: { color: '#F59E0B', prefix: '⚡' },
   info: { color: 'rgba(226,232,240,0.6)', prefix: '▶' },
+  // 'step' lines are rendered separately — text already contains the icon
 };
+
+// Derive a colour for a [STEP] line from the icon character the listener prefixed.
+// ▶ = test start/end boundary · → = keyword starting · ✓ = pass · ✗ = fail
+function stepColor(text: string): string {
+  if (text.startsWith('✓')) return '#2A9D8F';
+  if (text.startsWith('✗')) return '#DC2626';
+  if (text.startsWith('▶')) return '#a78bfa';   // purple — test lifecycle boundary
+  if (text.startsWith('→')) return 'rgba(226,232,240,0.72)';
+  return 'rgba(226,232,240,0.45)';
+}
 
 function formatTime(isoStr: string): string {
   try {
@@ -42,12 +53,22 @@ function formatElapsed(ms: number): string {
 export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStopping, onHeal, isHealing, healTriggered }: LiveLogProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new log lines
+  // Verbosity toggle: off = top-level user steps only (depth ≤ 0)
+  //                   on  = every keyword including library-internal calls
+  const [showDeep, setShowDeep] = useState(false);
+
+  // Filter step lines by depth when showDeep is off.
+  // Non-step kinds are always shown. Step depth: -1=test boundary, 0=user step, 1+=internals.
+  const visibleLogs = showDeep
+    ? logs
+    : logs.filter((line) => line.kind !== 'step' || (line.depth ?? 0) <= 0);
+
+  // Auto-scroll to bottom on new visible log lines
   useEffect(() => {
     if (bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
-  }, [logs.length]);
+  }, [visibleLogs.length]);
 
   const isRunning = status === 'running';
   const runningCount = stats.running;
@@ -122,6 +143,29 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
           </span>
         )}
 
+        {/* Verbosity toggle — only meaningful once step lines are present */}
+        {logs.some((l) => l.kind === 'step') && (
+          <button
+            onClick={() => setShowDeep((d) => !d)}
+            title={showDeep ? 'Showing all keyword calls — click to show top-level steps only' : 'Showing top-level steps only — click to show all library calls'}
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              padding: '2px 7px',
+              borderRadius: 10,
+              background: showDeep ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${showDeep ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.12)'}`,
+              color: showDeep ? '#a78bfa' : 'rgba(226,232,240,0.45)',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-ui)',
+              transition: 'all 0.15s',
+              flexShrink: 0,
+            }}
+          >
+            {showDeep ? 'All calls' : 'Steps only'}
+          </button>
+        )}
+
         {status === 'complete' && (
           <span style={{
             fontSize: 9,
@@ -152,7 +196,7 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
           scrollbarColor: 'rgba(255,255,255,0.15) transparent',
         }}
       >
-        {logs.length === 0 ? (
+        {visibleLogs.length === 0 ? (
           <div style={{
             padding: '40px 16px',
             textAlign: 'center',
@@ -164,7 +208,55 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
             </div>
           </div>
         ) : (
-          logs.map((line, i) => {
+          visibleLogs.map((line, i) => {
+            // ── Step lines (from ConsoleStepListener) ─────────────────────────
+            if (line.kind === 'step') {
+              const depth = line.depth ?? 0;
+              const color = stepColor(line.text);
+              // Indent deeper calls; test boundary (depth=-1) gets no indent but bold
+              const isTestBoundary = depth < 0;
+              const indent = depth > 0 ? depth * 14 : 0;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 0,
+                    padding: '0 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.02)',
+                  }}
+                >
+                  <span style={{
+                    minWidth: 68,
+                    padding: '0 10px',
+                    color: 'rgba(226,232,240,0.25)',
+                    fontSize: 10,
+                    flexShrink: 0,
+                    paddingTop: 1,
+                  }}>
+                    {formatTime(line.ts)}
+                  </span>
+                  {/* No separate prefix column — icon is embedded in text by listener */}
+                  <span style={{ width: 16, flexShrink: 0 }} />
+                  <span style={{
+                    flex: 1,
+                    color,
+                    wordBreak: 'break-all',
+                    paddingRight: 10,
+                    paddingLeft: indent,
+                    fontSize: depth > 0 ? 10 : 11,
+                    opacity: depth > 0 ? 0.65 : 1,
+                    fontWeight: isTestBoundary ? 700 : (line.text.startsWith('✗') ? 600 : 400),
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    {line.text}
+                  </span>
+                </div>
+              );
+            }
+
+            // ── Standard log lines ────────────────────────────────────────────
             const style = KIND_STYLE[line.kind] ?? KIND_STYLE['info'];
             return (
               <div

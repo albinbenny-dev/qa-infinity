@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { getToken } from '../lib/auth';
 
-export type LogKind = 'info' | 'pass' | 'fail' | 'run' | 'warn';
+export type LogKind = 'info' | 'pass' | 'fail' | 'run' | 'warn' | 'step';
 
 export interface LogLine {
   ts: string;
   kind: LogKind;
   text: string;
+  /** Only present for kind='step'. -1 = test lifecycle, 0 = user step, 1+ = library-internal */
+  depth?: number;
 }
 
 export interface RunStats {
@@ -57,10 +59,10 @@ export function useRunSocket(): UseRunSocketReturn {
       setStats({ total, passed: 0, failed: 0, running: total, skipped: 0, parallelWorkers });
     });
 
-    socket.on('run:log', (data: { kind: LogKind; text: string; ts: string }) => {
+    socket.on('run:log', (data: { kind: LogKind; text: string; ts: string; depth?: number }) => {
       setLogs((prev) => [
         ...prev,
-        { ts: data.ts ?? new Date().toISOString(), kind: data.kind ?? 'info', text: data.text },
+        { ts: data.ts ?? new Date().toISOString(), kind: data.kind ?? 'info', text: data.text, depth: data.depth },
       ]);
     });
 
