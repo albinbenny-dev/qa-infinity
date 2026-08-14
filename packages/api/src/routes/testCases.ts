@@ -684,7 +684,7 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
   try {
     const projectId = req.project.id;
 
-    const [totalTCs, ucRaw, neverRunCount, runResultsRaw] = await Promise.all([
+    const [totalTCs, ucRaw, neverRunCount, runResultsRaw, automatedCount] = await Promise.all([
       prisma.testCase.count({ where: { projectId } }),
       prisma.testCase.findMany({
         where: { projectId, useCaseTag: { not: null } },
@@ -697,6 +697,7 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
         select: { testCaseId: true, status: true },
         orderBy: { run: { createdAt: 'desc' } },
       }),
+      prisma.testCase.count({ where: { projectId, linkedScriptId: { not: null } } }),
     ]);
 
     // First occurrence per testCaseId = most recent run result (ordered desc above)
@@ -720,6 +721,7 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
       passedLast,
       failedLast,
       neverRun: neverRunCount,
+      automatedCount,
     });
   } catch (err) {
     next(err);

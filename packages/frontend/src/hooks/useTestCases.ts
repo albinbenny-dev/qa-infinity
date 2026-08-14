@@ -189,6 +189,7 @@ export interface TCLibraryStats {
   passedLast: number;
   failedLast: number;
   neverRun: number;
+  automatedCount: number;
 }
 
 export function useTCLibraryStats(projectId: string | undefined) {
