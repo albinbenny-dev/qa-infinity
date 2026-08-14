@@ -136,7 +136,7 @@ export default function TCLibrary() {
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: tcData, isLoading } = useTestCases(projectId, {
     search: search || undefined,
-    limit: 500,
+    limit: 2000,
   });
   const { data: useCases = [] } = useUseCases(projectId);
   const { data: stats } = useTCLibraryStats(projectId);

@@ -284,7 +284,7 @@ export default function Execution() {
   const projectId = project?.id;
 
   const { data: envConfigs = [] } = useProjectEnvConfigs(projectId);
-  const { data: tcData } = useTestCases(projectId, { limit: 500 });
+  const { data: tcData } = useTestCases(projectId, { limit: 2000 });
   const { data: useCaseTags = [] } = useUseCases(projectId);
   const { data: scripts = [] } = useScripts(projectId);
   const { data: runsData } = useRuns(projectId);

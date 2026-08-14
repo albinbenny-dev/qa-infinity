@@ -2091,7 +2091,7 @@ export default function Scripts() {
   const projectId = project?.id;
 
   const { data: scripts = [] } = useScripts(projectId);
-  const { data: tcData, isLoading: tcsLoading } = useTestCases(projectId, { limit: 500 });
+  const { data: tcData, isLoading: tcsLoading } = useTestCases(projectId, { limit: 2000 });
   const { data: useCases = [] } = useUseCases(projectId);
 
   const save = useSaveScriptContent(projectId ?? '');
