@@ -784,19 +784,25 @@ const server = http.createServer(async (req, res) => {
       const listenerPath = path.join(effectiveOutputDir, 'QaRunnerListener.py');
       try { fs.writeFileSync(listenerPath, listenerCode, 'utf8'); } catch { /* non-fatal */ }
 
-      // Step-level execution trace listener — emits [STEP] prefixed lines to stdout
-      // so the API can route them to the frontend live log with per-step depth info.
-      // depth -1 = test lifecycle (start/end), 0 = user test steps, 1+ = library internals.
+      // Step-level execution trace listener — emits [STEP] prefixed lines to stdout.
+      // Only top-level keyword results (depth 0) and test boundaries (depth -1) are emitted;
+      // nested library internals, NOT_RUN steps, and RF control-flow keywords are suppressed
+      // so the live log shows a clean human-readable step-by-step flow, not a depth-first trace.
       const stepListenerCode = [
         'import sys as _sys',
         '',
         '',
         'class ConsoleStepListener:',
-        '    """Streams per-keyword events to stdout as [STEP] tagged lines.',
-        '    The QA Infinity runner reads these and forwards them to the',
-        '    live log view via Socket.IO, keyed per run so concurrent runs',
-        '    never cross-contaminate each other\'s streams."""',
+        '    """Emits [STEP] lines for test boundaries and top-level keyword results only.',
+        '    Suppresses: nested library internals, NOT_RUN steps (cascaded failures),',
+        '    and RF control-flow infrastructure (for/if/while/try keywords).',
+        '    Library prefix stripped from kwname for readability.',
+        '    depth -1 = test start/end  |  depth 0 = user step result"""',
         '    ROBOT_LISTENER_API_VERSION = 2',
+        '',
+        '    # RF control-flow types that are infrastructure, not user steps',
+        "    _SKIP_TYPES = ('for', 'foritem', 'while', 'whileitem',",
+        "                   'if', 'else', 'elseif', 'except', 'finally', 'try')",
         '',
         '    def __init__(self):',
         '        self._depth = 0',
@@ -816,26 +822,27 @@ const server = http.createServer(async (req, res) => {
         '',
         '    def end_test(self, name, attrs):',
         "        status = attrs.get('status', '?')",
-        "        elapsed = attrs.get('elapsedtime', 0)",
+        "        elapsed_s = str(round(attrs.get('elapsedtime', 0) / 1000.0, 1)) + 's'",
         "        icon = '\\u2713' if status == 'PASS' else '\\u2717'",
-        "        self._emit(-1, icon + ' ' + name + '  ' + status + '  ' + str(elapsed) + 'ms')",
+        "        msg = (attrs.get('message', '') or '').strip()",
+        "        suffix = '  \\u2014  ' + msg.split('\\n')[0][:120] if (status == 'FAIL' and msg) else ''",
+        "        self._emit(-1, icon + ' ' + name + '  ' + elapsed_s + suffix)",
         '',
         '    def start_keyword(self, name, attrs):',
-        '        d = self._depth',
-        "        args_raw = attrs.get('args', [])",
-        '        args_display = [str(a)[:100] for a in args_raw[:5]]',
-        '        if len(args_raw) > 5:',
-        "            args_display.append('...')",
-        "        arg_str = '  |  ' + '  |  '.join(args_display) if args_display else ''",
-        "        self._emit(d, '\\u2192 ' + name + arg_str)",
         '        self._depth += 1',
         '',
         '    def end_keyword(self, name, attrs):',
-        '        self._depth = max(0, self._depth - 1)',
-        '        d = self._depth',
+        '        self._depth -= 1',
+        '        if self._depth != 0:',
+        '            return  # only emit top-level steps',
         "        status = attrs.get('status', '?')",
+        "        if status == 'NOT_RUN':",
+        '            return  # cascaded after failure — never actually ran',
+        "        if attrs.get('type', 'kw') in self._SKIP_TYPES:",
+        '            return  # RF control-flow infrastructure',
         "        icon = '\\u2713' if status == 'PASS' else '\\u2717'",
-        "        self._emit(d, icon + ' ' + name)",
+        "        display = attrs.get('kwname') or (name.split('.')[-1] if '.' in name else name)",
+        "        self._emit(0, icon + ' ' + display)",
       ].join('\n');
 
       const stepListenerPath = path.join(effectiveOutputDir, 'ConsoleStepListener.py');

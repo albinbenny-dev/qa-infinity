@@ -57,11 +57,14 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
   //                   on  = every keyword including library-internal calls
   const [showDeep, setShowDeep] = useState(false);
 
-  // Filter step lines by depth when showDeep is off.
-  // Non-step kinds are always shown. Step depth: -1=test boundary, 0=user step, 1+=internals.
+  // 'Steps only' (default): hide kind='run' lines entirely.
+  // Those are RF's own verbose stdout — suite headers, | PASS |, output paths, warnings, etc.
+  // The structured step events from ConsoleStepListener replace that signal with a clean flow.
+  // API-level messages (info/warn/pass/fail) always show in both modes.
+  // 'Full output': show everything — useful for debugging a broken run.
   const visibleLogs = showDeep
     ? logs
-    : logs.filter((line) => line.kind !== 'step' || (line.depth ?? 0) <= 0);
+    : logs.filter((line) => line.kind !== 'run');
 
   // Auto-scroll to bottom on new visible log lines
   useEffect(() => {
@@ -147,7 +150,7 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
         {logs.some((l) => l.kind === 'step') && (
           <button
             onClick={() => setShowDeep((d) => !d)}
-            title={showDeep ? 'Showing all keyword calls — click to show top-level steps only' : 'Showing top-level steps only — click to show all library calls'}
+            title={showDeep ? 'Showing full RF output — click to show clean step flow only' : 'Showing clean step flow — click to show full RF output for debugging'}
             style={{
               fontSize: 9,
               fontWeight: 700,
@@ -162,7 +165,7 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
               flexShrink: 0,
             }}
           >
-            {showDeep ? 'All calls' : 'Steps only'}
+            {showDeep ? 'Full output' : 'Steps only'}
           </button>
         )}
 
@@ -210,12 +213,13 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
         ) : (
           visibleLogs.map((line, i) => {
             // ── Step lines (from ConsoleStepListener) ─────────────────────────
+            // depth -1 = test boundary (▶ start / ✓✗ end) — rendered with a
+            //             subtle top-border separator to visually group each TC.
+            // depth  0 = top-level keyword result (✓ pass / ✗ fail).
+            // No library prefix in text; NOT_RUN / control-flow already suppressed.
             if (line.kind === 'step') {
-              const depth = line.depth ?? 0;
+              const isTestBoundary = (line.depth ?? 0) < 0;
               const color = stepColor(line.text);
-              // Indent deeper calls; test boundary (depth=-1) gets no indent but bold
-              const isTestBoundary = depth < 0;
-              const indent = depth > 0 ? depth * 14 : 0;
               return (
                 <div
                   key={i}
@@ -223,8 +227,10 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
                     display: 'flex',
                     alignItems: 'flex-start',
                     gap: 0,
-                    padding: '0 0',
-                    borderBottom: '1px solid rgba(255,255,255,0.02)',
+                    padding: isTestBoundary ? '4px 0 3px' : '1px 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.03)',
+                    borderTop: isTestBoundary ? '1px solid rgba(255,255,255,0.07)' : 'none',
+                    marginTop: isTestBoundary ? 3 : 0,
                   }}
                 >
                   <span style={{
@@ -237,17 +243,14 @@ export default function LiveLog({ logs, stats, status, elapsedMs, onStop, isStop
                   }}>
                     {formatTime(line.ts)}
                   </span>
-                  {/* No separate prefix column — icon is embedded in text by listener */}
+                  {/* Icon is embedded in text by the listener — no separate prefix column */}
                   <span style={{ width: 16, flexShrink: 0 }} />
                   <span style={{
                     flex: 1,
                     color,
-                    wordBreak: 'break-all',
+                    wordBreak: 'break-word',
                     paddingRight: 10,
-                    paddingLeft: indent,
-                    fontSize: depth > 0 ? 10 : 11,
-                    opacity: depth > 0 ? 0.65 : 1,
-                    fontWeight: isTestBoundary ? 700 : (line.text.startsWith('✗') ? 600 : 400),
+                    fontWeight: isTestBoundary || line.text.startsWith('✗') ? 700 : 400,
                     fontFamily: 'var(--font-mono)',
                   }}>
                     {line.text}
