@@ -33,9 +33,11 @@ const ALLOWED_MIMES = new Set([
   'application/msword',
   'text/plain',
   'text/markdown',
+  'application/json',           // Postman collections & OpenAPI specs
+  'text/json',                  // alternate MIME some browsers send
 ]);
 
-const ALLOWED_EXTS = new Set(['.pdf', '.xlsx', '.xls', '.docx', '.doc', '.txt', '.md']);
+const ALLOWED_EXTS = new Set(['.pdf', '.xlsx', '.xls', '.docx', '.doc', '.txt', '.md', '.json']);
 
 const fileFilter = (
   _req: Request,
