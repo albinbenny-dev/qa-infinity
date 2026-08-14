@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # QA Infinity - Deploy Script
 #
 # Ships qa-infinity-qa-api + qa-infinity-qa-runner + qa-infinity-qa-ui, plus
@@ -479,7 +479,7 @@ Fix once (safe to re-run - a no-op once ownership is already correct):
 cd /opt/qa-infinity
 [ -d scripts ] && sudo find scripts -not -uid 1000 -exec chown 1000:1000 {} +
 for vol in qa-artifacts qa-data qa-reqdocs; do
-  docker run --rm -v qa-infinity_$vol:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
+  docker run --rm -v qa-infinity_${vol}:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
 done
 docker compose -p qa-infinity restart qa-api qa-ui
 ``````
@@ -587,7 +587,7 @@ Fix once (safe to re-run - a no-op once ownership is already correct):
 cd /opt/qa-infinity
 [ -d scripts ] && sudo find scripts -not -uid 1000 -exec chown 1000:1000 {} +
 for vol in qa-artifacts qa-data qa-reqdocs; do
-  docker run --rm -v qa-infinity_$vol:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
+  docker run --rm -v qa-infinity_${vol}:/vol alpine sh -c "find /vol -not -uid 1000 -exec chown 1000:1000 {} +"
 done
 docker compose restart qa-runner qa-api
 ``````
@@ -631,7 +631,31 @@ chmod +x scripts/backup-db.sh
         $OutZip = "$PSScriptRoot\qa-infinity-offline-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
     }
     if (Test-Path $OutZip) { Remove-Item -Force $OutZip }
-    Compress-Archive -Path "$TmpDir\*" -DestinationPath $OutZip -CompressionLevel Optimal
+
+    # Compress-Archive uses a ZipArchive stream internally and silently fails
+    # on archives > 2 GB. Use System.IO.Compression.ZipFile directly — it
+    # writes entries one-by-one and has no 2 GB ceiling.
+    Add-Type -Assembly 'System.IO.Compression'
+    Add-Type -Assembly 'System.IO.Compression.FileSystem'
+
+    $zipStream   = [System.IO.File]::Open($OutZip, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+    $zipArchive  = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+
+    try {
+        Get-ChildItem -Path $TmpDir -File | ForEach-Object {
+            $entryName = $_.Name
+            Write-Host "    Adding $entryName ($([math]::Round($_.Length / 1MB, 1)) MB)..." -ForegroundColor DarkGray
+            $entry     = $zipArchive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Fastest)
+            $entryStream = $entry.Open()
+            $fileStream  = [System.IO.File]::OpenRead($_.FullName)
+            try   { $fileStream.CopyTo($entryStream) }
+            finally { $fileStream.Dispose(); $entryStream.Dispose() }
+        }
+    } finally {
+        $zipArchive.Dispose()
+        $zipStream.Dispose()
+    }
+
     $zipSizeMB = [math]::Round((Get-Item $OutZip).Length / 1MB, 1)
     Log-Ok "Package written: $OutZip ($zipSizeMB MB)"
 
