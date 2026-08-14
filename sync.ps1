@@ -1,4 +1,4 @@
-# sync.ps1 — pull latest code and redeploy in a local Windows dev environment
+﻿# sync.ps1 — pull latest code and redeploy in a local Windows dev environment
 #
 # Run this from the repo root in PowerShell:
 #   .\sync.ps1                        # redeploy qa-api + qa-ui (most common)
