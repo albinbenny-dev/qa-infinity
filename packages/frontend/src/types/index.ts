@@ -108,6 +108,7 @@ export interface Run {
   completedAt?: string;
   triggerType: 'MANUAL' | 'SCHEDULED' | 'INDIVIDUAL' | 'GROUP' | 'HEAL_RERUN';
   createdByUserId?: string | null;
+  parallelWorkers?: number | null;
   results?: RunResult[];
 }
 

@@ -139,6 +139,9 @@ function JobQueuePanel({ runs, watchedRunId, onSelect }: {
           const total   = run._count.results;
           const done    = passed + failed + skipped;
           const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+          const pw          = run.parallelWorkers ?? null;
+          const remaining   = Math.max(0, total - done);
+          const activeLanes = (pw && run.status === 'RUNNING') ? Math.min(pw, remaining) : 0;
 
           return (
             <div
@@ -184,7 +187,7 @@ function JobQueuePanel({ runs, watchedRunId, onSelect }: {
                 }}>{run.status === 'RUNNING' ? '● Running' : '⏳ Pending'}</span>
               </div>
 
-              {/* Progress bar + counts */}
+              {/* Progress bar + worker lanes + counts */}
               {total > 0 ? (
                 <div>
                   <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
@@ -195,7 +198,42 @@ function JobQueuePanel({ runs, watchedRunId, onSelect }: {
                       transition: 'width 0.4s ease',
                     }} />
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, fontFamily: 'var(--font-mono)' }}>
+
+                  {/* Worker lane blocks — visible while the run is active and parallelWorkers is set */}
+                  {pw && run.status === 'RUNNING' && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      marginTop: 5,
+                      padding: '3px 5px',
+                      background: 'rgba(124,58,237,0.07)',
+                      border: '0.5px solid rgba(124,58,237,0.16)',
+                      borderRadius: 4,
+                    }}>
+                      <span style={{ fontSize: 9, color: 'rgba(167,139,250,0.55)', flexShrink: 0, lineHeight: 1 }}>⚙</span>
+                      <div style={{ display: 'flex', gap: 2, flex: 1 }}>
+                        {Array.from({ length: pw }, (_, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              flex: 1, height: 4, borderRadius: 2,
+                              background: i < activeLanes ? 'rgba(124,58,237,0.85)' : 'rgba(124,58,237,0.18)',
+                              border: i < activeLanes ? 'none' : '0.5px solid rgba(124,58,237,0.32)',
+                              transition: 'background 0.3s ease',
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <span style={{
+                        fontSize: 9, color: 'rgba(167,139,250,0.75)',
+                        fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                        flexShrink: 0, whiteSpace: 'nowrap',
+                      }}>
+                        {activeLanes}/{pw}
+                      </span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 9, fontFamily: 'var(--font-mono)' }}>
                     <span style={{ color: 'rgba(226,232,240,0.35)' }}>{done}/{total}</span>
                     <span>
                       {passed > 0 && <span style={{ color: '#2A9D8F', marginRight: 5 }}>✓{passed}</span>}

@@ -16,6 +16,7 @@ export interface RunStats {
   failed: number;
   running: number;
   skipped: number;
+  parallelWorkers?: number;
 }
 
 export type RunSocketStatus = 'idle' | 'connecting' | 'running' | 'complete' | 'error' | 'cancelled';
@@ -51,9 +52,9 @@ export function useRunSocket(): UseRunSocketReturn {
 
     socketRef.current = socket;
 
-    socket.on('run:start', ({ total }: { total: number; environment?: string }) => {
+    socket.on('run:start', ({ total, parallelWorkers }: { total: number; parallelWorkers?: number; environment?: string }) => {
       setStatus('running');
-      setStats({ total, passed: 0, failed: 0, running: total, skipped: 0 });
+      setStats({ total, passed: 0, failed: 0, running: total, skipped: 0, parallelWorkers });
     });
 
     socket.on('run:log', (data: { kind: LogKind; text: string; ts: string }) => {
