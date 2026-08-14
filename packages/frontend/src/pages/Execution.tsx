@@ -105,10 +105,12 @@ function JobQueuePanel({ runs, watchedRunId, onSelect, watchedLogs }: {
   // Only the last ~30 lines matter: once a lane emits "→ [Wn]" it's active;
   // we count distinct lane numbers seen in the tail so that sequential runs
   // (where only W1 ever fires) correctly show 1 instead of the configured max.
+  // Scan ALL log lines for [W1]..[WN] markers — not just the tail.
+  // RF keyword lines (100s per TC) don't carry the marker, so a tail-only
+  // scan drops to 0 the moment the log scrolls past the last [Wn] line.
   const liveActiveLanes = useMemo(() => {
-    const tail = watchedLogs.slice(-30);
     const seen = new Set<number>();
-    for (const l of tail) {
+    for (const l of watchedLogs) {
       const m = l.text.match(/\[W(\d+)\]/);
       if (m) seen.add(Number(m[1]));
     }

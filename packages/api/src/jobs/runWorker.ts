@@ -577,12 +577,13 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
         prevSeqDone = new Promise<void>(resolve => { resolveStage = resolve; });
 
         return async (): Promise<void> => {
+          emitLog(runId, 'info', `⏳ Stage [${stage.useCaseTag}] · sequential · ${idxs.length} runnable TCs · waiting for prev SEQ`);
           if (idxs.length === 0) { resolveStage(); return; }
           await waitFor;                          // block until previous SEQ done
           if (runAbortController.signal.aborted) { resolveStage(); return; }
           const lane = await acquireSlot();       // then wait for a free worker
           try {
-            emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · sequential · ${idxs.length} test(s)`);
+            emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · sequential · ${idxs.length} test(s) · W${lane}`);
             for (const i of idxs) {
               if (runAbortController.signal.aborted) break;
               executedIdxs.add(i);
@@ -596,11 +597,12 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       } else {
         // PARALLEL — no SEQ dependency, just wait for a free worker slot.
         return async (): Promise<void> => {
+          emitLog(runId, 'info', `⏳ Stage [${stage.useCaseTag}] · parallel · ${idxs.length} runnable TCs · waiting for slot`);
           if (idxs.length === 0) return;
           if (runAbortController.signal.aborted) return;
           const lane = await acquireSlot();
           try {
-            emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · parallel · ${idxs.length} test(s)`);
+            emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · parallel · ${idxs.length} test(s) · W${lane}`);
             for (const i of idxs) {
               if (runAbortController.signal.aborted) break;
               executedIdxs.add(i);
