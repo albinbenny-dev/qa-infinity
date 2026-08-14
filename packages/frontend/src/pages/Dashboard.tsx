@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   BarChart,
@@ -23,18 +23,18 @@ function fmtK(n: number): string {
   return String(n);
 }
 
-// ── Stat tile ──────────────────────────────────────────────────────────────
+// ── KPI tile ───────────────────────────────────────────────────────────────
 
-function StatTile({
+function KpiTile({
   label,
   value,
-  suffix = '',
   accent,
+  sub,
 }: {
   label: string;
   value: number | string;
-  suffix?: string;
   accent: string;
+  sub?: string;
 }) {
   return (
     <div
@@ -42,51 +42,34 @@ function StatTile({
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderRadius: 10,
-        padding: '14px 16px',
+        padding: '12px 14px 10px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 3,
+        gap: 2,
         position: 'relative',
         overflow: 'hidden',
         boxShadow: 'var(--shadow-card)',
         flex: 1,
+        minWidth: 0,
       }}
     >
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 3,
-          background: accent,
-          borderRadius: '10px 10px 0 0',
-        }}
-      />
-      <div
-        style={{
-          fontSize: 28,
-          fontWeight: 800,
-          color: '#F47B20',
-          lineHeight: 1,
-          marginTop: 4,
-        }}
-      >
-        {value}
-        {suffix}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: accent, borderRadius: '10px 10px 0 0' }} />
+      <div style={{ fontSize: 22, fontWeight: 800, color: '#F47B20', lineHeight: 1, marginTop: 4 }}>{value}</div>
+      <div style={{ fontSize: 9, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginTop: 3 }}>{label}</div>
+      {sub && <div style={{ fontSize: 9, color: 'var(--text-dim)', marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ── KPI group (labelled section of tiles) ──────────────────────────────────
+
+function KpiGroup({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: 5 }}>
+        <span>{icon}</span>{title}
       </div>
-      <div
-        style={{
-          fontSize: 10,
-          color: 'var(--text-dim)',
-          fontWeight: 600,
-          textTransform: 'uppercase',
-          letterSpacing: '0.07em',
-          marginTop: 3,
-        }}
-      >
-        {label}
-      </div>
+      <div style={{ display: 'flex', gap: 8 }}>{children}</div>
     </div>
   );
 }
@@ -477,48 +460,78 @@ export default function Dashboard() {
           </div>
         ) : (
           <>
-            {/* ── stat tiles ────────────────────────────────────────────── */}
-            <div style={{ display: 'flex', gap: 12 }}>
-              <StatTile
-                label="Total Tests"
-                value={stats?.totalTests ?? 0}
-                accent="linear-gradient(90deg, var(--cyan), #2563AB)"
-              />
-              <StatTile
-                label="Automated"
-                value={stats?.automatedCount ?? 0}
-                accent="linear-gradient(90deg, var(--pass), #1a7a6e)"
-              />
-              <StatTile
-                label="TC Coverage"
-                value={`${stats?.coveragePct ?? 0}%`}
-                accent="linear-gradient(90deg, var(--pass), #1a7a6e)"
-              />
-              <StatTile
-                label="Last Run Pass"
-                value={stats?.lastRunPassCount ?? 0}
-                accent="linear-gradient(90deg, var(--pass), #1a7a6e)"
-              />
-              <StatTile
-                label="Last Run Failures"
-                value={stats?.lastRunFailCount ?? 0}
-                accent="linear-gradient(90deg, var(--fail), #b91c1c)"
-              />
-              <StatTile
-                label="Scheduled Runs"
-                value={stats?.activeSchedules ?? 0}
-                accent="linear-gradient(90deg, var(--skip), #D9601A)"
-              />
-              <StatTile
-                label="Scripts Generated"
-                value={stats?.scriptsGenerated ?? 0}
-                accent="linear-gradient(90deg, var(--violet), #7c3aed)"
-              />
-              <StatTile
-                label="AI Tokens Used"
-                value={fmtK(projectTokens)}
-                accent="linear-gradient(90deg, #F47B20, var(--amber))"
-              />
+            {/* ── KPI groups ────────────────────────────────────────────── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+              {/* Row 1: Coverage & Readiness + Quality & Stability */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+
+                <KpiGroup title="Coverage & Readiness" icon="🎯">
+                  <KpiTile label="Total TCs" value={stats?.totalTests ?? 0} accent="linear-gradient(90deg, var(--cyan), #2563AB)" />
+                  <KpiTile label="Automated" value={stats?.automatedCount ?? 0} accent="linear-gradient(90deg, var(--pass), #1a7a6e)" />
+                  <KpiTile label="TC Coverage" value={`${stats?.coveragePct ?? 0}%`} accent="linear-gradient(90deg, var(--pass), #1a7a6e)" />
+                  <KpiTile
+                    label="UC Coverage"
+                    value={`${stats?.useCaseCoveragePct ?? 0}%`}
+                    accent="linear-gradient(90deg, var(--pass), #1a7a6e)"
+                    sub={`${stats?.coveredUseCaseCount ?? 0} / ${stats?.useCaseCount ?? 0} use cases`}
+                  />
+                  <KpiTile
+                    label="Auto Depth"
+                    value={stats?.automationDepth ?? 0}
+                    accent="linear-gradient(90deg, var(--cyan), #2563AB)"
+                    sub="avg scripted TCs / UC"
+                  />
+                </KpiGroup>
+
+                <KpiGroup title="Quality & Stability" icon="✅">
+                  <KpiTile label="Pass Rate" value={`${stats?.overallPassRatePct ?? 0}%`} accent="linear-gradient(90deg, var(--pass), #1a7a6e)" sub="last 30 runs" />
+                  <KpiTile label="Flaky %" value={`${stats?.flakyPct ?? 0}%`} accent="linear-gradient(90deg, var(--amber), #D9601A)" sub={`${stats?.flakyTestCount ?? 0} TCs`} />
+                  <KpiTile label="Recurrence" value={`${stats?.failureRecurrenceRate ?? 0}%`} accent="linear-gradient(90deg, var(--fail), #b91c1c)" sub="TCs failing ≥2×" />
+                  <KpiTile label="Never Run" value={`${stats?.neverRunPct ?? 0}%`} accent="linear-gradient(90deg, var(--text-dim), #555)" sub={`${stats?.neverRunCount ?? 0} TCs`} />
+                  <KpiTile label="Last Pass" value={stats?.lastRunPassCount ?? 0} accent="linear-gradient(90deg, var(--pass), #1a7a6e)" />
+                  <KpiTile label="Last Fail" value={stats?.lastRunFailCount ?? 0} accent="linear-gradient(90deg, var(--fail), #b91c1c)" />
+                </KpiGroup>
+              </div>
+
+              {/* Row 2: Execution Velocity + AI & Productivity */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+
+                <KpiGroup title="Execution Velocity" icon="⚡">
+                  <KpiTile label="Runs / Week" value={stats?.runsPerWeek ?? 0} accent="linear-gradient(90deg, var(--cyan), #2563AB)" />
+                  <KpiTile
+                    label="Avg Duration"
+                    value={stats?.avgRunDurationSec
+                      ? stats.avgRunDurationSec >= 60
+                        ? `${Math.round(stats.avgRunDurationSec / 60)}m`
+                        : `${stats.avgRunDurationSec}s`
+                      : '—'}
+                    accent="linear-gradient(90deg, var(--violet), #7c3aed)"
+                    sub="per run"
+                  />
+                  <KpiTile label="Avg TCs / Run" value={stats?.avgTcsPerRun ?? 0} accent="linear-gradient(90deg, var(--cyan), #2563AB)" />
+                  <KpiTile label="Scheduled" value={stats?.scheduledRunCount ?? 0} accent="linear-gradient(90deg, var(--skip), #D9601A)" sub="of last 30 runs" />
+                  <KpiTile label="Manual" value={stats?.manualRunCount ?? 0} accent="linear-gradient(90deg, var(--text-dim), #555)" sub="of last 30 runs" />
+                </KpiGroup>
+
+                <KpiGroup title="AI & Productivity" icon="🤖">
+                  <KpiTile label="AI Scripts" value={stats?.aiGeneratedScripts ?? 0} accent="linear-gradient(90deg, var(--violet), #7c3aed)" />
+                  <KpiTile label="Manual Scripts" value={stats?.manualScripts ?? 0} accent="linear-gradient(90deg, var(--text-dim), #555)" />
+                  <KpiTile
+                    label="AI : Manual"
+                    value={`${stats?.aiVsManualRatio ?? 0}×`}
+                    accent="linear-gradient(90deg, var(--violet), #7c3aed)"
+                    sub="AI leverage ratio"
+                  />
+                  <KpiTile label="Script Pass %" value={`${stats?.scriptPassRate ?? 0}%`} accent="linear-gradient(90deg, var(--pass), #1a7a6e)" sub="verified scripts" />
+                  <KpiTile
+                    label="Tokens / Script"
+                    value={stats?.scriptsGenerated ? fmtK(Math.round(projectTokens / stats.scriptsGenerated)) : '—'}
+                    accent="linear-gradient(90deg, #F47B20, var(--amber))"
+                  />
+                  <KpiTile label="Total Tokens" value={fmtK(projectTokens)} accent="linear-gradient(90deg, #F47B20, var(--amber))" />
+                </KpiGroup>
+              </div>
             </div>
 
             {/* ── 2-column layout: left col = Suite+Trend stacked, right col = Runs+Flaky stacked */}

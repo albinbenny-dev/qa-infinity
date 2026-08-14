@@ -39,9 +39,38 @@ export async function saveEmailConfig(projectId: string, config: EmailConfig): P
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface ProjectStats {
+  // Coverage & Readiness
   totalTests: number;
   automatedCount: number;
   coveragePct: number;
+  useCaseCount: number;
+  coveredUseCaseCount: number;   // use cases with ≥1 automated TC
+  useCaseCoveragePct: number;
+  automationDepth: number;       // avg automated TCs per use case
+
+  // Quality & Stability
+  overallPassRatePct: number;    // all-time pass rate across recent 30 runs
+  flakyTestCount: number;
+  flakyPct: number;              // flaky / automatedCount
+  failureRecurrenceRate: number; // % of ever-tested TCs that failed in ≥2 runs
+  neverRunCount: number;
+  neverRunPct: number;
+
+  // Execution Velocity
+  runsPerWeek: number;
+  avgRunDurationSec: number;
+  avgTcsPerRun: number;
+  scheduledRunCount: number;     // last 30 runs
+  manualRunCount: number;        // last 30 runs
+
+  // AI & Productivity
+  aiGeneratedScripts: number;   // scripts with testCaseId (agent-generated)
+  manualScripts: number;        // scripts without testCaseId
+  aiVsManualRatio: number;      // aiGeneratedScripts / max(manualScripts,1)
+  scriptPassRate: number;       // verified scripts / total scripts %
+  tokensPerScript: number;      // projectTokens / max(scriptsGenerated,1)
+
+  // Legacy (kept for existing tiles)
   scriptsGenerated: number;
   totalRuns: number;
   lastRunPassCount: number;
@@ -161,39 +190,82 @@ export async function generateReport(runId: string): Promise<void> {
 // ── getProjectStats ────────────────────────────────────────────────────────
 
 export async function getProjectStats(projectId: string): Promise<ProjectStats> {
-  const [totalTests, automatedCount, scriptsGenerated, totalRuns, activeSchedules, pendingHeals, lastRun, allResults] =
-    await Promise.all([
-      prisma.testCase.count({ where: { projectId } }),
-      prisma.testCase.count({
-        where: {
-          projectId,
-          OR: [
-            { linkedScriptId: { not: null } },
-            { scripts: { some: {} } },
-          ],
-        },
-      }),
-      prisma.script.count({ where: { projectId } }),
-      prisma.run.count({ where: { projectId } }),
-      prisma.schedule.count({ where: { projectId, isActive: true } }),
-      prisma.heal.count({ where: { projectId, status: 'PENDING' } }),
-      prisma.run.findFirst({
-        where: { projectId, status: { in: ['PASSED', 'FAILED', 'RUNNING', 'CANCELLED'] } },
-        orderBy: { createdAt: 'desc' },
-        include: { results: { select: { status: true } } },
-      }),
-      // All results in last 30 runs, grouped by testCaseId for flakiness
-      prisma.runResult.findMany({
-        where: {
-          run: { projectId },
-          status: { in: ['PASSED', 'FAILED'] },
-        },
-        select: { testCaseId: true, status: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-        take: 5000,
-      }),
-    ]);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+  // ── Parallel batch 1: counts & raw data ───────────────────────────────────
+  const [
+    totalTests,
+    automatedCount,
+    neverRunCount,
+    scriptsGenerated,
+    aiGeneratedScripts,
+    verifiedScripts,
+    totalRuns,
+    activeSchedules,
+    pendingHeals,
+    lastRun,
+    allResults,
+    recentRuns,
+    runsLastWeek,
+    allTCsWithUseCase,
+  ] = await Promise.all([
+    prisma.testCase.count({ where: { projectId } }),
+    // TCs with agent script OR manual linkedScriptId
+    prisma.testCase.count({
+      where: {
+        projectId,
+        OR: [{ linkedScriptId: { not: null } }, { scripts: { some: {} } }],
+      },
+    }),
+    prisma.testCase.count({ where: { projectId, runResults: { none: {} } } }),
+    prisma.script.count({ where: { projectId } }),
+    // Agent-generated scripts (have a testCaseId)
+    prisma.script.count({ where: { projectId, testCaseId: { not: null } } }),
+    // Scripts that have been verified (passed a real run)
+    prisma.script.count({ where: { projectId, verificationStatus: 'VERIFIED' } }),
+    prisma.run.count({ where: { projectId } }),
+    prisma.schedule.count({ where: { projectId, isActive: true } }),
+    prisma.heal.count({ where: { projectId, status: 'PENDING' } }),
+    prisma.run.findFirst({
+      where: { projectId, status: { in: ['PASSED', 'FAILED', 'RUNNING', 'CANCELLED'] } },
+      orderBy: { createdAt: 'desc' },
+      include: { results: { select: { status: true } } },
+    }),
+    // All results for flakiness & recurrence analysis (last 5000)
+    prisma.runResult.findMany({
+      where: { run: { projectId }, status: { in: ['PASSED', 'FAILED'] } },
+      select: { testCaseId: true, status: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    }),
+    // Last 30 completed runs for velocity & pass rate
+    prisma.run.findMany({
+      where: { projectId, status: { in: ['PASSED', 'FAILED', 'CANCELLED'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+      select: {
+        triggerType: true,
+        startedAt: true,
+        completedAt: true,
+        results: { select: { status: true } },
+      },
+    }),
+    // Runs in last 7 days for runs-per-week
+    prisma.run.count({
+      where: { projectId, createdAt: { gte: sevenDaysAgo } },
+    }),
+    // All TCs with use case tags + whether they are automated
+    prisma.testCase.findMany({
+      where: { projectId, useCaseTag: { not: null } },
+      select: {
+        useCaseTag: true,
+        linkedScriptId: true,
+        scripts: { select: { id: true }, take: 1 },
+      },
+    }),
+  ]);
+
+  // ── Last-run pass / fail ───────────────────────────────────────────────────
   type StatusRow = { status: string };
   const lastRunPassCount = lastRun
     ? (lastRun.results as StatusRow[]).filter((r) => r.status === 'PASSED').length
@@ -202,30 +274,53 @@ export async function getProjectStats(projectId: string): Promise<ProjectStats> 
     ? (lastRun.results as StatusRow[]).filter((r) => r.status === 'FAILED').length
     : 0;
 
-  // Avg pass rate across all runs (last 30)
-  const recentRuns = await prisma.run.findMany({
-    where: { projectId, status: { in: ['PASSED', 'FAILED', 'RUNNING', 'CANCELLED'] } },
-    orderBy: { createdAt: 'desc' },
-    take: 30,
-    include: { results: { select: { status: true } } },
-  });
-
+  // ── Overall pass rate & execution velocity (last 30 runs) ─────────────────
+  type RecentRun = {
+    triggerType: string;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    results: StatusRow[];
+  };
   let avgPassRate = 0;
+  let overallPassRatePct = 0;
+  let avgRunDurationSec = 0;
+  let avgTcsPerRun = 0;
+  let scheduledRunCount = 0;
+  let manualRunCount = 0;
+
   if (recentRuns.length > 0) {
-    const rates = (recentRuns as Array<{ results: StatusRow[] }>).map((r) => {
+    const runs = recentRuns as RecentRun[];
+    const rates = runs.map((r) => {
       const t = r.results.length;
       const p = r.results.filter((x) => x.status === 'PASSED').length;
       return t > 0 ? (p / t) * 100 : 0;
     });
-    avgPassRate = Math.round(rates.reduce((a: number, b: number) => a + b, 0) / rates.length);
+    avgPassRate = Math.round(rates.reduce((a, b) => a + b, 0) / runs.length);
+    overallPassRatePct = avgPassRate;
+
+    // Avg duration
+    const durations = runs
+      .filter((r) => r.startedAt && r.completedAt)
+      .map((r) => (r.completedAt!.getTime() - r.startedAt!.getTime()) / 1000);
+    avgRunDurationSec = durations.length > 0
+      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+      : 0;
+
+    // Avg TCs per run
+    const tcCounts = runs.map((r) => r.results.length);
+    avgTcsPerRun = Math.round(tcCounts.reduce((a, b) => a + b, 0) / runs.length);
+
+    // Scheduled vs manual
+    scheduledRunCount = runs.filter((r) => r.triggerType === 'SCHEDULED').length;
+    manualRunCount = runs.filter((r) => r.triggerType === 'MANUAL').length;
   }
 
-  // Flaky tests: have both PASSED and FAILED in their last 10 results
-  const byTc = new Map<string, { passed: number; failed: number; results: string[] }>();
+  // ── Flaky test analysis ───────────────────────────────────────────────────
+  const byTc = new Map<string, { passed: number; failed: number; runIds: Set<string>; results: string[] }>();
   for (const r of allResults) {
     let entry = byTc.get(r.testCaseId);
     if (!entry) {
-      entry = { passed: 0, failed: 0, results: [] };
+      entry = { passed: 0, failed: 0, runIds: new Set(), results: [] };
       byTc.set(r.testCaseId, entry);
     }
     if (entry.results.length < 10) {
@@ -238,6 +333,17 @@ export async function getProjectStats(projectId: string): Promise<ProjectStats> 
   const flakyTcIds = [...byTc.entries()]
     .filter(([, v]) => v.passed > 0 && v.failed > 0)
     .map(([id]) => id);
+
+  // Failure recurrence: TCs that have FAILED in ≥2 distinct result rows
+  const failCounts = new Map<string, number>();
+  for (const r of allResults) {
+    if (r.status === 'FAILED') failCounts.set(r.testCaseId, (failCounts.get(r.testCaseId) ?? 0) + 1);
+  }
+  const recurrentFailTcs = [...failCounts.entries()].filter(([, c]) => c >= 2).length;
+  const totalTestedTcs = byTc.size;
+  const failureRecurrenceRate = totalTestedTcs > 0
+    ? Math.round((recurrentFailTcs / totalTestedTcs) * 100)
+    : 0;
 
   let flakyTests: FlakyTest[] = [];
   if (flakyTcIds.length > 0) {
@@ -261,10 +367,67 @@ export async function getProjectStats(projectId: string): Promise<ProjectStats> 
     });
   }
 
+  // ── Use case coverage ─────────────────────────────────────────────────────
+  type UCRow = { useCaseTag: string | null; linkedScriptId: string | null; scripts: { id: string }[] };
+  const ucMap = new Map<string, { total: number; automated: number }>();
+  for (const tc of allTCsWithUseCase as UCRow[]) {
+    const tag = tc.useCaseTag!;
+    const existing = ucMap.get(tag) ?? { total: 0, automated: 0 };
+    existing.total++;
+    if (tc.linkedScriptId || tc.scripts.length > 0) existing.automated++;
+    ucMap.set(tag, existing);
+  }
+  const useCaseCount = ucMap.size;
+  const coveredUseCaseCount = [...ucMap.values()].filter((v) => v.automated > 0).length;
+  const useCaseCoveragePct = useCaseCount > 0
+    ? Math.round((coveredUseCaseCount / useCaseCount) * 100)
+    : 0;
+  const automationDepth = useCaseCount > 0
+    ? Math.round((automatedCount / useCaseCount) * 10) / 10
+    : 0;
+
+  // ── AI & productivity ─────────────────────────────────────────────────────
+  const manualScripts = scriptsGenerated - aiGeneratedScripts;
+  const aiVsManualRatio = manualScripts > 0
+    ? Math.round((aiGeneratedScripts / manualScripts) * 10) / 10
+    : aiGeneratedScripts;
+  const scriptPassRate = scriptsGenerated > 0
+    ? Math.round((verifiedScripts / scriptsGenerated) * 100)
+    : 0;
+
   return {
+    // Coverage & Readiness
     totalTests,
     automatedCount,
     coveragePct: totalTests > 0 ? Math.round((automatedCount / totalTests) * 100) : 0,
+    useCaseCount,
+    coveredUseCaseCount,
+    useCaseCoveragePct,
+    automationDepth,
+
+    // Quality & Stability
+    overallPassRatePct,
+    flakyTestCount: flakyTcIds.length,
+    flakyPct: automatedCount > 0 ? Math.round((flakyTcIds.length / automatedCount) * 100) : 0,
+    failureRecurrenceRate,
+    neverRunCount,
+    neverRunPct: totalTests > 0 ? Math.round((neverRunCount / totalTests) * 100) : 0,
+
+    // Execution Velocity
+    runsPerWeek: runsLastWeek,
+    avgRunDurationSec,
+    avgTcsPerRun,
+    scheduledRunCount,
+    manualRunCount,
+
+    // AI & Productivity
+    aiGeneratedScripts,
+    manualScripts,
+    aiVsManualRatio,
+    scriptPassRate,
+    tokensPerScript: 0, // computed on frontend from projectTokens / scriptsGenerated
+
+    // Legacy
     scriptsGenerated,
     totalRuns,
     lastRunPassCount,
