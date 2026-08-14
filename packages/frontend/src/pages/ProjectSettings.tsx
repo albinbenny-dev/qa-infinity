@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQueryClient } from '@tanstack/react-query';
@@ -2041,7 +2041,7 @@ function UIScannerTab() {
 
 // ── ExecutionTab ───────────────────────────────────────────────────────────
 
-function ExecutionTab() {
+function ExecutionTab({ onRegisterSave }: { onRegisterSave?: (fn: (() => Promise<void>) | null) => void }) {
   const { activeProject } = useProjectStore();
   const updateProject = useUpdateProject(activeProject?.id ?? '');
 
@@ -2071,6 +2071,13 @@ function ExecutionTab() {
       toast.error('Failed to save run defaults');
     }
   };
+
+  // Register this tab's save function with the outer page's Save Changes button
+  useEffect(() => {
+    onRegisterSave?.(handleSave);
+    return () => onRegisterSave?.(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualWorkers, suiteWorkers, schedulerWorkers]);
 
   const rows: { label: string; desc: string; value: number; set: (n: number) => void }[] = [
     { label: 'Manual Run',    desc: 'Tests run directly from the Executions page', value: manualWorkers,    set: setManualWorkers },
@@ -2140,18 +2147,6 @@ function ExecutionTab() {
         ))}
       </div>
 
-      <button
-        onClick={handleSave}
-        disabled={updateProject.isPending}
-        style={{
-          padding: '8px 20px', borderRadius: '8px',
-          background: 'var(--accent)', color: '#fff',
-          border: 'none', cursor: updateProject.isPending ? 'not-allowed' : 'pointer',
-          fontSize: '14px', fontWeight: 500, opacity: updateProject.isPending ? 0.6 : 1,
-        }}
-      >
-        {updateProject.isPending ? 'Saving…' : 'Save Defaults'}
-      </button>
     </div>
   );
 }
@@ -2173,6 +2168,20 @@ export default function ProjectSettings() {
   const navigate = useNavigate();
   const { canManageMembers, canDeleteProject } = useRBAC();
   const [activeTab, setActiveTab] = useState('details');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Each tab that needs saving registers its save function here.
+  // The top-right "Save Changes" button calls whatever is registered for the active tab.
+  const tabSaveFnRef = useRef<(() => Promise<void>) | null>(null);
+  const registerSave = useCallback((fn: (() => Promise<void>) | null) => {
+    tabSaveFnRef.current = fn;
+  }, []);
+
+  const handleTopBarSave = async () => {
+    if (!tabSaveFnRef.current) return;
+    setIsSaving(true);
+    try { await tabSaveFnRef.current(); } finally { setIsSaving(false); }
+  };
 
   // Filter tabs: Members and Danger Zone are Admin-only
   const visibleTabs = TABS.filter((t) => {
@@ -2180,6 +2189,10 @@ export default function ProjectSettings() {
     if (t.value === 'danger')  return canDeleteProject;
     return true;
   });
+
+  // Only show Save Changes when the active tab has a registered save function
+  const tabsWithSave = ['execution'];
+  const showSave = tabsWithSave.includes(activeTab);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -2194,7 +2207,11 @@ export default function ProjectSettings() {
             <TbBtn variant="ghost" onClick={() => navigate(`/projects/${slug}/copy-export`)}>
               📋 Copy / Export
             </TbBtn>
-            <TbBtn variant="primary">💾 Save Changes</TbBtn>
+            {showSave && (
+              <TbBtn variant="primary" onClick={handleTopBarSave} disabled={isSaving}>
+                {isSaving ? '⏳ Saving…' : '💾 Save Changes'}
+              </TbBtn>
+            )}
           </>
         }
       />
@@ -2256,7 +2273,7 @@ export default function ProjectSettings() {
             <UIScannerTab />
           </Tabs.Content>
           <Tabs.Content value="execution">
-            <ExecutionTab />
+            <ExecutionTab onRegisterSave={registerSave} />
           </Tabs.Content>
           <Tabs.Content value="danger">
             <DangerZoneTab />
