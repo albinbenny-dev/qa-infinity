@@ -1303,11 +1303,13 @@ router.post(
             });
           };
 
+          let savedScriptId: string;
           if (existing) {
             await prisma.script.update({
               where: { id: existing.id },
               data: { content: f.content, useCaseFolder: useCaseTag, updatedAt: new Date() },
             });
+            savedScriptId = existing.id;
             // If script has no TC link yet and createTCs is on, create one now
             if (!existing.testCaseId && createTCs) {
               const tc = await autoCreateTc();
@@ -1332,7 +1334,7 @@ router.post(
               if (tc) { testCaseId = tc.id; testCasesCreated = 1; }
             }
             const scriptType = filename.endsWith('.robot') ? 'ROBOT' : 'PLAYWRIGHT';
-            await prisma.script.create({
+            const created = await prisma.script.create({
               data: {
                 projectId,
                 testCaseId,
@@ -1343,7 +1345,11 @@ router.post(
                 isCustomUpload: false,
               },
             });
+            savedScriptId = created.id;
           }
+          // Auto-link via [Tags] in script content (covers "Load Scripts Only" mode
+          // where filename-prefix matching may not apply)
+          void autoLinkScriptByTags(projectId, savedScriptId, f.content);
           imported.push({ filename, relPath: f.relPath, testCasesCreated });
         } catch (err: any) {
           warnings.push(`${f.relPath}: ${err.message}`);
