@@ -518,44 +518,104 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   const { stages } = job.data;
 
   if (stages && stages.length > 0) {
-    // Stage-aware execution: each stage is a barrier — stage N+1 only starts after
-    // stage N finishes. Within a stage, mode=sequential runs TCs one at a time;
-    // mode=parallel runs up to parallelWorkers TCs concurrently.
+    // ── Stage-aware execution ────────────────────────────────────────────────
+    // Rules:
+    //  1. TCs inside every stage always run sequentially (one TC at a time).
+    //  2. Each stage occupies exactly one worker lane for its entire duration.
+    //  3. PARALLEL stage  — no dependency on other stages; starts as soon as a
+    //                       worker slot is free.
+    //  4. SEQUENTIAL stage — must wait for the previous SEQUENTIAL stage to
+    //                        finish, then starts as soon as a worker slot is free.
+    //                        If there is no prior sequential stage it behaves like
+    //                        a parallel stage (no blocking dependency).
+    //  5. Worker pool     — if all slots are busy a stage queues until one frees.
+    //
+    // Example (4 workers, PAR→SEQ→PAR): all 3 stages start at t=0 (slots free,
+    // Stage 2 has no previous SEQ). With 2 workers the 3rd stage queues until
+    // one of the first two finishes.
+    //
+    // Example (4 workers, SEQ→PAR→SEQ): Stage 1 + Stage 2 start at t=0.
+    // Stage 3 (SEQ) waits for Stage 1 (the previous SEQ) to finish, then W1
+    // picks it up even if Stage 2 (PAR) is still running.
+
     const tcIdToIdx = new Map<string, number>(testCaseIds.map((id, i) => [id, i]));
     const executedIdxs = new Set<number>();
+    const effectiveWorkers = hostBrowser ? 1 : Math.max(1, parallelWorkers);
 
-    for (const stage of stages) {
-      if (runAbortController.signal.aborted) break;
+    // Worker-slot pool — slot numbers double as the [W1]..[WN] lane labels.
+    const slotPool: number[] = Array.from({ length: effectiveWorkers }, (_, i) => i + 1);
+    const slotWaiters: Array<(lane: number) => void> = [];
 
+    const acquireSlot = (): Promise<number> => {
+      if (slotPool.length > 0) return Promise.resolve(slotPool.shift()!);
+      return new Promise(resolve => slotWaiters.push(resolve));
+    };
+
+    const releaseSlot = (lane: number): void => {
+      if (slotWaiters.length > 0) {
+        slotWaiters.shift()!(lane);
+      } else {
+        slotPool.push(lane);
+      }
+    };
+
+    // Sequential-stage chain — each SEQ stage awaits this before starting.
+    // Starts as an already-resolved promise (no predecessor).
+    let prevSeqDone: Promise<void> = Promise.resolve();
+
+    // Build one async task per stage. The prevSeqDone chain is wired
+    // synchronously here (before any task actually runs) so ordering is correct.
+    const stageTasks = stages.map(stage => {
       const idxs = stage.tcIds
         .map(tcId => tcIdToIdx.get(tcId))
         .filter((i): i is number => i !== undefined && !executedIdxs.has(i));
 
-      if (idxs.length === 0) continue;
-
-      emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · ${stage.mode} · ${idxs.length} test(s)`);
-
       if (stage.mode === 'sequential') {
-        for (const i of idxs) {
-          if (runAbortController.signal.aborted) break;
-          executedIdxs.add(i);
-          await runOneScript(i, 1);
-        }
-      } else {
-        const stageWorkers = Math.max(1, Math.min(hostBrowser ? 1 : parallelWorkers, idxs.length));
-        let sNext = 0;
-        const stageLane = async (laneNum: number): Promise<void> => {
-          while (true) {
-            if (runAbortController.signal.aborted) return;
-            const j = sNext++;
-            if (j >= idxs.length) return;
-            executedIdxs.add(idxs[j]);
-            await runOneScript(idxs[j], laneNum);
+        // Capture the current chain tail and advance it.
+        const waitFor = prevSeqDone;
+        let resolveStage!: () => void;
+        prevSeqDone = new Promise<void>(resolve => { resolveStage = resolve; });
+
+        return async (): Promise<void> => {
+          if (idxs.length === 0) { resolveStage(); return; }
+          await waitFor;                          // block until previous SEQ done
+          if (runAbortController.signal.aborted) { resolveStage(); return; }
+          const lane = await acquireSlot();       // then wait for a free worker
+          try {
+            emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · sequential · ${idxs.length} test(s)`);
+            for (const i of idxs) {
+              if (runAbortController.signal.aborted) break;
+              executedIdxs.add(i);
+              await runOneScript(i, lane);
+            }
+          } finally {
+            releaseSlot(lane);
+            resolveStage();   // unblock the next SEQ stage (if any)
           }
         };
-        await Promise.all(Array.from({ length: stageWorkers }, (_, k) => stageLane(k + 1)));
+      } else {
+        // PARALLEL — no SEQ dependency, just wait for a free worker slot.
+        return async (): Promise<void> => {
+          if (idxs.length === 0) return;
+          if (runAbortController.signal.aborted) return;
+          const lane = await acquireSlot();
+          try {
+            emitLog(runId, 'info', `▷ Stage [${stage.useCaseTag}] · parallel · ${idxs.length} test(s)`);
+            for (const i of idxs) {
+              if (runAbortController.signal.aborted) break;
+              executedIdxs.add(i);
+              await runOneScript(i, lane);
+            }
+          } finally {
+            releaseSlot(lane);
+          }
+        };
       }
-    }
+    });
+
+    // Launch all stage tasks concurrently — each manages its own timing via
+    // the slot pool and the sequential-chain promise.
+    await Promise.all(stageTasks.map(task => task()));
   } else {
     // Flat cursor execution for non-suite runs (schedules, manual, individual, etc.)
     const laneCount = Math.max(1, Math.min(hostBrowser ? 1 : (parallelWorkers || 1), scriptPaths.length || 1));
