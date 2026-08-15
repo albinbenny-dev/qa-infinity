@@ -356,12 +356,15 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
 
     if (result.reportData?._robotReport) {
       // ── Robot Framework report ──────────────────────────────────────────
-      // RF exit code is the definitive source of truth (0 = all pass, non-zero = failure)
+      // Use reportData.failed count as primary source — RF can exit with code 0
+      // even when tests fail (process completed successfully but tests did not pass).
+      // Fall back to exitCode only when no tests were parsed from output.xml.
       const rfReport = result.reportData;
       const rfTests = rfReport.tests ?? [];
       rfTestsForTagMatch = rfTests;
       duration = rfTests.reduce((sum, t) => sum + t.durationMs, 0) || result.durationMs;
-      passed = result.exitCode === 0;
+      const rfFailedCount = rfTests.filter((t) => t.status === 'FAIL').length;
+      passed = rfTests.length > 0 ? rfFailedCount === 0 : result.exitCode === 0;
       if (!passed) {
         const failedTest = rfTests.find((t) => t.status === 'FAIL');
         errorMessage = failedTest?.errorMsg
