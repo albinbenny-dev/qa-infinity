@@ -60,6 +60,39 @@ function flattenTests(suite: PWSuite): PWTestCase[] {
   return tests;
 }
 
+// ── RF output.xml error extractor ─────────────────────────────────────────
+// The runner's XML parser matches the FIRST <status> inside each <test> block,
+// which may belong to a keyword — not the test itself. The test-level status
+// is always the LAST <status> in the block. This helper reads output.xml
+// directly and returns a map of testName → correct error message.
+function extractRfTestErrors(xmlPath: string): Map<string, string> {
+  const result = new Map<string, string>();
+  try {
+    if (!fs.existsSync(xmlPath)) return result;
+    const xml = fs.readFileSync(xmlPath, 'utf8');
+    // Match each <test>…</test> block
+    const testBlockRe = /<test\b[^>]*\bname="([^"]+)"[^>]*>([\s\S]*?)<\/test>/g;
+    let tm: RegExpExecArray | null;
+    while ((tm = testBlockRe.exec(xml)) !== null) {
+      const testName = tm[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+      const block    = tm[2];
+      // Find ALL status tags in the block and take the last one (test-level)
+      const statusRe = /<status\b[^>]*\bstatus="(PASS|FAIL)"[^>]*>([^<]*)<\/status>|<status\b[^>]*\bstatus="(PASS|FAIL)"[^>]*\/>/g;
+      let sm: RegExpExecArray | null;
+      let lastMsg = '';
+      while ((sm = statusRe.exec(block)) !== null) {
+        // Group 2 is message text for non-self-closing tags
+        const msg = sm[2]?.trim() ?? '';
+        if (msg) lastMsg = msg;
+      }
+      if (lastMsg) {
+        result.set(testName, lastMsg.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'"));
+      }
+    }
+  } catch { /* non-fatal — fall back to runner-provided errorMsg */ }
+  return result;
+}
+
 // ── Main job processor ─────────────────────────────────────────────────────
 async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
   const { runId, runSeq, projectId, testCaseIds, scriptPaths, skippedTcIds = [],
@@ -356,15 +389,25 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
 
     if (result.reportData?._robotReport) {
       // ── Robot Framework report ──────────────────────────────────────────
-      // RF exit code is the definitive source of truth (0 = all pass, non-zero = failure)
       const rfReport = result.reportData;
       const rfTests = rfReport.tests ?? [];
       rfTestsForTagMatch = rfTests;
       duration = rfTests.reduce((sum, t) => sum + t.durationMs, 0) || result.durationMs;
-      passed = result.exitCode === 0;
+      // Use reportData.failed count — RF can exit with code 0 even when tests fail
+      const rfFailedCount = rfTests.filter((t) => t.status === 'FAIL').length;
+      passed = rfTests.length > 0 ? rfFailedCount === 0 : result.exitCode === 0;
+      // Parse output.xml directly to get the correct test-level error message.
+      // The runner's XML parser may pick up a keyword-level <status> (which appears
+      // first in the block) rather than the test-level <status> (which is last),
+      // causing a mismatched error in the summary line. Hoisted so ownTest block
+      // can also use it for the tag-matched TC case.
+      const xmlPath = path.join(outputDir, 'output.xml');
+      const rfXmlErrors = extractRfTestErrors(xmlPath);
       if (!passed) {
         const failedTest = rfTests.find((t) => t.status === 'FAIL');
-        errorMessage = failedTest?.errorMsg
+        const xmlMsg = failedTest ? rfXmlErrors.get(failedTest.name) : undefined;
+        errorMessage = xmlMsg
+          ?? failedTest?.errorMsg
           ?? result.errorSnippet
           ?? 'Robot test failed — check the run log for details.';
       }
@@ -391,7 +434,11 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       if (ownTest) {
         passed = ownTest.status === 'PASS';
         duration = ownTest.durationMs || duration;
-        errorMessage = ownTest.status === 'FAIL' ? (ownTest.errorMsg ?? errorMessage) : undefined;
+        // Prefer the XML-parsed message for this specific test over the runner-provided one
+        const ownXmlMsg = rfXmlErrors?.get(ownTest.name);
+        errorMessage = ownTest.status === 'FAIL'
+          ? (ownXmlMsg ?? ownTest.errorMsg ?? errorMessage)
+          : undefined;
       }
 
       // Assets captured by the runner's post-run directory scan
@@ -818,6 +865,7 @@ async function spawnPlaywright(
         password: opts.envPassword || '',
         environment: opts.environment,
         projectSlug: opts.projectSlug || '',
+        recordVideo: false, // video recording disabled — re-enable when feature is ready
       }),
     });
 

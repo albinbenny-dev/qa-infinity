@@ -516,10 +516,13 @@ router.get('/:id/content', async (req: Request, res: Response) => {
       return;
     }
 
-    // Prefer filesystem (always fresh); fall back to DB content
+    // Prefer filesystem (always fresh); fall back to DB content.
+    // Pass useCaseFolder so readScript resolves to the correct sub-directory
+    // (e.g. TestCases/TCSMSC/) instead of a flat root-level file with the same
+    // name that may have been written by an older import.
     let content = script.content;
     try {
-      content = readScript(req.project.slug, script.filename);
+      content = readScript(req.project.slug, script.filename, (script as any).useCaseFolder ?? null);
     } catch {
       // file may not exist if volume was reset — fall back to DB
     }
