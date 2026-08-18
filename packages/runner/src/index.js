@@ -11,6 +11,91 @@ const SCRIPTS_DIR = '/scripts';
 const CONFIG_FILE = 'qa-infinity.playwright.config.js';
 const CONFIG_PATH = path.join(SCRIPTS_DIR, CONFIG_FILE);
 
+// ── RF video recorder bash script ────────────────────────────────────────────
+// Written to /tmp/rf-recorder.sh at startup. Wraps headless RF runs:
+// it starts a dedicated Xvfb on a free display (200-299, clear of VNC slots
+// 99-104), records that display with ffmpeg, runs the test command, then
+// finalises the mp4 and cleans up. If ffmpeg is absent or no display is free
+// it falls back to exec-ing the inner command unchanged.
+const RF_RECORDER_SCRIPT_LINES = [
+  '#!/bin/bash',
+  '# qa-runner RF video recorder — spawned by runner/src/index.js',
+  '# Usage: bash /tmp/rf-recorder.sh <mp4_output_path> <command> [args...]',
+  '',
+  'VIDEO_OUTPUT="$1"',
+  'shift',
+  '',
+  '# Require ffmpeg — bail gracefully if not installed',
+  'if ! command -v ffmpeg >/dev/null 2>&1; then',
+  '  echo "[rf-recorder] ffmpeg not found — running without video" >&2',
+  '  exec "$@"',
+  'fi',
+  '',
+  '# Find a free display number in range 200-299 (VNC slots occupy 99-104)',
+  'DISPLAY_NUM=""',
+  'for n in $(seq 200 299); do',
+  '  if ! [ -e "/tmp/.X${n}-lock" ] && ! [ -S "/tmp/.X11-unix/X${n}" ]; then',
+  '    DISPLAY_NUM=$n',
+  '    break',
+  '  fi',
+  'done',
+  '',
+  'if [ -z "$DISPLAY_NUM" ]; then',
+  '  echo "[rf-recorder] No free display in 200-299 — running without video" >&2',
+  '  exec "$@"',
+  'fi',
+  '',
+  'export DISPLAY=":$DISPLAY_NUM"',
+  'Xvfb ":$DISPLAY_NUM" -screen 0 1920x1080x24 -ac &',
+  'XVFB_PID=$!',
+  '',
+  '# Poll for Xvfb socket (up to 5 s)',
+  'READY=0',
+  'for i in $(seq 1 50); do',
+  '  if [ -S "/tmp/.X11-unix/X${DISPLAY_NUM}" ]; then READY=1; break; fi',
+  '  sleep 0.1',
+  'done',
+  '',
+  'if [ "$READY" -eq 0 ]; then',
+  '  echo "[rf-recorder] Xvfb :$DISPLAY_NUM not ready — running without video" >&2',
+  '  kill "$XVFB_PID" 2>/dev/null || true',
+  '  exec "$@"',
+  'fi',
+  '',
+  'openbox --display ":$DISPLAY_NUM" >/dev/null 2>&1 &',
+  'OPENBOX_PID=$!',
+  '',
+  '# Start ffmpeg: 10 fps, H.264 ultrafast, reasonable quality for test videos',
+  'ffmpeg -y -f x11grab -video_size 1920x1080 -framerate 10 \\',
+  '  -i ":$DISPLAY_NUM" \\',
+  '  -vcodec libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p \\',
+  '  "$VIDEO_OUTPUT" </dev/null >/dev/null 2>&1 &',
+  'FFMPEG_PID=$!',
+  '',
+  'cleanup() {',
+  '  # SIGINT causes ffmpeg to finalise/mux the mp4 before exiting',
+  '  kill -SIGINT "$FFMPEG_PID" 2>/dev/null || true',
+  '  wait "$FFMPEG_PID" 2>/dev/null || true',
+  '  kill "$OPENBOX_PID" 2>/dev/null || true',
+  '  kill "$XVFB_PID" 2>/dev/null || true',
+  '  wait "$XVFB_PID" 2>/dev/null || true',
+  '}',
+  'trap cleanup EXIT INT TERM',
+  '',
+  '"$@"',
+  'EXIT_CODE=$?',
+  'exit $EXIT_CODE',
+];
+
+const RF_RECORDER_PATH = '/tmp/rf-recorder.sh';
+try {
+  fs.writeFileSync(RF_RECORDER_PATH, RF_RECORDER_SCRIPT_LINES.join('\n') + '\n', 'utf8');
+  fs.chmodSync(RF_RECORDER_PATH, 0o755);
+  console.log('[qa-runner] rf-recorder.sh written to', RF_RECORDER_PATH);
+} catch (err) {
+  console.warn('[qa-runner] Could not write rf-recorder.sh:', err.message);
+}
+
 // ── noVNC / live-browser-view constants ─────────────────────────────────────
 // MAX_VNC_SESSIONS slots are started at boot (each its own Xvfb display + x11vnc
 // instance — cheap, tens of MB apiece). A single websockify with TokenFile
@@ -484,7 +569,10 @@ function findPlaywrightBin() {
   return PLAYWRIGHT_BIN_CANDIDATES[0]; // fallback — will fail with a clear error
 }
 
-const CONFIG_CONTENT = `module.exports = {
+// Generate Playwright config content. `recordVideo` controls `video:` so the
+// toggle in the Execution UI propagates all the way to Playwright's recorder.
+function generatePlaywrightConfig(recordVideo = true) {
+  return `module.exports = {
   timeout: 660000,          // hard cap: 11 min per test (scripts may call test.setTimeout to extend further)
   retries: 2,               // retry flaky tests up to 2 times — safety net for Angular rendering races
   use: {
@@ -495,7 +583,7 @@ const CONFIG_CONTENT = `module.exports = {
     screenshot: 'on',
     trace: 'on-first-retry',
     ignoreHTTPSErrors: true,
-    video: 'on',               // always retain video — lets run history show recordings for pass and fail
+    video: '${recordVideo ? 'on' : 'off'}',
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium', viewport: { width: 1280, height: 720 }, launchOptions: { args: ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu'] } } },
@@ -504,6 +592,7 @@ const CONFIG_CONTENT = `module.exports = {
   ],
 };
 `;
+}
 
 // Separate config for "Run in Host Browser" — no retries, higher slowMo so
 // every step is clearly visible in the noVNC viewer.
@@ -544,8 +633,8 @@ const HOST_BROWSER_CONFIG_CONTENT = `module.exports = {
 const HOST_BROWSER_CONFIG_FILE = 'qa-infinity.host-browser.playwright.config.js';
 const HOST_BROWSER_CONFIG_PATH = path.join(SCRIPTS_DIR, HOST_BROWSER_CONFIG_FILE);
 
-function writeConfig() {
-  fs.writeFileSync(CONFIG_PATH, CONFIG_CONTENT, 'utf8');
+function writeConfig(recordVideo = true) {
+  fs.writeFileSync(CONFIG_PATH, generatePlaywrightConfig(recordVideo), 'utf8');
 }
 
 function writeHostBrowserConfig() {
@@ -627,6 +716,11 @@ const server = http.createServer(async (req, res) => {
       environment = '',
       hostBrowser = false,
       projectSlug = '',
+      // When true, capture a video of the test run.
+      // Playwright: controlled via the `video` config option.
+      // RF: wraps the command with rf-recorder.sh (ffmpeg + dedicated Xvfb).
+      // Host-browser runs are never recorded — the user watches live via noVNC.
+      recordVideo = true,
       // Dry-run gate: Robot Framework's own --dryrun flag validates test data and
       // resolves every keyword call without executing any keyword implementation —
       // no browser is opened, so this never needs a VNC slot or the warm-pool path.
@@ -855,6 +949,13 @@ const server = http.createServer(async (req, res) => {
       try { scriptSource = fs.readFileSync(scriptPath, 'utf8'); } catch { /* non-fatal */ }
       const scriptDeclares = (name) => new RegExp(`^\\$\\{${name}\\}`, 'm').test(scriptSource);
 
+      // Detect whether the script already has its own video recording — if so, skip the
+      // ffmpeg layer to avoid a redundant/black MP4 alongside the script's own recording
+      // (e.g. RF Browser New Context recordVideo=...). Declared here (outer scope) so both
+      // the RF_BROWSER_WRAPPER_JS and the fallback else-branch can reference it.
+      const scriptHasVideoRecording = /recordVideo\s*[=:{]/i.test(scriptSource)
+        || /Record\s+Video/i.test(scriptSource);
+
       const robotArgs = [
         '--outputdir', effectiveOutputDir,
         '--output', 'output.xml',
@@ -960,15 +1061,29 @@ const server = http.createServer(async (req, res) => {
           fs.chmodSync(launcherPath, 0o755);
         } catch { /* non-fatal — fall through to direct robot */ }
 
+        if (scriptHasVideoRecording && recordVideo) {
+          sendLine({ type: 'log', text: '[runner] 🎬 Script has built-in video recording — skipping ffmpeg layer' });
+        }
+
         if (hostBrowser && vncClaim) {
           sendLine({ type: 'log', text: `[runner] 🌐 Launching RF Browser on VNC display ${vncClaim.display} (node port ${rfBrowserPort})` });
           sendLine({ type: 'log', text: `[runner]    Watch live → noVNC tab should already be open` });
           robotEnv.DISPLAY = vncClaim.display;
           spawnCmd  = 'bash';
           spawnArgs = [launcherPath, ...robotArgs];
+        } else if (hostBrowser) {
+          // VNC busy — fall back to xvfb-run without recording (host-browser intent, no display claimed)
+          sendLine({ type: 'log', text: '[runner] ⚠ All VNC sessions in use — running without visual display' });
+          spawnCmd  = 'xvfb-run';
+          spawnArgs = ['--auto-servernum', '--server-args=-screen 0 1920x1080x24', 'bash', launcherPath, ...robotArgs];
+        } else if (recordVideo && !scriptHasVideoRecording && fs.existsSync(RF_RECORDER_PATH)) {
+          // Headless + video recording: rf-recorder.sh manages its own Xvfb + ffmpeg
+          const rfVideoOutput = path.join(effectiveOutputDir, 'recording.mp4');
+          sendLine({ type: 'log', text: `[runner] 🤖 RF Browser headless (node port ${rfBrowserPort}) + 🎬 video recording` });
+          spawnCmd  = 'bash';
+          spawnArgs = [RF_RECORDER_PATH, rfVideoOutput, 'bash', launcherPath, ...robotArgs];
         } else {
-          if (hostBrowser) sendLine({ type: 'log', text: '[runner] ⚠ All VNC sessions in use — running without visual display' });
-          else sendLine({ type: 'log', text: `[runner] 🤖 Launching RF Browser headless (node port ${rfBrowserPort})` });
+          sendLine({ type: 'log', text: `[runner] 🤖 Launching RF Browser headless (node port ${rfBrowserPort})` });
           spawnCmd  = 'xvfb-run';
           spawnArgs = ['--auto-servernum', '--server-args=-screen 0 1920x1080x24', 'bash', launcherPath, ...robotArgs];
         }
@@ -980,6 +1095,12 @@ const server = http.createServer(async (req, res) => {
           robotEnv.DISPLAY = vncClaim.display;
           spawnCmd  = ROBOT_BIN;
           spawnArgs = robotArgs;
+        } else if (!hostBrowser && recordVideo && !scriptHasVideoRecording && fs.existsSync(RF_RECORDER_PATH)) {
+          // Headless + video recording: rf-recorder.sh manages its own Xvfb + ffmpeg
+          const rfVideoOutput = path.join(effectiveOutputDir, 'recording.mp4');
+          sendLine({ type: 'log', text: `[runner] 🤖 RF headless + 🎬 video recording` });
+          spawnCmd  = 'bash';
+          spawnArgs = [RF_RECORDER_PATH, rfVideoOutput, ROBOT_BIN, ...robotArgs];
         } else {
           if (hostBrowser) sendLine({ type: 'log', text: '[runner] ⚠ All VNC sessions in use — running without visual display' });
           spawnCmd  = 'xvfb-run';
@@ -1153,9 +1274,9 @@ const server = http.createServer(async (req, res) => {
 
     // ── Playwright execution path ───────────────────────────────────────────
 
-    // Write playwright config
+    // Write playwright config — video: 'on'/'off' driven by the recordVideo flag
     try {
-      writeConfig();
+      writeConfig(recordVideo);
     } catch (err) {
       sendLine({ type: 'done', exitCode: 1, reportData: null, error: 'Failed to write playwright config: ' + err.message });
       res.end();
