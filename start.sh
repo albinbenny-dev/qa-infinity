@@ -51,11 +51,16 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # V2 plugin ships as `docker compose`; V1 is a standalone `docker-compose` binary
+# NO_PULL_FLAG: our custom images are never pushed to a registry, so suppress
+# the confusing "pull access denied" errors on machines without the images cached.
+# V2 uses --pull=never; V1 uses --no-pull.
 if $DOCKER compose version > /dev/null 2>&1; then
   COMPOSE="$DOCKER compose"
+  NO_PULL_FLAG="--pull=never"
 elif command -v docker-compose > /dev/null 2>&1; then
   COMPOSE="docker-compose"
   [ "$DOCKER" = "sudo docker" ] && COMPOSE="sudo docker-compose"
+  NO_PULL_FLAG="--no-pull"
 else
   echo "    [ERR] Neither 'docker compose' (V2) nor 'docker-compose' (V1) found."
   echo "    Install Docker Compose and try again."
@@ -145,9 +150,16 @@ ok ".env is configured (provider: $provider)"
 # STEP 3 — Build or pull images
 # ==============================================================================
 is_first_run=false
-if ! $DOCKER images -q qa-infinity-qa-api:latest 2>/dev/null | grep -q .; then
-  is_first_run=true
-fi
+# Treat as first run if ANY of the three custom images is missing locally.
+# Checking only qa-api was insufficient — if qa-runner or qa-ui is absent,
+# docker compose up falls back to a noisy (and confusing) registry pull attempt.
+for _img in qa-infinity-qa-api:latest qa-infinity-qa-runner:latest qa-infinity-qa-ui:latest; do
+  if ! $DOCKER images -q "$_img" 2>/dev/null | grep -q .; then
+    is_first_run=true
+    break
+  fi
+done
+unset _img
 
 if $BUILD || $is_first_run; then
   if $is_first_run; then
@@ -177,10 +189,10 @@ fi
 # STEP 4 — Start the stack
 # ==============================================================================
 step "Starting QA Infinity stack"
-$COMPOSE up -d
+$COMPOSE up -d $NO_PULL_FLAG
 if $RESET; then
   # Force-recreate the API container so it picks up the updated .env
-  $COMPOSE up -d --force-recreate qa-api
+  $COMPOSE up -d $NO_PULL_FLAG --force-recreate qa-api
 fi
 
 # ==============================================================================
