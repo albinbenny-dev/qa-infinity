@@ -420,16 +420,39 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       // sharing one blanket pass/fail. Falls back to the aggregate when the
       // script doesn't tag tests this way (single-TC scripts, legacy scripts).
       const ownTcId = tcReadableId.get(testCaseId);
-      let ownTest = ownTcId ? rfTests.find((t) => t.tags?.includes(ownTcId)) : undefined;
-      // Fallback: match by test name prefix when the tag isn't found (handles legacy scripts
-      // where [Tags] is absent or uses a different format). Robot file convention is
-      // "TC_32 - Title Text", so a name that starts with the tcId followed by a space or dash.
-      if (!ownTest && ownTcId) {
-        ownTest = rfTests.find(
-          (t) => t.name === ownTcId
-            || t.name.startsWith(ownTcId + ' ')
-            || t.name.startsWith(ownTcId + '-'),
-        );
+      // Multi-TC dedup: when the same TC tag appears on several RF tests (legacy [Tags] pattern),
+      // prefer (1) name-match, (2) PASSING result, (3) fewest TC-pattern tags (most focused).
+      // A plain rfTests.find() returns an arbitrary first match and can attribute a sibling TC's
+      // failure to this TC (e.g. TC_PRM_006 PASS vs TC_50 FAIL → TC_51 must be PASS, not FAIL).
+      let ownTest: typeof rfTests[0] | undefined;
+      if (ownTcId) {
+        const taggedTests = rfTests.filter((t) => t.tags?.includes(ownTcId));
+        if (taggedTests.length > 0) {
+          // Priority 1: RF test whose name directly identifies this TC
+          ownTest = taggedTests.find(
+            (t) => t.name === ownTcId
+              || t.name.startsWith(ownTcId + ' ')
+              || t.name.startsWith(ownTcId + '-'),
+          );
+          // Priority 2 (legacy multi-tag scripts): prefer PASSING subset, then fewest TC-pattern tags.
+          // Prevents a sibling TC's failure inside a broad test from being wrongly attributed here.
+          if (!ownTest) {
+            const countTcTags = (t: typeof rfTests[0]) =>
+              (t.tags ?? []).filter((tag) => /^TC_\w+$/.test(tag)).length;
+            const passingTagged = taggedTests.filter((t) => t.status === 'PASS');
+            const pool = passingTagged.length > 0 ? passingTagged : taggedTests;
+            ownTest = pool.reduce((best, t) =>
+              countTcTags(t) < countTcTags(best) ? t : best,
+            );
+          }
+        } else {
+          // Fallback: no tag match — try name-prefix (legacy scripts where [Tags] is absent)
+          ownTest = rfTests.find(
+            (t) => t.name === ownTcId
+              || t.name.startsWith(ownTcId + ' ')
+              || t.name.startsWith(ownTcId + '-'),
+          );
+        }
       }
       if (ownTest) {
         passed = ownTest.status === 'PASS';
@@ -527,16 +550,32 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       let mirrorDuration = duration;
       let mirrorErrorMessage = errorMessage;
       const mirrorTcReadableId = tcReadableId.get(mirrorTcId);
-      let mirrorTest = mirrorTcReadableId
-        ? rfTestsForTagMatch?.find((t) => t.tags?.includes(mirrorTcReadableId))
-        : undefined;
-      // Same name-prefix fallback as the representative TC above
-      if (!mirrorTest && mirrorTcReadableId) {
-        mirrorTest = rfTestsForTagMatch?.find(
-          (t) => t.name === mirrorTcReadableId
-            || t.name.startsWith(mirrorTcReadableId + ' ')
-            || t.name.startsWith(mirrorTcReadableId + '-'),
-        );
+      // Same prefer-PASS + fewest-TC-tags priority as the representative TC above.
+      let mirrorTest: NonNullable<typeof rfTestsForTagMatch>[number] | undefined;
+      if (mirrorTcReadableId && rfTestsForTagMatch) {
+        const taggedMirror = rfTestsForTagMatch.filter((t) => t.tags?.includes(mirrorTcReadableId));
+        if (taggedMirror.length > 0) {
+          mirrorTest = taggedMirror.find(
+            (t) => t.name === mirrorTcReadableId
+              || t.name.startsWith(mirrorTcReadableId + ' ')
+              || t.name.startsWith(mirrorTcReadableId + '-'),
+          );
+          if (!mirrorTest) {
+            const countMirrorTcTags = (t: NonNullable<typeof rfTestsForTagMatch>[number]) =>
+              (t.tags ?? []).filter((tag: string) => /^TC_\w+$/.test(tag)).length;
+            const passingMirror = taggedMirror.filter((t) => t.status === 'PASS');
+            const mirrorPool = passingMirror.length > 0 ? passingMirror : taggedMirror;
+            mirrorTest = mirrorPool.reduce((best, t) =>
+              countMirrorTcTags(t) < countMirrorTcTags(best) ? t : best,
+            );
+          }
+        } else {
+          mirrorTest = rfTestsForTagMatch.find(
+            (t) => t.name === mirrorTcReadableId
+              || t.name.startsWith(mirrorTcReadableId + ' ')
+              || t.name.startsWith(mirrorTcReadableId + '-'),
+          );
+        }
       }
       if (mirrorTest) {
         mirrorStatus = mirrorTest.status === 'PASS' ? 'PASSED' : 'FAILED';
