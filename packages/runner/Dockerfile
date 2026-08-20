@@ -71,6 +71,10 @@ RUN pnpm install --frozen-lockfile
 # Copy runner HTTP server source
 COPY packages/runner/src ./packages/runner/src
 
+# Copy the entrypoint that fixes volume ownership then drops to the runner user
+COPY packages/runner/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 # Create a non-root user (uid 1000) and transfer ownership of everything the
 # runner writes to at runtime. /ms-playwright is owned by root in the base image
 # so we use chmod (world-readable) rather than chown to avoid copying the whole
@@ -84,9 +88,11 @@ RUN getent passwd 1000 | cut -d: -f1 | xargs -r userdel -f \
   && chown -R runner:runner /app /opt/rfbrowser /opt/chrome-linux64 /opt/chromedriver-linux64 \
   && chmod -R a+rX /ms-playwright
 
-# Switch to the non-root runner user. Kubernetes pod-security runAsNonRoot
-# enforcement will also enforce this at scheduling time.
-USER runner
+# NOTE: We do NOT set USER runner here. The entrypoint runs as root so it can
+# chown the named Docker volumes (/scripts, /artifacts) — which are always
+# created owned by root at first mount — then drops to the runner user via
+# `exec su runner`. This matches the pattern used by official images (postgres,
+# nginx, etc.) where the entrypoint handles the privilege drop.
 
 # Volumes mounted at runtime:
 #   /scripts    → compiled .spec.js files partitioned by projectId
@@ -99,4 +105,4 @@ EXPOSE 6080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -f http://localhost:5001/health || exit 1
 
-CMD ["node", "--max-old-space-size=512", "packages/runner/src/index.js"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
