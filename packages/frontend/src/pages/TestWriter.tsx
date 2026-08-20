@@ -267,7 +267,7 @@ function SkillsSidePanel({
   }
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
       <div style={{ height: '3px', background: 'linear-gradient(90deg, var(--violet), var(--cyan))', flexShrink: 0 }} />
       <div className="card-header" style={{ flexShrink: 0 }}>
         <div className="card-title">🧠 Product Skills</div>
@@ -289,7 +289,7 @@ function SkillsSidePanel({
           </a>
         </div>
       ) : (
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', padding: '2px 4px 6px', lineHeight: 1.5 }}>
             Selected skills ground the LLM with real app knowledge.
           </div>
