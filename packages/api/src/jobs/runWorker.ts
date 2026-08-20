@@ -60,11 +60,26 @@ function flattenTests(suite: PWSuite): PWTestCase[] {
   return tests;
 }
 
-// ── RF output.xml error extractor ─────────────────────────────────────────
-// The runner's XML parser matches the FIRST <status> inside each <test> block,
-// which may belong to a keyword — not the test itself. The test-level status
-// is always the LAST <status> in the block. This helper reads output.xml
-// directly and returns a map of testName → correct error message.
+// ── RF output.xml helpers ──────────────────────────────────────────────────
+
+// Decode the five standard XML entities in attribute/text values.
+function decodeXmlEntities(s: string): string {
+  return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+}
+
+// Per-test result shape used by the tag-map extractor below.
+interface RfTestResult {
+  name: string;
+  status: 'PASS' | 'FAIL';
+  durationMs: number;
+  errorMsg: string | null;
+  tcTagCount: number; // number of TC_* tags (for dedup priority)
+}
+
+// extractRfTestErrors — reads output.xml and returns a map of
+// testName → correct test-level error message (the LAST <status> in the block).
+// The runner's built-in parser reads the FIRST <status>, which may be a
+// keyword-level status rather than the test's own outcome.
 function extractRfTestErrors(xmlPath: string): Map<string, string> {
   const result = new Map<string, string>();
   try {
@@ -74,7 +89,7 @@ function extractRfTestErrors(xmlPath: string): Map<string, string> {
     const testBlockRe = /<test\b[^>]*\bname="([^"]+)"[^>]*>([\s\S]*?)<\/test>/g;
     let tm: RegExpExecArray | null;
     while ((tm = testBlockRe.exec(xml)) !== null) {
-      const testName = tm[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+      const testName = decodeXmlEntities(tm[1]);
       const block    = tm[2];
       // Find ALL status tags in the block and take the last one (test-level)
       const statusRe = /<status\b[^>]*\bstatus="(PASS|FAIL)"[^>]*>([^<]*)<\/status>|<status\b[^>]*\bstatus="(PASS|FAIL)"[^>]*\/>/g;
@@ -86,10 +101,110 @@ function extractRfTestErrors(xmlPath: string): Map<string, string> {
         if (msg) lastMsg = msg;
       }
       if (lastMsg) {
-        result.set(testName, lastMsg.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'"));
+        result.set(testName, decodeXmlEntities(lastMsg));
       }
     }
   } catch { /* non-fatal — fall back to runner-provided errorMsg */ }
+  return result;
+}
+
+// extractRfTagResults — reads output.xml and returns a map of
+//   TC_* tag → best test result for that tag
+//
+// This is the authoritative per-TC status source.  The runner serialises
+// `rfTests` with tags through JSON, but tag extraction can fail silently
+// (e.g. unexpected RF output.xml schema variants), leaving rfTests[i].tags
+// empty.  Reading the XML directly here gives us the ground truth regardless
+// of what the runner sent over the wire.
+//
+// "Best" = PASS if any tagged test passes; among failures, fewest TC-pattern
+// tags (most focused test) wins — same preference as runWorker's inline logic.
+function extractRfTagResults(xmlPath: string): Map<string, RfTestResult> {
+  // tagBuckets: tag → all tests carrying that tag
+  const tagBuckets = new Map<string, RfTestResult[]>();
+  try {
+    if (!fs.existsSync(xmlPath)) return new Map();
+    const xml = fs.readFileSync(xmlPath, 'utf8');
+    const testBlockRe = /<test\b[^>]*\bname="([^"]+)"[^>]*>([\s\S]*?)<\/test>/g;
+    let tm: RegExpExecArray | null;
+    while ((tm = testBlockRe.exec(xml)) !== null) {
+      const testName = decodeXmlEntities(tm[1]);
+      const body     = tm[2];
+
+      // ── Extract tags (RF4-6: <tags><tag>…</tag></tags>; RF7: bare <tag> before first kw) ──
+      let tags: string[] = [];
+      const tagsWrapperMatch = body.match(/<tags>([\s\S]*?)<\/tags>/);
+      if (tagsWrapperMatch) {
+        tags = [...tagsWrapperMatch[1].matchAll(/<tag>([^<]*)<\/tag>/g)]
+          .map((m) => m[1].trim());
+      } else {
+        // RF7: bare <tag> elements appear before the first keyword/status block
+        const preambleEnd = body.search(/<(?:kw|setup|teardown|if|for|status)[\s>]/);
+        const preamble = preambleEnd > 0 ? body.slice(0, preambleEnd) : body;
+        tags = [...preamble.matchAll(/<tag>([^<]*)<\/tag>/g)].map((m) => m[1].trim());
+      }
+
+      // Only proceed when this test carries at least one TC_* tag
+      const tcTags = tags.filter((t) => /^TC_\w+$/.test(t));
+      if (tcTags.length === 0) continue;
+
+      // ── Extract test-level status (LAST <status> in the body) ──
+      const allStatuses = [...body.matchAll(/<status\s+status="(PASS|FAIL)"[^>]*/g)];
+      const lastStatusMatch = allStatuses.length > 0 ? allStatuses[allStatuses.length - 1] : null;
+      const status: 'PASS' | 'FAIL' = (lastStatusMatch?.[1] as 'PASS' | 'FAIL') ?? 'FAIL';
+
+      // ── Extract duration from the last <status> element ──
+      let durationMs = 0;
+      if (lastStatusMatch) {
+        const raw = lastStatusMatch[0];
+        const startM = raw.match(/start(?:time)?="([^"]*)"/);
+        const endM   = raw.match(/end(?:time)?="([^"]*)"/);
+        const elapsedM = raw.match(/elapsed="([^"]*)"/);
+        if (startM && endM) {
+          try { durationMs = new Date(endM[1]).getTime() - new Date(startM[1]).getTime(); } catch { /* ignore */ }
+        } else if (elapsedM) {
+          durationMs = Math.round(parseFloat(elapsedM[1]) * 1000) || 0;
+        }
+      }
+
+      // ── Extract error message for FAIL tests ──
+      let errorMsg: string | null = null;
+      if (status === 'FAIL') {
+        const statusTextMatch = body.match(/<status\s+status="FAIL"[^>]*>([\s\S]*?)<\/status>/);
+        if (statusTextMatch) {
+          const txt = decodeXmlEntities(statusTextMatch[1]).replace(/<[^>]+>/g, '').trim();
+          if (txt) errorMsg = txt;
+        }
+        if (!errorMsg) {
+          const msgRe = /<msg[^>]*\blevel="FAIL"[^>]*>([\s\S]*?)<\/msg>/g;
+          let mm: RegExpExecArray | null;
+          let lastMsg: string | null = null;
+          while ((mm = msgRe.exec(body)) !== null) lastMsg = mm[1];
+          if (lastMsg) errorMsg = decodeXmlEntities(lastMsg).replace(/<[^>]+>/g, '').trim();
+        }
+        if (errorMsg && errorMsg.length > 600) errorMsg = errorMsg.slice(0, 600) + '…';
+      }
+
+      const entry: RfTestResult = { name: testName, status, durationMs, errorMsg, tcTagCount: tcTags.length };
+
+      // Bucket this result under each TC_* tag it carries
+      for (const tag of tcTags) {
+        if (!tagBuckets.has(tag)) tagBuckets.set(tag, []);
+        tagBuckets.get(tag)!.push(entry);
+      }
+    }
+  } catch { /* non-fatal — caller falls back to runner-provided data */ }
+
+  // Resolve each tag to its best result: prefer PASS; among equal-status candidates,
+  // pick the test with fewest TC-pattern tags (most focused, least likely to be a
+  // "mega" test that happened to carry this tag alongside 8 others).
+  const result = new Map<string, RfTestResult>();
+  for (const [tag, entries] of tagBuckets) {
+    const passing = entries.filter((e) => e.status === 'PASS');
+    const pool    = passing.length > 0 ? passing : entries;
+    const best    = pool.reduce((a, b) => a.tcTagCount <= b.tcTagCount ? a : b);
+    result.set(tag, best);
+  }
   return result;
 }
 
@@ -386,6 +501,15 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     let videoPath: string | undefined;
     let rfLogPath: string | undefined;
     let rfTestsForTagMatch: Array<{ name: string; status: 'PASS' | 'FAIL'; durationMs: number; errorMsg: string | null; tags?: string[] }> | undefined;
+    // Hoisted so the mirror-TC fan-out below (outside the _robotReport block) can also
+    // apply the XML-parsed error messages — the previous fix only covered primary TCs.
+    let rfXmlErrors = new Map<string, string>();
+    // Per-TC-tag best result parsed directly from output.xml — used as an authoritative
+    // fallback when the runner-provided rfTests.tags array is empty or missing (which
+    // causes the tag-based ownTest/mirrorTest matching below to silently return nothing,
+    // making every TC in a multi-TC suite inherit the aggregate FAIL status even though
+    // the individual test for that TC passed).
+    let rfTagResults = new Map<string, RfTestResult>();
 
     if (result.reportData?._robotReport) {
       // ── Robot Framework report ──────────────────────────────────────────
@@ -396,13 +520,12 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       // Use reportData.failed count — RF can exit with code 0 even when tests fail
       const rfFailedCount = rfTests.filter((t) => t.status === 'FAIL').length;
       passed = rfTests.length > 0 ? rfFailedCount === 0 : result.exitCode === 0;
-      // Parse output.xml directly to get the correct test-level error message.
-      // The runner's XML parser may pick up a keyword-level <status> (which appears
-      // first in the block) rather than the test-level <status> (which is last),
-      // causing a mismatched error in the summary line. Hoisted so ownTest block
-      // can also use it for the tag-matched TC case.
+      // Parse output.xml directly for:
+      //   (a) correct test-level error messages (runner may read keyword-level <status> instead of test-level)
+      //   (b) authoritative per-TC-tag status — handles cases where runner serialises rfTests with empty tags
       const xmlPath = path.join(outputDir, 'output.xml');
-      const rfXmlErrors = extractRfTestErrors(xmlPath);
+      rfXmlErrors   = extractRfTestErrors(xmlPath);
+      rfTagResults  = extractRfTagResults(xmlPath);
       if (!passed) {
         const failedTest = rfTests.find((t) => t.status === 'FAIL');
         const xmlMsg = failedTest ? rfXmlErrors.get(failedTest.name) : undefined;
@@ -446,12 +569,25 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
             );
           }
         } else {
-          // Fallback: no tag match — try name-prefix (legacy scripts where [Tags] is absent)
+          // Fallback A: no tag match from runner — try name-prefix (legacy scripts where [Tags] is absent)
           ownTest = rfTests.find(
             (t) => t.name === ownTcId
               || t.name.startsWith(ownTcId + ' ')
               || t.name.startsWith(ownTcId + '-'),
           );
+          // Fallback B: runner rfTests.tags may have been empty (serialisation failure).
+          // Use the direct XML tag-result map as the authoritative source in that case.
+          if (!ownTest) {
+            const xmlTagResult = rfTagResults.get(ownTcId);
+            if (xmlTagResult) {
+              passed   = xmlTagResult.status === 'PASS';
+              duration = xmlTagResult.durationMs || duration;
+              const ownXmlMsg = rfXmlErrors.get(xmlTagResult.name);
+              errorMessage = xmlTagResult.status === 'FAIL'
+                ? (ownXmlMsg ?? xmlTagResult.errorMsg ?? errorMessage)
+                : undefined;
+            }
+          }
         }
       }
       if (ownTest) {
@@ -552,6 +688,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       const mirrorTcReadableId = tcReadableId.get(mirrorTcId);
       // Same prefer-PASS + fewest-TC-tags priority as the representative TC above.
       let mirrorTest: NonNullable<typeof rfTestsForTagMatch>[number] | undefined;
+      let mirrorResolvedViaXml = false; // tracks if we already resolved via rfTagResults fallback
       if (mirrorTcReadableId && rfTestsForTagMatch) {
         const taggedMirror = rfTestsForTagMatch.filter((t) => t.tags?.includes(mirrorTcReadableId));
         if (taggedMirror.length > 0) {
@@ -575,12 +712,32 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
               || t.name.startsWith(mirrorTcReadableId + ' ')
               || t.name.startsWith(mirrorTcReadableId + '-'),
           );
+          // Fallback: runner-provided tags may be empty — check direct XML tag map
+          if (!mirrorTest && mirrorTcReadableId) {
+            const xmlTagResult = rfTagResults.get(mirrorTcReadableId);
+            if (xmlTagResult) {
+              mirrorResolvedViaXml = true;
+              mirrorStatus = xmlTagResult.status === 'PASS' ? 'PASSED' : 'FAILED';
+              mirrorDuration = xmlTagResult.durationMs || mirrorDuration;
+              const mirrorXmlMsg = rfXmlErrors.get(xmlTagResult.name);
+              mirrorErrorMessage = xmlTagResult.status === 'FAIL'
+                ? (mirrorXmlMsg ?? xmlTagResult.errorMsg ?? mirrorErrorMessage)
+                : undefined;
+            }
+          }
         }
       }
-      if (mirrorTest) {
+      if (mirrorTest && !mirrorResolvedViaXml) {
         mirrorStatus = mirrorTest.status === 'PASS' ? 'PASSED' : 'FAILED';
         mirrorDuration = mirrorTest.durationMs || mirrorDuration;
-        mirrorErrorMessage = mirrorTest.status === 'FAIL' ? (mirrorTest.errorMsg ?? mirrorErrorMessage) : undefined;
+        // Apply the same XML-parsed error lookup as primary TCs — rfXmlErrors is
+        // now hoisted so it's in scope here even though it's assigned inside the
+        // _robotReport block above. Without this, mirror TCs get the runner-provided
+        // errorMsg which may be a keyword-level message instead of the test-level one.
+        const mirrorXmlMsg = rfXmlErrors.get(mirrorTest.name);
+        mirrorErrorMessage = mirrorTest.status === 'FAIL'
+          ? (mirrorXmlMsg ?? mirrorTest.errorMsg ?? mirrorErrorMessage)
+          : undefined;
       }
 
       if (mirrorRunResultId) {
