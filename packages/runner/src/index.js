@@ -892,6 +892,11 @@ const server = http.createServer(async (req, res) => {
         robotEnv.PYTHONPATH = [projectRoot, pageObjectsDir, process.env.PYTHONPATH || ''].filter(Boolean).join(':');
       } else if (hasHierarchy) {
         robotEnv.PYTHONPATH = [projectRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(':');
+      } else {
+        // Flat layout (no Resource/ hierarchy) but the project may still use package-relative
+        // imports inside a libraries/ or config/ subdir (e.g. `from config.settings import …`).
+        // Always put projectRoot on PYTHONPATH so those imports resolve correctly.
+        robotEnv.PYTHONPATH = [projectRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(':');
       }
 
       let spawnCmd, spawnArgs;
