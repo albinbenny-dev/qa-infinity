@@ -67,40 +67,12 @@ function decodeXmlEntities(s: string): string {
   return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
 }
 
-// Check whether an RF test case name belongs to a given QA Infinity TC ID.
-//
-// Handles all common naming conventions:
-//   • "TC_19 - Edit Existing Roaming Partner Details"        → simple space separator
-//   • "TC_19-Edit Existing Roaming Partner Details"          → simple dash separator
-//   • "TC_13_TC_14_TC_20_TC_22 - Create Direct Roaming..."  → composite underscore names
-//     TC_13 is the first  → startsWith('TC_13_')
-//     TC_14 is the middle → includes('_TC_14_')
-//     TC_22 is the last   → includes('_TC_22 ') or includes('_TC_22-')
-//
-// The underscore-delimited pattern ('TC_X_TC_Y_TC_Z - ...') is the convention
-// where a single RF test case covers multiple QA Infinity TCs.  The plain
-// startsWith('TC_ID ') check misses every TC except TC_PRM_001 style names
-// because 'TC_13_TC_14... '.startsWith('TC_13 ') is false — it starts with 'TC_13_'.
-function rfNameMatchesTcId(testName: string, tcId: string): boolean {
-  return (
-    testName === tcId ||
-    testName.startsWith(tcId + ' ')  ||   // "TC_19 - Edit..."
-    testName.startsWith(tcId + '-')  ||   // "TC_19-Edit..."
-    testName.startsWith(tcId + '_')  ||   // "TC_13_TC_14_..." first in composite
-    testName.includes('_' + tcId + '_') || // "..._TC_14_TC_20_..." middle in composite
-    testName.includes('_' + tcId + ' ') || // "..._TC_22 - Create..." last before ' '
-    testName.includes('_' + tcId + '-') || // "..._TC_22-Create..." last before '-'
-    testName.endsWith('_' + tcId)          // "TC_16_TC_17_TC_18" last with no description suffix
-  );
-}
-
 // Per-test result shape used by the tag-map extractor below.
 interface RfTestResult {
   name: string;
   status: 'PASS' | 'FAIL';
   durationMs: number;
   errorMsg: string | null;
-  tcTagCount: number; // number of TC_* tags (for dedup priority)
 }
 
 // extractRfTestErrors — reads output.xml and returns a map of
@@ -171,9 +143,8 @@ function extractRfTagResults(xmlPath: string): Map<string, RfTestResult> {
         tags = [...preamble.matchAll(/<tag>([^<]*)<\/tag>/g)].map((m) => m[1].trim());
       }
 
-      // Only proceed when this test carries at least one TC_* tag
-      const tcTags = tags.filter((t) => /^TC_\w+$/.test(t));
-      if (tcTags.length === 0) continue;
+      // Skip tests that carry no tags at all — nothing to index.
+      if (tags.length === 0) continue;
 
       // ── Extract test-level status (LAST <status> in the body) ──
       const allStatuses = [...body.matchAll(/<status\s+status="(PASS|FAIL)"[^>]*/g)];
@@ -212,25 +183,21 @@ function extractRfTagResults(xmlPath: string): Map<string, RfTestResult> {
         if (errorMsg && errorMsg.length > 600) errorMsg = errorMsg.slice(0, 600) + '…';
       }
 
-      const entry: RfTestResult = { name: testName, status, durationMs, errorMsg, tcTagCount: tcTags.length };
+      const entry: RfTestResult = { name: testName, status, durationMs, errorMsg };
 
-      // Bucket this result under each TC_* tag it carries
-      for (const tag of tcTags) {
+      // Bucket this result under every tag it carries — callers look up by QA Infinity TC ID
+      for (const tag of tags) {
         if (!tagBuckets.has(tag)) tagBuckets.set(tag, []);
         tagBuckets.get(tag)!.push(entry);
       }
     }
   } catch { /* non-fatal — caller falls back to runner-provided data */ }
 
-  // Resolve each tag to its best result: prefer PASS; among equal-status candidates,
-  // pick the test with fewest TC-pattern tags (most focused, least likely to be a
-  // "mega" test that happened to carry this tag alongside 8 others).
+  // Resolve each tag to its best result: prefer PASS; among FAILs take the first.
   const result = new Map<string, RfTestResult>();
   for (const [tag, entries] of tagBuckets) {
     const passing = entries.filter((e) => e.status === 'PASS');
-    const pool    = passing.length > 0 ? passing : entries;
-    const best    = pool.reduce((a, b) => a.tcTagCount <= b.tcTagCount ? a : b);
-    result.set(tag, best);
+    result.set(tag, passing.length > 0 ? passing[0] : entries[0]);
   }
   return result;
 }
@@ -562,63 +529,40 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
           ?? 'Robot test failed — check the run log for details.';
       }
 
-      // Multi-TC suite scripts contain several *** Test Cases *** blocks, each
-      // tagged with its own TC_ID. Prefer this TC's own tagged test result over
-      // the whole-script aggregate above when a tag match exists — this makes a
-      // TC that individually passed show PASSED even if a sibling test in the
-      // same script failed (and vice versa), instead of every TC in the script
-      // sharing one blanket pass/fail. Falls back to the aggregate when the
-      // script doesn't tag tests this way (single-TC scripts, legacy scripts).
+      // Per-TC tag resolution: each RF scenario declares [Tags] TC_X TC_Y … mapping it
+      // to one or more QA Infinity TCs. Find this TC's own scenario result so a passing
+      // scenario marks its TCs PASSED even when a sibling scenario in the same file failed.
+      //
+      // Priority 1 — output.xml tag lookup (authoritative, always written by RF itself).
+      // Priority 2 — runner-provided rfTests[i].tags (fast path, but can be empty on
+      //              serialisation failure).
+      // If neither resolves → keep the aggregate passed/errorMessage (correct for single-TC
+      // scripts or scripts with no [Tags] at all).
       const ownTcId = tcReadableId.get(testCaseId);
-      // Multi-TC dedup: when the same TC tag appears on several RF tests (legacy [Tags] pattern),
-      // prefer (1) name-match, (2) PASSING result, (3) fewest TC-pattern tags (most focused).
-      // A plain rfTests.find() returns an arbitrary first match and can attribute a sibling TC's
-      // failure to this TC (e.g. TC_PRM_006 PASS vs TC_50 FAIL → TC_51 must be PASS, not FAIL).
-      let ownTest: typeof rfTests[0] | undefined;
       if (ownTcId) {
-        const taggedTests = rfTests.filter((t) => t.tags?.includes(ownTcId));
-        if (taggedTests.length > 0) {
-          // Priority 1: RF test whose name directly identifies this TC
-          ownTest = taggedTests.find((t) => rfNameMatchesTcId(t.name, ownTcId));
-          // Priority 2 (legacy multi-tag scripts): prefer PASSING subset, then fewest TC-pattern tags.
-          // Prevents a sibling TC's failure inside a broad test from being wrongly attributed here.
-          if (!ownTest) {
-            const countTcTags = (t: typeof rfTests[0]) =>
-              (t.tags ?? []).filter((tag) => /^TC_\w+$/.test(tag)).length;
-            const passingTagged = taggedTests.filter((t) => t.status === 'PASS');
-            const pool = passingTagged.length > 0 ? passingTagged : taggedTests;
-            ownTest = pool.reduce((best, t) =>
-              countTcTags(t) < countTcTags(best) ? t : best,
-            );
-          }
+        const xmlTagResult = rfTagResults.get(ownTcId);
+        if (xmlTagResult) {
+          passed   = xmlTagResult.status === 'PASS';
+          duration = xmlTagResult.durationMs || duration;
+          const ownXmlMsg = rfXmlErrors.get(xmlTagResult.name);
+          errorMessage = xmlTagResult.status === 'FAIL'
+            ? (ownXmlMsg ?? xmlTagResult.errorMsg ?? errorMessage)
+            : undefined;
         } else {
-          // Fallback A: no tag match from runner — try name (covers legacy scripts without [Tags]
-          // and composite-name scripts like "TC_13_TC_14_TC_20_TC_22 - Create..." where the
-          // TC ID appears as the first, middle, or last segment of the underscore-delimited name).
-          ownTest = rfTests.find((t) => rfNameMatchesTcId(t.name, ownTcId));
-          // Fallback B: runner rfTests.tags may have been empty (serialisation failure).
-          // Use the direct XML tag-result map as the authoritative source in that case.
-          if (!ownTest) {
-            const xmlTagResult = rfTagResults.get(ownTcId);
-            if (xmlTagResult) {
-              passed   = xmlTagResult.status === 'PASS';
-              duration = xmlTagResult.durationMs || duration;
-              const ownXmlMsg = rfXmlErrors.get(xmlTagResult.name);
-              errorMessage = xmlTagResult.status === 'FAIL'
-                ? (ownXmlMsg ?? xmlTagResult.errorMsg ?? errorMessage)
-                : undefined;
-            }
+          // Fallback: runner-provided tags (when output.xml is absent or unparseable)
+          const taggedTests = rfTests.filter((t) => t.tags?.includes(ownTcId));
+          if (taggedTests.length > 0) {
+            const passingTagged = taggedTests.filter((t) => t.status === 'PASS');
+            const ownTest = passingTagged.length > 0 ? passingTagged[0] : taggedTests[0];
+            passed   = ownTest.status === 'PASS';
+            duration = ownTest.durationMs || duration;
+            const ownXmlMsg = rfXmlErrors.get(ownTest.name);
+            errorMessage = ownTest.status === 'FAIL'
+              ? (ownXmlMsg ?? ownTest.errorMsg ?? errorMessage)
+              : undefined;
           }
+          // No tag match at all → aggregate result stands (single-TC or untagged script)
         }
-      }
-      if (ownTest) {
-        passed = ownTest.status === 'PASS';
-        duration = ownTest.durationMs || duration;
-        // Prefer the XML-parsed message for this specific test over the runner-provided one
-        const ownXmlMsg = rfXmlErrors?.get(ownTest.name);
-        errorMessage = ownTest.status === 'FAIL'
-          ? (ownXmlMsg ?? ownTest.errorMsg ?? errorMessage)
-          : undefined;
       }
 
       // Assets captured by the runner's post-run directory scan
@@ -696,61 +640,43 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
     }
 
     // Fan-out result to any mirror TCs that share the same script. Each mirror
-    // gets its own tag-matched test result when one exists (same preference as
-    // the representative TC above), falling back to this script's aggregate
-    // result when the script doesn't tag tests by TC_ID.
+    // gets its own tag-matched scenario result (same priority as the representative TC
+    // above), falling back to the representative's aggregate result when no tag
+    // match is found (single-TC scripts or scripts without [Tags]).
     const mirrors = mirroredTcIds[testCaseId] ?? [];
     for (const mirrorTcId of mirrors) {
       const mirrorRunResultId = tcIdToRunResultId.get(mirrorTcId);
 
-      let mirrorStatus = finalStatus;
-      let mirrorDuration = duration;
+      let mirrorStatus       = finalStatus;
+      let mirrorDuration     = duration;
       let mirrorErrorMessage = errorMessage;
       const mirrorTcReadableId = tcReadableId.get(mirrorTcId);
-      // Same prefer-PASS + fewest-TC-tags priority as the representative TC above.
-      let mirrorTest: NonNullable<typeof rfTestsForTagMatch>[number] | undefined;
-      let mirrorResolvedViaXml = false; // tracks if we already resolved via rfTagResults fallback
-      if (mirrorTcReadableId && rfTestsForTagMatch) {
-        const taggedMirror = rfTestsForTagMatch.filter((t) => t.tags?.includes(mirrorTcReadableId));
-        if (taggedMirror.length > 0) {
-          mirrorTest = taggedMirror.find((t) => rfNameMatchesTcId(t.name, mirrorTcReadableId));
-          if (!mirrorTest) {
-            const countMirrorTcTags = (t: NonNullable<typeof rfTestsForTagMatch>[number]) =>
-              (t.tags ?? []).filter((tag: string) => /^TC_\w+$/.test(tag)).length;
+
+      if (mirrorTcReadableId) {
+        // Priority 1: authoritative XML tag lookup
+        const xmlTagResult = rfTagResults.get(mirrorTcReadableId);
+        if (xmlTagResult) {
+          mirrorStatus       = xmlTagResult.status === 'PASS' ? 'PASSED' : 'FAILED';
+          mirrorDuration     = xmlTagResult.durationMs || mirrorDuration;
+          const mirrorXmlMsg = rfXmlErrors.get(xmlTagResult.name);
+          mirrorErrorMessage = xmlTagResult.status === 'FAIL'
+            ? (mirrorXmlMsg ?? xmlTagResult.errorMsg ?? mirrorErrorMessage)
+            : undefined;
+        } else if (rfTestsForTagMatch) {
+          // Fallback: runner-provided tags (when output.xml is absent or unparseable)
+          const taggedMirror = rfTestsForTagMatch.filter((t) => t.tags?.includes(mirrorTcReadableId));
+          if (taggedMirror.length > 0) {
             const passingMirror = taggedMirror.filter((t) => t.status === 'PASS');
-            const mirrorPool = passingMirror.length > 0 ? passingMirror : taggedMirror;
-            mirrorTest = mirrorPool.reduce((best, t) =>
-              countMirrorTcTags(t) < countMirrorTcTags(best) ? t : best,
-            );
+            const mirrorTest    = passingMirror.length > 0 ? passingMirror[0] : taggedMirror[0];
+            mirrorStatus        = mirrorTest.status === 'PASS' ? 'PASSED' : 'FAILED';
+            mirrorDuration      = mirrorTest.durationMs || mirrorDuration;
+            const mirrorXmlMsg  = rfXmlErrors.get(mirrorTest.name);
+            mirrorErrorMessage  = mirrorTest.status === 'FAIL'
+              ? (mirrorXmlMsg ?? mirrorTest.errorMsg ?? mirrorErrorMessage)
+              : undefined;
           }
-        } else {
-          mirrorTest = rfTestsForTagMatch.find((t) => rfNameMatchesTcId(t.name, mirrorTcReadableId));
-          // Fallback: runner-provided tags may be empty — check direct XML tag map
-          if (!mirrorTest && mirrorTcReadableId) {
-            const xmlTagResult = rfTagResults.get(mirrorTcReadableId);
-            if (xmlTagResult) {
-              mirrorResolvedViaXml = true;
-              mirrorStatus = xmlTagResult.status === 'PASS' ? 'PASSED' : 'FAILED';
-              mirrorDuration = xmlTagResult.durationMs || mirrorDuration;
-              const mirrorXmlMsg = rfXmlErrors.get(xmlTagResult.name);
-              mirrorErrorMessage = xmlTagResult.status === 'FAIL'
-                ? (mirrorXmlMsg ?? xmlTagResult.errorMsg ?? mirrorErrorMessage)
-                : undefined;
-            }
-          }
+          // No tag match → keep finalStatus (representative's aggregate result)
         }
-      }
-      if (mirrorTest && !mirrorResolvedViaXml) {
-        mirrorStatus = mirrorTest.status === 'PASS' ? 'PASSED' : 'FAILED';
-        mirrorDuration = mirrorTest.durationMs || mirrorDuration;
-        // Apply the same XML-parsed error lookup as primary TCs — rfXmlErrors is
-        // now hoisted so it's in scope here even though it's assigned inside the
-        // _robotReport block above. Without this, mirror TCs get the runner-provided
-        // errorMsg which may be a keyword-level message instead of the test-level one.
-        const mirrorXmlMsg = rfXmlErrors.get(mirrorTest.name);
-        mirrorErrorMessage = mirrorTest.status === 'FAIL'
-          ? (mirrorXmlMsg ?? mirrorTest.errorMsg ?? mirrorErrorMessage)
-          : undefined;
       }
 
       if (mirrorRunResultId) {
