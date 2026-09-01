@@ -67,6 +67,33 @@ function decodeXmlEntities(s: string): string {
   return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
 }
 
+// Check whether an RF test case name belongs to a given QA Infinity TC ID.
+//
+// Handles all common naming conventions:
+//   • "TC_19 - Edit Existing Roaming Partner Details"        → simple space separator
+//   • "TC_19-Edit Existing Roaming Partner Details"          → simple dash separator
+//   • "TC_13_TC_14_TC_20_TC_22 - Create Direct Roaming..."  → composite underscore names
+//     TC_13 is the first  → startsWith('TC_13_')
+//     TC_14 is the middle → includes('_TC_14_')
+//     TC_22 is the last   → includes('_TC_22 ') or includes('_TC_22-')
+//
+// The underscore-delimited pattern ('TC_X_TC_Y_TC_Z - ...') is the convention
+// where a single RF test case covers multiple QA Infinity TCs.  The plain
+// startsWith('TC_ID ') check misses every TC except TC_PRM_001 style names
+// because 'TC_13_TC_14... '.startsWith('TC_13 ') is false — it starts with 'TC_13_'.
+function rfNameMatchesTcId(testName: string, tcId: string): boolean {
+  return (
+    testName === tcId ||
+    testName.startsWith(tcId + ' ')  ||   // "TC_19 - Edit..."
+    testName.startsWith(tcId + '-')  ||   // "TC_19-Edit..."
+    testName.startsWith(tcId + '_')  ||   // "TC_13_TC_14_..." first in composite
+    testName.includes('_' + tcId + '_') || // "..._TC_14_TC_20_..." middle in composite
+    testName.includes('_' + tcId + ' ') || // "..._TC_22 - Create..." last before ' '
+    testName.includes('_' + tcId + '-') || // "..._TC_22-Create..." last before '-'
+    testName.endsWith('_' + tcId)          // "TC_16_TC_17_TC_18" last with no description suffix
+  );
+}
+
 // Per-test result shape used by the tag-map extractor below.
 interface RfTestResult {
   name: string;
@@ -552,11 +579,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
         const taggedTests = rfTests.filter((t) => t.tags?.includes(ownTcId));
         if (taggedTests.length > 0) {
           // Priority 1: RF test whose name directly identifies this TC
-          ownTest = taggedTests.find(
-            (t) => t.name === ownTcId
-              || t.name.startsWith(ownTcId + ' ')
-              || t.name.startsWith(ownTcId + '-'),
-          );
+          ownTest = taggedTests.find((t) => rfNameMatchesTcId(t.name, ownTcId));
           // Priority 2 (legacy multi-tag scripts): prefer PASSING subset, then fewest TC-pattern tags.
           // Prevents a sibling TC's failure inside a broad test from being wrongly attributed here.
           if (!ownTest) {
@@ -569,12 +592,10 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
             );
           }
         } else {
-          // Fallback A: no tag match from runner — try name-prefix (legacy scripts where [Tags] is absent)
-          ownTest = rfTests.find(
-            (t) => t.name === ownTcId
-              || t.name.startsWith(ownTcId + ' ')
-              || t.name.startsWith(ownTcId + '-'),
-          );
+          // Fallback A: no tag match from runner — try name (covers legacy scripts without [Tags]
+          // and composite-name scripts like "TC_13_TC_14_TC_20_TC_22 - Create..." where the
+          // TC ID appears as the first, middle, or last segment of the underscore-delimited name).
+          ownTest = rfTests.find((t) => rfNameMatchesTcId(t.name, ownTcId));
           // Fallback B: runner rfTests.tags may have been empty (serialisation failure).
           // Use the direct XML tag-result map as the authoritative source in that case.
           if (!ownTest) {
@@ -692,11 +713,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
       if (mirrorTcReadableId && rfTestsForTagMatch) {
         const taggedMirror = rfTestsForTagMatch.filter((t) => t.tags?.includes(mirrorTcReadableId));
         if (taggedMirror.length > 0) {
-          mirrorTest = taggedMirror.find(
-            (t) => t.name === mirrorTcReadableId
-              || t.name.startsWith(mirrorTcReadableId + ' ')
-              || t.name.startsWith(mirrorTcReadableId + '-'),
-          );
+          mirrorTest = taggedMirror.find((t) => rfNameMatchesTcId(t.name, mirrorTcReadableId));
           if (!mirrorTest) {
             const countMirrorTcTags = (t: NonNullable<typeof rfTestsForTagMatch>[number]) =>
               (t.tags ?? []).filter((tag: string) => /^TC_\w+$/.test(tag)).length;
@@ -707,11 +724,7 @@ async function processRunJob(job: Job<RunJobPayload>): Promise<void> {
             );
           }
         } else {
-          mirrorTest = rfTestsForTagMatch.find(
-            (t) => t.name === mirrorTcReadableId
-              || t.name.startsWith(mirrorTcReadableId + ' ')
-              || t.name.startsWith(mirrorTcReadableId + '-'),
-          );
+          mirrorTest = rfTestsForTagMatch.find((t) => rfNameMatchesTcId(t.name, mirrorTcReadableId));
           // Fallback: runner-provided tags may be empty — check direct XML tag map
           if (!mirrorTest && mirrorTcReadableId) {
             const xmlTagResult = rfTagResults.get(mirrorTcReadableId);
