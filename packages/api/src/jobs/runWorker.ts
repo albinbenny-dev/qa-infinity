@@ -130,17 +130,19 @@ function extractRfTagResults(xmlPath: string): Map<string, RfTestResult> {
       const testName = decodeXmlEntities(tm[1]);
       const body     = tm[2];
 
-      // ── Extract tags (RF4-6: <tags><tag>…</tag></tags>; RF7: bare <tag> before first kw) ──
+      // ── Extract tags ──────────────────────────────────────────────────────
+      // RF4-6: tags live inside a <tags><tag>…</tag></tags> wrapper.
+      // RF7 (schemaversion 4+): bare <tag> elements are direct children of
+      // <test>, appearing AFTER all <kw> blocks and BEFORE the test-level
+      // <status>.  They are never nested inside <kw>/<msg>/<doc>, so searching
+      // the full body for <tag> is safe regardless of RF version.
       let tags: string[] = [];
       const tagsWrapperMatch = body.match(/<tags>([\s\S]*?)<\/tags>/);
       if (tagsWrapperMatch) {
         tags = [...tagsWrapperMatch[1].matchAll(/<tag>([^<]*)<\/tag>/g)]
           .map((m) => m[1].trim());
       } else {
-        // RF7: bare <tag> elements appear before the first keyword/status block
-        const preambleEnd = body.search(/<(?:kw|setup|teardown|if|for|status)[\s>]/);
-        const preamble = preambleEnd > 0 ? body.slice(0, preambleEnd) : body;
-        tags = [...preamble.matchAll(/<tag>([^<]*)<\/tag>/g)].map((m) => m[1].trim());
+        tags = [...body.matchAll(/<tag>([^<]*)<\/tag>/g)].map((m) => m[1].trim());
       }
 
       // Skip tests that carry no tags at all — nothing to index.

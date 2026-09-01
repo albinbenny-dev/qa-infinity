@@ -409,11 +409,10 @@ function parseRobotXmlReport(xmlPath) {
       tags = [...tagsWrapperMatch[1].matchAll(/<tag>([^<]*)<\/tag>/g)]
         .map((tm) => decodeXmlEntities(tm[1]).trim());
     } else {
-      // RF7 format: bare <tag> elements appear directly inside <test>, before <kw>/<status> blocks.
-      // Slice the body up to the first keyword/status element to avoid picking up anything else.
-      const preambleEnd = body.search(/<(?:kw|setup|teardown|if|for|status)[\s>]/);
-      const preamble = preambleEnd > 0 ? body.slice(0, preambleEnd) : body;
-      tags = [...preamble.matchAll(/<tag>([^<]*)<\/tag>/g)]
+      // RF7 (schemaversion 4+): bare <tag> elements are direct children of <test>,
+      // appearing AFTER all <kw> blocks and BEFORE the test-level <status>.
+      // They are never nested inside <kw>/<msg>/<doc>, so the full body is safe to scan.
+      tags = [...body.matchAll(/<tag>([^<]*)<\/tag>/g)]
         .map((tm) => decodeXmlEntities(tm[1]).trim());
     }
 
