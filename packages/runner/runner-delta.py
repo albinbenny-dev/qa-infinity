@@ -151,7 +151,7 @@ def cmd_pack(base_image: str, runner_image: str, out_path: str) -> None:
             gz.write(raw)
 
     size_mb = os.path.getsize(out_path) / (1024 ** 2)
-    print(f"\n✓ Delta archive: {out_path}  ({size_mb:.0f} MB)")
+    print(f"\nDone. Delta archive: {out_path}  ({size_mb:.0f} MB)")
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +241,7 @@ def cmd_apply(base_image: str, delta_path: str) -> None:
             print("ERROR: docker load failed.", file=sys.stderr)
             sys.exit(1)
 
-    print("\n✓ Image loaded successfully.")
+    print("\nDone. Image loaded successfully.")
 
 
 # ---------------------------------------------------------------------------
