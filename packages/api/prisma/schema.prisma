@@ -575,3 +575,10 @@ model ContainerMetricSample {
   @@index([timestamp])
   @@index([container, timestamp])
 }
+
+model SystemConfig {
+  key       String   @id
+  value     String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
