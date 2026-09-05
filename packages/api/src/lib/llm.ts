@@ -5,6 +5,7 @@ import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import type { LLMResult } from '@langchain/core/outputs';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { prisma } from './prisma.js';
+import { getCachedLlmConfig } from './llmConfig.js';
 
 /**
  * Returns a LangChain chat model instance.
@@ -88,12 +89,13 @@ export function createLLM(options?: {
   const projectId = options?.projectId;
   const projectName = options?.projectName;
   const enableCaching = options?.enableCaching ?? true;
-  const provider = process.env.LLM_PROVIDER ?? 'openrouter';
+  const cfg = getCachedLlmConfig();
+  const provider = cfg.provider;
 
   if (provider === 'anthropic') {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-    const model = process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
+    const model = cfg.anthropicModel || process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 
     const llm = new ChatAnthropic({
       apiKey,
@@ -124,10 +126,10 @@ export function createLLM(options?: {
 
   // Local / on-prem LLM (OpenAI-compatible endpoint — e.g. LiteLLM proxy, Ollama, LM Studio)
   if (provider === 'local') {
-    const baseURL = process.env.LOCAL_LLM_BASE_URL;
+    const baseURL = cfg.localLlmBaseUrl || process.env.LOCAL_LLM_BASE_URL;
     if (!baseURL) throw new Error('LOCAL_LLM_BASE_URL is not set');
-    const apiKey = process.env.LOCAL_LLM_API_KEY || 'local';
-    const model = options?.modelOverride ?? process.env.LOCAL_LLM_MODEL ?? 'local-model';
+    const apiKey = cfg.localLlmApiKey || process.env.LOCAL_LLM_API_KEY || 'local';
+    const model = options?.modelOverride ?? cfg.localLlmModel || process.env.LOCAL_LLM_MODEL ?? 'local-model';
 
     const localLlm = new ChatOpenAI({
       modelName: model,
@@ -151,9 +153,9 @@ export function createLLM(options?: {
 
   // Default: OpenRouter (OpenAI-compatible endpoint)
   // OpenRouter applies its own prompt caching automatically — no header needed.
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = cfg.openrouterApiKey || process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set');
-  const model = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4-5';
+  const model = cfg.openrouterModel || process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4-5';
 
   return new ChatOpenAI({
     modelName: model,
@@ -183,8 +185,9 @@ export function createAnthropicDirectClient(): Anthropic | null {
   // Local provider routes all traffic through the OpenAI-compatible LiteLLM proxy.
   // The native Anthropic SDK always calls api.anthropic.com directly — bypass it
   // so agents fall back to the LangChain ChatOpenAI path through LiteLLM.
-  if ((process.env.LLM_PROVIDER ?? 'openrouter') === 'local') return null;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const cfg = getCachedLlmConfig();
+  if (cfg.provider === 'local') return null;
+  const apiKey = cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   return new Anthropic({ apiKey });
 }
