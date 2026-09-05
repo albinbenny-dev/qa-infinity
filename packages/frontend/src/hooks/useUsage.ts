@@ -142,3 +142,42 @@ export function useUpdateAgentSettings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-config'] }),
   });
 }
+
+// ── LLM Config ─────────────────────────────────────────────────────────────
+
+export interface LlmConfigData {
+  provider: 'openrouter' | 'anthropic' | 'local';
+  anthropicApiKey: string;
+  anthropicModel: string;
+  openrouterApiKey: string;
+  openrouterModel: string;
+  localLlmBaseUrl: string;
+  localLlmApiKey: string;
+  localLlmModel: string;
+  localLlmScriptModel: string;
+  encryptionKeyConfigured: boolean;
+}
+
+export function useLlmConfig() {
+  return useQuery({
+    queryKey: ['llm-config'],
+    queryFn: async () => {
+      const res = await api.get<LlmConfigData>('/admin/llm-config');
+      return res.data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useSaveLlmConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (update: Partial<LlmConfigData>) => {
+      const res = await api.post<LlmConfigData>('/admin/llm-config', update);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(['llm-config'], data);
+    },
+  });
+}

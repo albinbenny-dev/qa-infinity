@@ -4,8 +4,9 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
 } from 'recharts';
 import Topbar from '../components/layout/Topbar';
-import { useOpenRouterUsage, useAgentUsage, useAgentConfig, useToggleAgent, useStandardMode, useUpdateAgentSettings, useUsageTrend, useUsageByProject } from '../hooks/useUsage';
-import type { AgentUsageRow, AgentConfigRow } from '../hooks/useUsage';
+import { useOpenRouterUsage, useAgentUsage, useAgentConfig, useToggleAgent, useStandardMode, useUpdateAgentSettings, useUsageTrend, useUsageByProject, useLlmConfig, useSaveLlmConfig } from '../hooks/useUsage';
+import type { AgentUsageRow, AgentConfigRow, LlmConfigData } from '../hooks/useUsage';
+import { useProjectStore } from '../stores/projectStore';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -369,6 +370,190 @@ function HealingAgentThreshold({ serverValue }: { serverValue: number }) {
 
 // Agents disabled in Standard Mode (writer-agent stays ON — seed TCs still work)
 const STANDARD_MODE_AGENTS = ['healing-agent', 'ui-context-agent', 'ui-scanner', 'browser-agent', 'reports-agent'];
+
+// ── LLM Config Panel ───────────────────────────────────────────────────────
+
+const PROVIDERS: { id: LlmConfigData['provider']; label: string; sub: string }[] = [
+  { id: 'anthropic',   label: 'Anthropic Direct', sub: 'claude.ai API key' },
+  { id: 'openrouter',  label: 'OpenRouter',        sub: 'Multi-model gateway' },
+  { id: 'local',       label: 'Local LLM (On-Prem)', sub: 'LiteLLM / internal proxy' },
+];
+
+function LlmConfigPanel() {
+  const { data, isLoading } = useLlmConfig();
+  const save = useSaveLlmConfig();
+
+  const [provider, setProvider] = useState<LlmConfigData['provider']>('local');
+  const [fields, setFields] = useState<Partial<LlmConfigData>>({});
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  // Initialise form state from fetched data
+  useEffect(() => {
+    if (data) {
+      setProvider(data.provider);
+      setFields({
+        anthropicApiKey:     data.anthropicApiKey,
+        anthropicModel:      data.anthropicModel,
+        openrouterApiKey:    data.openrouterApiKey,
+        openrouterModel:     data.openrouterModel,
+        localLlmBaseUrl:     data.localLlmBaseUrl,
+        localLlmApiKey:      data.localLlmApiKey,
+        localLlmModel:       data.localLlmModel,
+        localLlmScriptModel: data.localLlmScriptModel,
+      });
+    }
+  }, [data]);
+
+  function set(k: keyof LlmConfigData, v: string) {
+    setFields((f) => ({ ...f, [k]: v }));
+  }
+
+  async function handleApply() {
+    try {
+      await save.mutateAsync({ provider, ...fields });
+      setToast({ msg: 'LLM configuration saved successfully.', ok: true });
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to save configuration.';
+      setToast({ msg, ok: false });
+    }
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '7px 10px', borderRadius: 7,
+    border: '1px solid var(--border)', background: 'var(--surface3)',
+    color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-mono)',
+    outline: 'none', boxSizing: 'border-box',
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11, fontWeight: 600, color: 'var(--text-dim)',
+    marginBottom: 4, display: 'block', textTransform: 'uppercase', letterSpacing: '0.06em',
+  };
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+      <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))' }} />
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>LLM Provider Configuration</span>
+          <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--text-dim)' }}>Select provider and configure API credentials — persisted to DB, effective immediately</span>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>
+      ) : (
+        <div style={{ padding: '16px' }}>
+          {/* Encryption key warning */}
+          {data && !data.encryptionKeyConfigured && (
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, fontSize: 12, color: 'var(--fail)', fontWeight: 600 }}>
+              ⚠ CONFIG_ENCRYPTION_KEY is not set — API keys will not be encrypted. Add it to your <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>.env</code> and restart the container.
+            </div>
+          )}
+
+          {/* Provider selector cards */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+            {PROVIDERS.map((p) => {
+              const active = provider === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setProvider(p.id)}
+                  style={{
+                    flex: 1, padding: '12px 14px', borderRadius: 9, cursor: 'pointer', textAlign: 'left',
+                    border: active ? '2px solid var(--cyan)' : '1px solid var(--border)',
+                    background: active ? 'rgba(34,211,238,0.07)' : 'var(--surface3)',
+                    boxShadow: active ? '0 0 0 1px rgba(34,211,238,0.2)' : 'none',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: active ? 'var(--cyan)' : 'var(--text)', marginBottom: 2 }}>{p.label}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>{p.sub}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Provider-specific fields */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+            {provider === 'anthropic' && (
+              <>
+                <div>
+                  <label style={labelStyle}>API Key</label>
+                  <input type="password" placeholder="sk-ant-…  (leave blank to keep existing)" style={inputStyle}
+                    value={fields.anthropicApiKey ?? ''} onChange={(e) => set('anthropicApiKey', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Model</label>
+                  <input type="text" style={inputStyle}
+                    value={fields.anthropicModel ?? ''} onChange={(e) => set('anthropicModel', e.target.value)} />
+                </div>
+              </>
+            )}
+            {provider === 'openrouter' && (
+              <>
+                <div>
+                  <label style={labelStyle}>API Key</label>
+                  <input type="password" placeholder="sk-or-…  (leave blank to keep existing)" style={inputStyle}
+                    value={fields.openrouterApiKey ?? ''} onChange={(e) => set('openrouterApiKey', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Model</label>
+                  <input type="text" style={inputStyle}
+                    value={fields.openrouterModel ?? ''} onChange={(e) => set('openrouterModel', e.target.value)} />
+                </div>
+              </>
+            )}
+            {provider === 'local' && (
+              <>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={labelStyle}>Base URL</label>
+                  <input type="text" style={inputStyle}
+                    value={fields.localLlmBaseUrl ?? ''} onChange={(e) => set('localLlmBaseUrl', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>API Key</label>
+                  <input type="password" placeholder="(leave blank to keep existing)" style={inputStyle}
+                    value={fields.localLlmApiKey ?? ''} onChange={(e) => set('localLlmApiKey', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Agent Model</label>
+                  <input type="text" style={inputStyle}
+                    value={fields.localLlmModel ?? ''} onChange={(e) => set('localLlmModel', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Script Model</label>
+                  <input type="text" style={inputStyle}
+                    value={fields.localLlmScriptModel ?? ''} onChange={(e) => set('localLlmScriptModel', e.target.value)} />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Toast + Apply button */}
+          <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={() => void handleApply()}
+              disabled={save.isPending}
+              style={{
+                padding: '8px 22px', borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: save.isPending ? 'not-allowed' : 'pointer',
+                border: '1px solid rgba(34,211,238,0.4)', background: 'rgba(34,211,238,0.12)',
+                color: 'var(--cyan)', opacity: save.isPending ? 0.6 : 1,
+              }}
+            >
+              {save.isPending ? 'Saving…' : 'Apply Changes'}
+            </button>
+            {toast && (
+              <div style={{ fontSize: 12, fontWeight: 600, color: toast.ok ? 'var(--pass)' : 'var(--fail)' }}>
+                {toast.ok ? '✓ ' : '⚠ '}{toast.msg}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AgentConfigPanel() {
   const { data: agents, isLoading } = useAgentConfig();
@@ -802,6 +987,8 @@ function ProjectUsageChart() {
 export default function Usage() {
   const [days, setDays] = useState(30);
   const qc = useQueryClient();
+  const { currentUser } = useProjectStore();
+  const isSuperAdmin = currentUser?.globalRole === 'SUPER_ADMIN';
 
   const { data: orData, isLoading: orLoading, isError: orError, dataUpdatedAt, isFetching } = useOpenRouterUsage();
   const { data: agentData, isLoading: agentLoading } = useAgentUsage(days);
@@ -868,6 +1055,9 @@ export default function Usage() {
       {/* Scroll container — plain block so children grow to natural height instead of flex-shrinking */}
       <div style={{ flex: 1, overflow: 'auto' }}>
       <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+        {/* ── LLM Provider Configuration (SUPER_ADMIN only) ────────── */}
+        {isSuperAdmin && <LlmConfigPanel />}
 
         {orError && (
           <div style={{ padding: '16px 20px', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 12, color: 'var(--fail)', fontSize: 13 }}>

@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { KNOWN_AGENTS, STANDARD_MODE_DISABLED, DEFAULT_HEALING_SETTINGS } from '../lib/agentConfig.js';
+import { getCachedLlmConfig, saveLlmConfig, maskKey, type LlmConfig } from '../lib/llmConfig.js';
+import { isEncryptionKeyConfigured } from '../lib/configCrypto.js';
 
 const router = Router();
 router.use(verifyToken as RequestHandler);
@@ -551,6 +553,67 @@ router.post('/agents/standard-mode', requireSuperAdmin as RequestHandler, async 
     }
 
     res.json({ ok: true, standardMode: enable });
+  } catch (err) { next(err); }
+});
+
+// ── GET /admin/llm-config ─────────────────────────────────────────────────
+// Returns current LLM config with sensitive keys masked. SUPER_ADMIN only.
+
+router.get('/llm-config', requireSuperAdmin as RequestHandler, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const cfg = getCachedLlmConfig();
+    res.json({
+      provider:               cfg.provider,
+      anthropicApiKey:        maskKey(cfg.anthropicApiKey),
+      anthropicModel:         cfg.anthropicModel,
+      openrouterApiKey:       maskKey(cfg.openrouterApiKey),
+      openrouterModel:        cfg.openrouterModel,
+      localLlmBaseUrl:        cfg.localLlmBaseUrl,
+      localLlmApiKey:         maskKey(cfg.localLlmApiKey),
+      localLlmModel:          cfg.localLlmModel,
+      localLlmScriptModel:    cfg.localLlmScriptModel,
+      encryptionKeyConfigured: isEncryptionKeyConfigured(),
+    });
+  } catch (err) { next(err); }
+});
+
+// ── POST /admin/llm-config ────────────────────────────────────────────────
+// Persist a partial LLM config update. Empty key fields are ignored (preserve existing).
+// SUPER_ADMIN only.
+
+router.post('/llm-config', requireSuperAdmin as RequestHandler, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!isEncryptionKeyConfigured()) {
+      res.status(503).json({ error: 'CONFIG_ENCRYPTION_KEY is not set — cannot save API keys securely. Add it to your .env and restart the container.' });
+      return;
+    }
+
+    const body = req.body as Partial<LlmConfig>;
+
+    // Build the update object — skip empty key fields so we don't overwrite existing keys with blanks.
+    const KEY_FIELDS: (keyof LlmConfig)[] = ['anthropicApiKey', 'openrouterApiKey', 'localLlmApiKey'];
+    const update: Partial<LlmConfig> = {};
+
+    for (const [k, v] of Object.entries(body) as [keyof LlmConfig, string][]) {
+      if (KEY_FIELDS.includes(k) && !v) continue; // blank key field — preserve existing
+      (update as Record<string, string>)[k] = v;
+    }
+
+    await saveLlmConfig(update, req.user.id);
+
+    const cfg = getCachedLlmConfig();
+    res.json({
+      provider:               cfg.provider,
+      anthropicApiKey:        maskKey(cfg.anthropicApiKey),
+      anthropicModel:         cfg.anthropicModel,
+      openrouterApiKey:       maskKey(cfg.openrouterApiKey),
+      openrouterModel:        cfg.openrouterModel,
+      localLlmBaseUrl:        cfg.localLlmBaseUrl,
+      localLlmApiKey:         maskKey(cfg.localLlmApiKey),
+      localLlmModel:          cfg.localLlmModel,
+      localLlmScriptModel:    cfg.localLlmScriptModel,
+      encryptionKeyConfigured: isEncryptionKeyConfigured(),
+    });
   } catch (err) { next(err); }
 });
 
