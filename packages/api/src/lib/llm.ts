@@ -132,17 +132,14 @@ export function createLLM(options?: {
     const localLlm = new ChatOpenAI({
       modelName: model,
       openAIApiKey: apiKey,
-      temperature,
       maxTokens: 8192,
       callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
       configuration: { baseURL },
-      // Claude via LiteLLM rejects presence_penalty and frequency_penalty.
-      // Set to undefined so LangChain omits them from the request body entirely.
-      presencePenalty: undefined,
-      frequencyPenalty: undefined,
     });
-    // LangChain serialises 0 for these even when set to undefined via constructor —
-    // forcibly clear the internal fields so they are omitted by JSON.stringify.
+    // Claude models via LiteLLM reject presence_penalty, frequency_penalty, and
+    // temperature (deprecated on claude-sonnet-5+). Clear all three so
+    // JSON.stringify omits them from the request body entirely.
+    (localLlm as unknown as Record<string, unknown>).temperature = undefined;
     (localLlm as unknown as Record<string, unknown>).presencePenalty = undefined;
     (localLlm as unknown as Record<string, unknown>).frequencyPenalty = undefined;
     return localLlm;
