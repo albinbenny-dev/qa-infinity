@@ -182,11 +182,11 @@ export function createLLM(options?: {
  *   - adaptive thinking
  */
 export function createAnthropicDirectClient(): Anthropic | null {
-  // Local provider routes all traffic through the OpenAI-compatible LiteLLM proxy.
-  // The native Anthropic SDK always calls api.anthropic.com directly — bypass it
-  // so agents fall back to the LangChain ChatOpenAI path through LiteLLM.
+  // Only return a native Anthropic SDK client when the active provider is "anthropic".
+  // - "local"      → must go through LiteLLM proxy (OpenAI-compatible), not api.anthropic.com
+  // - "openrouter" → OpenRouter handles routing; native SDK would bypass it and fail
   const cfg = getCachedLlmConfig();
-  if (cfg.provider === 'local') return null;
+  if (cfg.provider !== 'anthropic') return null;
   const apiKey = cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   return new Anthropic({ apiKey });
