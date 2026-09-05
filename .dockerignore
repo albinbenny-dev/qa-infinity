@@ -2,8 +2,10 @@
 node_modules
 **/node_modules
 
-# ── Build outputs ────────────────────────────────────────────────────────────
-**/dist
+# ── Build outputs (exclude compiled outputs — but keep extension/dist which
+#    is pre-built and copied into the api image) ────────────────────────────
+packages/api/dist
+packages/frontend/dist
 **/.turbo
 
 # ── Local dev / test artifacts ───────────────────────────────────────────────
