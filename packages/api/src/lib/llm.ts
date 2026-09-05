@@ -122,6 +122,23 @@ export function createLLM(options?: {
     return llm;
   }
 
+  // Local / on-prem LLM (OpenAI-compatible endpoint — e.g. LiteLLM proxy, Ollama, LM Studio)
+  if (provider === 'local') {
+    const baseURL = process.env.LOCAL_LLM_BASE_URL;
+    if (!baseURL) throw new Error('LOCAL_LLM_BASE_URL is not set');
+    const apiKey = process.env.LOCAL_LLM_API_KEY || 'local';
+    const model = options?.modelOverride ?? process.env.LOCAL_LLM_MODEL ?? 'local-model';
+
+    return new ChatOpenAI({
+      modelName: model,
+      openAIApiKey: apiKey,
+      temperature,
+      maxTokens: 8192,
+      callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
+      configuration: { baseURL },
+    });
+  }
+
   // Default: OpenRouter (OpenAI-compatible endpoint)
   // OpenRouter applies its own prompt caching automatically — no header needed.
   const apiKey = process.env.OPENROUTER_API_KEY;
