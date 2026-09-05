@@ -136,12 +136,16 @@ export function createLLM(options?: {
       callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
       configuration: { baseURL },
     });
-    // Claude models via LiteLLM reject presence_penalty, frequency_penalty, and
-    // temperature (deprecated on claude-sonnet-5+). Clear all three so
-    // JSON.stringify omits them from the request body entirely.
-    (localLlm as unknown as Record<string, unknown>).temperature = undefined;
-    (localLlm as unknown as Record<string, unknown>).presencePenalty = undefined;
-    (localLlm as unknown as Record<string, unknown>).frequencyPenalty = undefined;
+    // claude-sonnet-5+ deprecates all OpenAI-style sampling params.
+    // Clear every one so JSON.stringify omits them from the request body.
+    const unsupported: (keyof typeof localLlm)[] = [
+      'temperature', 'topP', 'topK',
+      'presencePenalty', 'frequencyPenalty',
+      'n', 'logprobs', 'stop',
+    ];
+    for (const key of unsupported) {
+      (localLlm as unknown as Record<string, unknown>)[key] = undefined;
+    }
     return localLlm;
   }
 
