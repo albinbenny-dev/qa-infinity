@@ -9,7 +9,8 @@ import type { AgentUsageRow, AgentConfigRow } from '../hooks/useUsage';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function fmt(dollars: number): string {
+function fmt(dollars: number | null | undefined): string {
+  if (dollars === null || dollars === undefined) return '—';
   return `$${dollars.toFixed(4)}`;
 }
 
@@ -84,23 +85,45 @@ const AGENT_COLOR: Record<string, string> = {
 function CreditGauge({
   usage, limit, remaining, provider, totalTokens, promptTokens, completionTokens, totalCalls,
 }: {
-  usage: number; limit: number | null; remaining: number | null; provider?: string;
+  usage: number | null; limit: number | null; remaining: number | null; provider?: string;
   totalTokens?: number; promptTokens?: number; completionTokens?: number; totalCalls?: number;
 }) {
   const isAnthropic = provider === 'anthropic';
-  const usedPct = limit ? Math.min(100, Math.round((usage / limit) * 100)) : 0;
-  const critical = limit ? usage / limit >= 0.85 : false;
-  const warning = limit ? usage / limit >= 0.65 : false;
+  const isLocal = provider === 'local';
+  const safeUsage = usage ?? 0;
+  const usedPct = limit ? Math.min(100, Math.round((safeUsage / limit) * 100)) : 0;
+  const critical = limit ? safeUsage / limit >= 0.85 : false;
+  const warning = limit ? safeUsage / limit >= 0.65 : false;
   const barColor = critical ? 'var(--fail)' : warning ? 'var(--amber)' : 'var(--pass)';
 
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
-      <div style={{ height: 3, background: isAnthropic ? 'linear-gradient(90deg, var(--violet), var(--cyan))' : 'var(--warm-accent)' }} />
+      <div style={{ height: 3, background: isLocal ? 'linear-gradient(90deg, var(--cyan), var(--pass))' : isAnthropic ? 'linear-gradient(90deg, var(--violet), var(--cyan))' : 'var(--warm-accent)' }} />
       <div style={{ padding: '20px 24px' }}>
         <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', marginBottom: 16 }}>
-          {isAnthropic ? 'Estimated Spend' : 'Credit Usage'}
+          {isLocal ? 'Token Usage' : isAnthropic ? 'Estimated Spend' : 'Credit Usage'}
         </div>
-        {isAnthropic ? (
+        {isLocal ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--cyan)', lineHeight: 1, fontFamily: 'var(--font-mono)' }}>
+                  {fmtK(totalTokens ?? 0)}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>tokens used (all-time)</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{(totalCalls ?? 0).toLocaleString()} calls</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>on-prem / no cost tracking</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div><span style={{ color: 'var(--text-dim)' }}>In: </span><span style={{ color: 'var(--cyan)', fontWeight: 700 }}>{fmtK(promptTokens ?? 0)}</span></div>
+              <div><span style={{ color: 'var(--text-dim)' }}>Out: </span><span style={{ color: 'var(--pass)', fontWeight: 700 }}>{fmtK(completionTokens ?? 0)}</span></div>
+              <div style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: 10 }}>no billing — internal proxy</div>
+            </div>
+          </>
+        ) : isAnthropic ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 16 }}>
               <div>
