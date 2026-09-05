@@ -20,6 +20,7 @@ import { startAgentScanWorker } from './jobs/agentScanWorker.js';
 import { startRetentionSchedule } from './jobs/retentionWorker.js';
 import { saveSkillFile, deleteSkillFile } from './services/scriptFileService.js';
 import { scanAllScriptTags } from './routes/scripts.js';
+import { initLlmConfig } from './lib/llmConfig.js';
 
 // Without a listener, Node silently terminates the process on an unhandled
 // rejection with only a generic stack trace (or nothing, on older versions) —
@@ -337,6 +338,9 @@ httpServer.listen(PORT, () => {
     } catch (err) {
       console.warn('[qa-api] Super-admin check failed (non-fatal):', (err as Error).message);
     }
+
+    // Load LLM config from DB into in-memory cache (DB overrides env vars)
+    await initLlmConfig();
 
     // Sync skill files to disk before workers start (they read skills from files)
     await syncSkillFiles();

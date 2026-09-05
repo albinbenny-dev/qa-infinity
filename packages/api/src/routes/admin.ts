@@ -123,11 +123,12 @@ router.delete('/users/:uid', requireSuperAdmin as RequestHandler, async (req: Re
 
 router.get('/usage', requireSuperAdmin as RequestHandler, async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const provider = process.env.LLM_PROVIDER ?? 'openrouter';
+    const cfg = getCachedLlmConfig();
+    const provider = cfg.provider;
 
     // ── Anthropic direct — estimate spend from local LlmCall token log ──
     if (provider === 'anthropic') {
-      const model = process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
+      const model = cfg.anthropicModel || process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 
       // Pricing per 1M tokens (Anthropic public rates)
       // Matches both canonical names and date-suffixed variants (e.g. claude-sonnet-4-20250514)
@@ -193,7 +194,7 @@ router.get('/usage', requireSuperAdmin as RequestHandler, async (_req: Request, 
 
     // ── Local LLM — return token stats from local LlmCall log (no external API) ──
     if (provider === 'local') {
-      const model = process.env.LOCAL_LLM_MODEL ?? 'local';
+      const model = cfg.localLlmModel || process.env.LOCAL_LLM_MODEL || 'local';
       const rows = await prisma.llmCall.groupBy({
         by: ['model'],
         _sum: { promptTokens: true, completionTokens: true, totalTokens: true },
@@ -224,7 +225,7 @@ router.get('/usage', requireSuperAdmin as RequestHandler, async (_req: Request, 
     }
 
     // ── OpenRouter — fetch credit balance from their API ──
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = cfg.openrouterApiKey || process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       res.status(503).json({ error: 'OPENROUTER_API_KEY is not configured' });
       return;
@@ -251,7 +252,7 @@ router.get('/usage', requireSuperAdmin as RequestHandler, async (_req: Request, 
 
     const { usage, limit, is_free_tier, rate_limit, label } = body.data;
     const remaining = limit !== null ? Math.max(0, limit - usage) : null;
-    const model = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4-5';
+    const model = cfg.openrouterModel || process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4-5';
 
     res.json({ label, usage, limit, remaining, is_free_tier, rate_limit, model, provider: 'openrouter' });
   } catch (err) { next(err); }
