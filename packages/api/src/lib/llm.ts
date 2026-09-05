@@ -129,7 +129,7 @@ export function createLLM(options?: {
     const baseURL = cfg.localLlmBaseUrl || process.env.LOCAL_LLM_BASE_URL;
     if (!baseURL) throw new Error('LOCAL_LLM_BASE_URL is not set');
     const apiKey = cfg.localLlmApiKey || process.env.LOCAL_LLM_API_KEY || 'local';
-    const model = options?.modelOverride ?? cfg.localLlmModel || process.env.LOCAL_LLM_MODEL ?? 'local-model';
+    const model = options?.modelOverride ?? (cfg.localLlmModel || process.env.LOCAL_LLM_MODEL || 'local-model');
 
     const localLlm = new ChatOpenAI({
       modelName: model,
