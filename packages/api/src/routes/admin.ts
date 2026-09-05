@@ -189,6 +189,38 @@ router.get('/usage', requireSuperAdmin as RequestHandler, async (_req: Request, 
       return;
     }
 
+    // ── Local LLM — return token stats from local LlmCall log (no external API) ──
+    if (provider === 'local') {
+      const model = process.env.LOCAL_LLM_MODEL ?? 'local';
+      const rows = await prisma.llmCall.groupBy({
+        by: ['model'],
+        _sum: { promptTokens: true, completionTokens: true, totalTokens: true },
+        _count: { id: true },
+      });
+      let totalTokens = 0, promptTokens = 0, completionTokens = 0, totalCalls = 0;
+      for (const row of rows) {
+        totalTokens      += row._sum.totalTokens    ?? 0;
+        promptTokens     += row._sum.promptTokens   ?? 0;
+        completionTokens += row._sum.completionTokens ?? 0;
+        totalCalls       += row._count.id            ?? 0;
+      }
+      res.json({
+        provider: 'local',
+        model,
+        label: 'Local LLM (On-Prem)',
+        usage: null,
+        limit: null,
+        remaining: null,
+        is_free_tier: true,
+        rate_limit: { requests: 0, interval: 'n/a' },
+        totalTokens,
+        promptTokens,
+        completionTokens,
+        totalCalls,
+      });
+      return;
+    }
+
     // ── OpenRouter — fetch credit balance from their API ──
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
