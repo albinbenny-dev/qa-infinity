@@ -1,0 +1,25 @@
+# ── Dependencies (never needed in build context — installed inside Docker) ──
+node_modules
+**/node_modules
+
+# ── Build outputs ────────────────────────────────────────────────────────────
+**/dist
+**/.turbo
+
+# ── Local dev / test artifacts ───────────────────────────────────────────────
+**/.env
+**/.env.local
+**/test-results
+**/playwright-report
+**/coverage
+
+# ── Git / editor ─────────────────────────────────────────────────────────────
+.git
+.gitignore
+.claude
+**/.DS_Store
+
+# ── Release tarballs (large, not needed inside image) ────────────────────────
+*.tar.gz
+*.tar
+release-v*/
