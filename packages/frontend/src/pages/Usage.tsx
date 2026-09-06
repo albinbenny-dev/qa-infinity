@@ -434,10 +434,38 @@ function LlmConfigPanel() {
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
       <div style={{ height: 3, background: 'linear-gradient(90deg, var(--cyan), var(--violet))' }} />
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>LLM Provider Configuration</span>
-          <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--text-dim)' }}>Select provider and configure API credentials — persisted to DB, effective immediately</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Select provider and configure API credentials — persisted to DB, effective immediately</span>
         </div>
+        {data && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {/* Config source badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '3px 9px', borderRadius: 20, fontSize: 10, fontWeight: 700,
+              background: data.configSource === 'db' ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)',
+              border: `1px solid ${data.configSource === 'db' ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)'}`,
+              color: data.configSource === 'db' ? 'var(--emerald)' : 'var(--amber)',
+              textTransform: 'uppercase', letterSpacing: '0.06em',
+            }}>
+              <span>{data.configSource === 'db' ? '🗄' : '📄'}</span>
+              <span>Source: {data.configSource === 'db' ? 'DB (UI-saved)' : 'Env vars'}</span>
+            </div>
+            {/* Encryption badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '3px 9px', borderRadius: 20, fontSize: 10, fontWeight: 700,
+              background: data.encryptionKeyConfigured ? 'rgba(16,185,129,0.12)' : 'rgba(220,38,38,0.08)',
+              border: `1px solid ${data.encryptionKeyConfigured ? 'rgba(16,185,129,0.4)' : 'rgba(220,38,38,0.3)'}`,
+              color: data.encryptionKeyConfigured ? 'var(--emerald)' : 'var(--fail)',
+              textTransform: 'uppercase', letterSpacing: '0.06em',
+            }}>
+              <span>{data.encryptionKeyConfigured ? '🔒' : '⚠'}</span>
+              <span>{data.encryptionKeyConfigured ? 'Keys encrypted' : 'No encryption'}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {isLoading ? (

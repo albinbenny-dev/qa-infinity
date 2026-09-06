@@ -55,6 +55,12 @@ const SENSITIVE_DB_KEYS = new Set([
 // ── In-memory cache ────────────────────────────────────────────────────────
 
 let _cache: LlmConfig | null = null;
+let _configSource: 'db' | 'env' = 'env';
+
+/** Returns where the active config was loaded from: 'db' (UI-saved) or 'env' (env vars). */
+export function getConfigSource(): 'db' | 'env' {
+  return _cache ? _configSource : 'env';
+}
 
 // ── Env-var fallback ───────────────────────────────────────────────────────
 
@@ -87,6 +93,7 @@ export async function initLlmConfig(): Promise<void> {
     const rows = await prisma.systemConfig.findMany();
     if (rows.length === 0) {
       _cache = configFromEnv();
+      _configSource = 'env';
       console.log('[llm-config] No DB config — using env vars');
       return;
     }
@@ -128,9 +135,11 @@ export async function initLlmConfig(): Promise<void> {
       _cache.provider === 'local'     ? _cache.localLlmModel :
       _cache.openrouterModel;
 
+    _configSource = 'db';
     console.log(`[llm-config] Loaded from DB — provider: ${_cache.provider}, model: ${activeModel}`);
   } catch (err) {
     _cache = configFromEnv();
+    _configSource = 'env';
     console.warn('[llm-config] DB load failed (non-fatal) — falling back to env vars:', (err as Error).message);
   }
 }

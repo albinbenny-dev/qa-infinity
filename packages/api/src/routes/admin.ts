@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma.js';
 import { verifyToken } from '../middleware/auth.js';
 import { KNOWN_AGENTS, STANDARD_MODE_DISABLED, DEFAULT_HEALING_SETTINGS } from '../lib/agentConfig.js';
-import { getCachedLlmConfig, saveLlmConfig, maskKey, type LlmConfig } from '../lib/llmConfig.js';
+import { getCachedLlmConfig, saveLlmConfig, maskKey, getConfigSource, type LlmConfig } from '../lib/llmConfig.js';
 import { isEncryptionKeyConfigured } from '../lib/configCrypto.js';
 
 const router = Router();
@@ -574,6 +574,7 @@ router.get('/llm-config', requireSuperAdmin as RequestHandler, async (_req: Requ
       localLlmModel:          cfg.localLlmModel,
       localLlmScriptModel:    cfg.localLlmScriptModel,
       encryptionKeyConfigured: isEncryptionKeyConfigured(),
+      configSource: getConfigSource(),  // 'db' | 'env'
     });
   } catch (err) { next(err); }
 });
