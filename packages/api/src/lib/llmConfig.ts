@@ -170,7 +170,8 @@ export async function saveLlmConfig(
 ): Promise<void> {
   for (const [field, dbKey] of Object.entries(DB_KEY) as [keyof LlmConfig, string][]) {
     if (!(field in update)) continue;
-    const val = (update[field] as string) ?? '';
+    const raw = update[field];
+    const val = raw === null || raw === undefined ? '' : String(raw);
     const stored = SENSITIVE_DB_KEYS.has(dbKey) ? encrypt(val) : val;
     await prisma.systemConfig.upsert({
       where:  { key: dbKey },
