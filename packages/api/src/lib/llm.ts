@@ -144,10 +144,8 @@ export function createLLM(options?: {
       configuration: { baseURL },
       ...(thinkingBudget > 0 && {
         modelKwargs: {
-          // Standard Anthropic thinking param — LiteLLM forwards this to Claude.
-          // Some LiteLLM deployments use output_config.effort instead;
-          // we send both so either format is handled.
-          thinking: { type: 'enabled', budget_tokens: thinkingBudget },
+          // This LiteLLM deployment uses output_config.effort (not thinking.budget_tokens).
+          // effort: low=<4k, medium=4k-15k, high=16k+
           output_config: { effort: thinkingBudget >= 16000 ? 'high' : thinkingBudget >= 4000 ? 'medium' : 'low' },
         },
       }),
