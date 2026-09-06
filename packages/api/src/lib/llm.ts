@@ -143,7 +143,13 @@ export function createLLM(options?: {
       callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
       configuration: { baseURL },
       ...(thinkingBudget > 0 && {
-        modelKwargs: { thinking: { type: 'enabled', budget_tokens: thinkingBudget } },
+        modelKwargs: {
+          // Standard Anthropic thinking param — LiteLLM forwards this to Claude.
+          // Some LiteLLM deployments use output_config.effort instead;
+          // we send both so either format is handled.
+          thinking: { type: 'enabled', budget_tokens: thinkingBudget },
+          output_config: { effort: thinkingBudget >= 16000 ? 'high' : thinkingBudget >= 4000 ? 'medium' : 'low' },
+        },
       }),
     });
 
