@@ -397,9 +397,10 @@ function LlmConfigPanel() {
         openrouterApiKey:    data.openrouterApiKey,
         openrouterModel:     data.openrouterModel,
         localLlmBaseUrl:     data.localLlmBaseUrl,
-        localLlmApiKey:      data.localLlmApiKey,
-        localLlmModel:       data.localLlmModel,
-        localLlmScriptModel: data.localLlmScriptModel,
+        localLlmApiKey:          data.localLlmApiKey,
+        localLlmModel:           data.localLlmModel,
+        localLlmScriptModel:     data.localLlmScriptModel,
+        localLlmThinkingBudget:  data.localLlmThinkingBudget ?? 0,
       });
     }
   }, [data]);
@@ -553,6 +554,42 @@ function LlmConfigPanel() {
                   <label style={labelStyle}>Script Model</label>
                   <input type="text" style={inputStyle}
                     value={fields.localLlmScriptModel ?? ''} onChange={(e) => set('localLlmScriptModel', e.target.value)} />
+                </div>
+                {/* ── Thinking budget ── */}
+                <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>
+                        🧠 Extended Thinking Budget
+                      </label>
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>
+                        Lets Claude think before answering — better TC quality, slower response. Requires LiteLLM ≥ 1.40 + a Claude model.
+                      </div>
+                    </div>
+                    <div style={{
+                      minWidth: 90, textAlign: 'right', fontSize: 13, fontWeight: 800,
+                      fontFamily: 'var(--font-mono)', color: (fields.localLlmThinkingBudget ?? 0) > 0 ? 'var(--cyan)' : 'var(--text-dim)',
+                    }}>
+                      {(fields.localLlmThinkingBudget ?? 0) === 0 ? 'OFF' : `${((fields.localLlmThinkingBudget ?? 0) / 1000).toFixed(0)}k tokens`}
+                    </div>
+                  </div>
+                  <input
+                    type="range" min={0} max={32000} step={1000}
+                    value={fields.localLlmThinkingBudget ?? 0}
+                    onChange={(e) => set('localLlmThinkingBudget', parseInt(e.target.value, 10) as any)}
+                    style={{ width: '100%', accentColor: 'var(--cyan)', cursor: 'pointer' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
+                    <span>OFF</span>
+                    <span>4k — balanced</span>
+                    <span>16k — deep</span>
+                    <span>32k — max</span>
+                  </div>
+                  {(fields.localLlmThinkingBudget ?? 0) > 0 && (
+                    <div style={{ marginTop: 8, padding: '7px 12px', background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)', borderRadius: 7, fontSize: 11, color: 'var(--cyan)' }}>
+                      ✓ Claude will use up to <strong>{(fields.localLlmThinkingBudget ?? 0).toLocaleString()}</strong> tokens for internal reasoning before producing output. Total max tokens = {((fields.localLlmThinkingBudget ?? 0) + 8192).toLocaleString()}.
+                    </div>
+                  )}
                 </div>
               </>
             )}

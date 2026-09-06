@@ -30,19 +30,22 @@ export interface LlmConfig {
   localLlmApiKey: string;
   localLlmModel: string;
   localLlmScriptModel: string;
+  /** Extended thinking budget in tokens (0 = disabled). Local provider only. */
+  localLlmThinkingBudget: number;
 }
 
 // DB keys for each config field
 const DB_KEY: Record<keyof LlmConfig, string> = {
-  provider:           'llm_provider',
-  anthropicApiKey:    'anthropic_api_key',
-  anthropicModel:     'anthropic_model',
-  openrouterApiKey:   'openrouter_api_key',
-  openrouterModel:    'openrouter_model',
-  localLlmBaseUrl:    'local_llm_base_url',
-  localLlmApiKey:     'local_llm_api_key',
-  localLlmModel:      'local_llm_model',
-  localLlmScriptModel:'local_llm_script_model',
+  provider:               'llm_provider',
+  anthropicApiKey:        'anthropic_api_key',
+  anthropicModel:         'anthropic_model',
+  openrouterApiKey:       'openrouter_api_key',
+  openrouterModel:        'openrouter_model',
+  localLlmBaseUrl:        'local_llm_base_url',
+  localLlmApiKey:         'local_llm_api_key',
+  localLlmModel:          'local_llm_model',
+  localLlmScriptModel:    'local_llm_script_model',
+  localLlmThinkingBudget: 'local_llm_thinking_budget',
 };
 
 // Which DB keys store encrypted values
@@ -72,9 +75,10 @@ function configFromEnv(): LlmConfig {
     openrouterApiKey:    process.env.OPENROUTER_API_KEY ?? '',
     openrouterModel:     process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4-5',
     localLlmBaseUrl:     process.env.LOCAL_LLM_BASE_URL ?? '',
-    localLlmApiKey:      process.env.LOCAL_LLM_API_KEY ?? '',
-    localLlmModel:       process.env.LOCAL_LLM_MODEL ?? '',
-    localLlmScriptModel: process.env.LOCAL_LLM_SCRIPT_MODEL ?? '',
+    localLlmApiKey:          process.env.LOCAL_LLM_API_KEY ?? '',
+    localLlmModel:           process.env.LOCAL_LLM_MODEL ?? '',
+    localLlmScriptModel:     process.env.LOCAL_LLM_SCRIPT_MODEL ?? '',
+    localLlmThinkingBudget:  parseInt(process.env.LOCAL_LLM_THINKING_BUDGET ?? '0', 10),
   };
 }
 
@@ -126,8 +130,9 @@ export async function initLlmConfig(): Promise<void> {
       openrouterModel:     get(DB_KEY.openrouterModel, env.openrouterModel),
       localLlmBaseUrl:     get(DB_KEY.localLlmBaseUrl, env.localLlmBaseUrl),
       localLlmApiKey:      get(DB_KEY.localLlmApiKey, env.localLlmApiKey),
-      localLlmModel:       get(DB_KEY.localLlmModel, env.localLlmModel),
-      localLlmScriptModel: get(DB_KEY.localLlmScriptModel, env.localLlmScriptModel),
+      localLlmModel:           get(DB_KEY.localLlmModel, env.localLlmModel),
+      localLlmScriptModel:     get(DB_KEY.localLlmScriptModel, env.localLlmScriptModel),
+      localLlmThinkingBudget:  parseInt(get(DB_KEY.localLlmThinkingBudget, String(env.localLlmThinkingBudget)), 10) || 0,
     };
 
     const activeModel =

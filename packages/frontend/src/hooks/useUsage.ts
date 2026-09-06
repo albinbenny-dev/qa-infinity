@@ -157,6 +157,7 @@ export interface LlmConfigData {
   localLlmScriptModel: string;
   encryptionKeyConfigured: boolean;
   configSource: 'db' | 'env';
+  localLlmThinkingBudget: number;
 }
 
 export function useLlmConfig() {

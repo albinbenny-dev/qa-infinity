@@ -130,24 +130,35 @@ export function createLLM(options?: {
     if (!baseURL) throw new Error('LOCAL_LLM_BASE_URL is not set');
     const apiKey = cfg.localLlmApiKey || process.env.LOCAL_LLM_API_KEY || 'local';
     const model = options?.modelOverride ?? (cfg.localLlmModel || process.env.LOCAL_LLM_MODEL || 'local-model');
+    const thinkingBudget = cfg.localLlmThinkingBudget ?? 0;
+
+    // When thinking is enabled, LiteLLM passes thinking:{type:'enabled',budget_tokens:N} to Claude.
+    // maxTokens must be > budget_tokens to leave room for the visible response.
+    const maxTokens = thinkingBudget > 0 ? thinkingBudget + 8192 : 8192;
 
     const localLlm = new ChatOpenAI({
       modelName: model,
       openAIApiKey: apiKey,
-      maxTokens: 8192,
+      maxTokens,
       callbacks: [new LlmUsageTracker(agentName, projectId, projectName, model)],
       configuration: { baseURL },
+      ...(thinkingBudget > 0 && {
+        modelKwargs: { thinking: { type: 'enabled', budget_tokens: thinkingBudget } },
+      }),
     });
+
     // claude-sonnet-5+ deprecates all OpenAI-style sampling params.
     // Clear every one so JSON.stringify omits them from the request body.
+    // When thinking is enabled, temperature must be exactly 1 (Claude requirement).
     const unsupported: (keyof typeof localLlm)[] = [
-      'temperature', 'topP', 'topK',
-      'presencePenalty', 'frequencyPenalty',
-      'n', 'logprobs', 'stop',
+      'topP', 'topK', 'presencePenalty', 'frequencyPenalty', 'n', 'logprobs', 'stop',
     ];
     for (const key of unsupported) {
       (localLlm as unknown as Record<string, unknown>)[key] = undefined;
     }
+    // temperature: must be 1 for thinking mode, undefined (omitted) otherwise
+    (localLlm as unknown as Record<string, unknown>).temperature = thinkingBudget > 0 ? 1 : undefined;
+
     return localLlm;
   }
 

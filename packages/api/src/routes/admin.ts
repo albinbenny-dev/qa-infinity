@@ -571,8 +571,9 @@ router.get('/llm-config', requireSuperAdmin as RequestHandler, async (_req: Requ
       openrouterModel:        cfg.openrouterModel,
       localLlmBaseUrl:        cfg.localLlmBaseUrl,
       localLlmApiKey:         maskKey(cfg.localLlmApiKey),
-      localLlmModel:          cfg.localLlmModel,
-      localLlmScriptModel:    cfg.localLlmScriptModel,
+      localLlmModel:           cfg.localLlmModel,
+      localLlmScriptModel:     cfg.localLlmScriptModel,
+      localLlmThinkingBudget:  cfg.localLlmThinkingBudget,
       encryptionKeyConfigured: isEncryptionKeyConfigured(),
       configSource: getConfigSource(),  // 'db' | 'env'
     });
@@ -612,9 +613,11 @@ router.post('/llm-config', requireSuperAdmin as RequestHandler, async (req: Requ
       openrouterModel:        cfg.openrouterModel,
       localLlmBaseUrl:        cfg.localLlmBaseUrl,
       localLlmApiKey:         maskKey(cfg.localLlmApiKey),
-      localLlmModel:          cfg.localLlmModel,
-      localLlmScriptModel:    cfg.localLlmScriptModel,
+      localLlmModel:           cfg.localLlmModel,
+      localLlmScriptModel:     cfg.localLlmScriptModel,
+      localLlmThinkingBudget:  cfg.localLlmThinkingBudget,
       encryptionKeyConfigured: isEncryptionKeyConfigured(),
+      configSource: getConfigSource(),
     });
   } catch (err) { next(err); }
 });
