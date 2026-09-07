@@ -599,6 +599,7 @@ router.post('/llm-config', requireSuperAdmin as RequestHandler, async (req: Requ
 
     for (const [k, v] of Object.entries(body) as [keyof LlmConfig, string][]) {
       if (KEY_FIELDS.includes(k) && !v) continue; // blank key field — preserve existing
+      if (KEY_FIELDS.includes(k) && typeof v === 'string' && v.startsWith('...')) continue; // masked display value — preserve existing
       (update as Record<string, string>)[k] = v;
     }
 

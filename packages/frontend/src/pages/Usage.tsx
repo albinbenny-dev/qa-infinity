@@ -411,7 +411,15 @@ function LlmConfigPanel() {
 
   async function handleApply() {
     try {
-      await save.mutateAsync({ provider, ...fields });
+      // Strip masked keys (e.g. "...XXXX") — only send a key if the user typed a new one.
+      // A masked value starts with "..." which is the display format from maskKey().
+      // Sending a masked value would overwrite the real encrypted key with garbage.
+      const isMasked = (v: string) => v.startsWith('...');
+      const payload: Partial<typeof fields> = { ...fields };
+      if (isMasked(payload.anthropicApiKey ?? ''))   delete payload.anthropicApiKey;
+      if (isMasked(payload.openrouterApiKey ?? ''))  delete payload.openrouterApiKey;
+      if (isMasked(payload.localLlmApiKey ?? ''))    delete payload.localLlmApiKey;
+      await save.mutateAsync({ provider, ...payload });
       setToast({ msg: 'LLM configuration saved successfully.', ok: true });
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to save configuration.';
