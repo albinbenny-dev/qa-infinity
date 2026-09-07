@@ -49,30 +49,36 @@ for TARBALL in "${TARBALLS[@]}"; do
   fi
 done
 
-# ── Update docker-compose.yml ─────────────────────────────────────────────────
+# ── Update docker-compose.yml to use latest tag (one-time; stays forever) ────
 echo ""
 echo "▶ Updating docker-compose.yml image tags ..."
 
 if [ -n "$LOADED_API" ]; then
-  # Replace the build: block for qa-api with image: tag, or update existing image:
-  if grep -q "image: qa-api:" docker-compose.yml; then
-    sed -i "s|image: qa-api:.*|image: $LOADED_API|" docker-compose.yml
-    echo "  ✔ qa-api image tag updated to $LOADED_API"
+  # Normalise any existing qa-api image tag (including old qa-infinity-qa-api:latest) to qa-api:latest
+  if grep -qE "image:.*qa-api" docker-compose.yml; then
+    sed -i "s|image:.*qa-api.*|image: qa-api:latest|" docker-compose.yml
+    echo "  ✔ qa-api → qa-api:latest"
+  elif grep -qE "image:.*qa-infinity-qa-api" docker-compose.yml; then
+    sed -i "s|image:.*qa-infinity-qa-api.*|image: qa-api:latest|" docker-compose.yml
+    echo "  ✔ qa-infinity-qa-api → qa-api:latest"
   else
     echo "  ⚠ Could not auto-update qa-api in docker-compose.yml."
-    echo "    Manually set:  image: $LOADED_API  under the qa-api service."
+    echo "    Manually add under the qa-api service:  image: qa-api:latest"
   fi
 fi
 
 if [ -n "$LOADED_UI" ]; then
-  if grep -q "image: qa-ui:" docker-compose.yml; then
-    sed -i "s|image: qa-ui:.*|image: $LOADED_UI|" docker-compose.yml
-    echo "  ✔ qa-ui image tag updated to $LOADED_UI"
+  if grep -qE "image:.*qa-ui|image:.*qa-infinity-qa-ui" docker-compose.yml; then
+    sed -i "s|image:.*qa-ui.*|image: qa-ui:latest|" docker-compose.yml
+    sed -i "s|image:.*qa-infinity-qa-ui.*|image: qa-ui:latest|" docker-compose.yml
+    echo "  ✔ qa-ui → qa-ui:latest"
   else
     echo "  ⚠ Could not auto-update qa-ui in docker-compose.yml."
-    echo "    Manually set:  image: $LOADED_UI  under the qa-ui service."
+    echo "    Manually add under the qa-ui service:  image: qa-ui:latest"
   fi
 fi
+
+echo "  ℹ Future hotfixes will load automatically — docker-compose.yml won't need editing again."
 
 # ── DB migration ──────────────────────────────────────────────────────────────
 echo ""

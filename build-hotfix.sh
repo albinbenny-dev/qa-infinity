@@ -48,9 +48,9 @@ mkdir -p "$OUT_DIR"
 if [ "$BUILD_API" = true ]; then
   echo ""
   echo "▶ Building qa-api:$COMMIT ..."
-  docker build -f packages/api/Dockerfile -t "qa-api:$COMMIT" .
+  docker build -f packages/api/Dockerfile -t "qa-api:$COMMIT" -t "qa-api:latest" .
   echo "▶ Saving qa-api image ..."
-  docker save "qa-api:$COMMIT" | gzip > "$OUT_DIR/qa-api-hotfix-$COMMIT.tar.gz"
+  docker save "qa-api:latest" | gzip > "$OUT_DIR/qa-api-hotfix-$COMMIT.tar.gz"
   API_SIZE=$(du -sh "$OUT_DIR/qa-api-hotfix-$COMMIT.tar.gz" | cut -f1)
   echo "✔ qa-api-hotfix-$COMMIT.tar.gz ($API_SIZE)"
 fi
@@ -58,9 +58,9 @@ fi
 if [ "$BUILD_UI" = true ]; then
   echo ""
   echo "▶ Building qa-ui:$COMMIT ..."
-  docker build -f packages/frontend/Dockerfile -t "qa-ui:$COMMIT" .
+  docker build -f packages/frontend/Dockerfile -t "qa-ui:$COMMIT" -t "qa-ui:latest" .
   echo "▶ Saving qa-ui image ..."
-  docker save "qa-ui:$COMMIT" | gzip > "$OUT_DIR/qa-ui-hotfix-$COMMIT.tar.gz"
+  docker save "qa-ui:latest" | gzip > "$OUT_DIR/qa-ui-hotfix-$COMMIT.tar.gz"
   UI_SIZE=$(du -sh "$OUT_DIR/qa-ui-hotfix-$COMMIT.tar.gz" | cut -f1)
   echo "✔ qa-ui-hotfix-$COMMIT.tar.gz ($UI_SIZE)"
 fi
