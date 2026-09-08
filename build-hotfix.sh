@@ -3,18 +3,21 @@
 # build-hotfix.sh — QA Infinity hotfix image builder
 #
 # Run this on the MAIN server (the one with source code and working internet).
-# It builds fresh Docker images for qa-api and qa-ui, saves them as .tar.gz
-# files, and generates a README with apply instructions.
+# It builds fresh Docker images, saves them as .tar.gz files, and generates
+# a README with apply instructions.
 #
 # Usage:
 #   chmod +x build-hotfix.sh
-#   ./build-hotfix.sh              # build both qa-api and qa-ui
-#   ./build-hotfix.sh --api-only   # skip qa-ui (faster if only API changed)
-#   ./build-hotfix.sh --ui-only    # skip qa-api
+#   ./build-hotfix.sh                # build qa-api + qa-ui (default)
+#   ./build-hotfix.sh --api-only     # skip qa-ui (faster if only API changed)
+#   ./build-hotfix.sh --ui-only      # skip qa-api
+#   ./build-hotfix.sh --runner       # build qa-api + qa-ui + qa-runner
+#   ./build-hotfix.sh --runner-only  # build qa-runner only (large ~1.5 GB)
 #
 # Output (in ./releases/<commit>/):
-#   qa-api-hotfix-<commit>.tar.gz
-#   qa-ui-hotfix-<commit>.tar.gz   (unless --api-only)
+#   qa-api-hotfix-<commit>.tar.gz     (unless --ui-only or --runner-only)
+#   qa-ui-hotfix-<commit>.tar.gz      (unless --api-only or --runner-only)
+#   qa-runner-hotfix-<commit>.tar.gz  (only with --runner or --runner-only)
 #   README-hotfix-<commit>.md
 # =============================================================================
 
@@ -25,12 +28,15 @@ DATE=$(date +%Y-%m-%d)
 OUT_DIR="./releases/$COMMIT"
 BUILD_API=true
 BUILD_UI=true
+BUILD_RUNNER=false
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 for arg in "$@"; do
   case $arg in
-    --api-only) BUILD_UI=false ;;
-    --ui-only)  BUILD_API=false ;;
+    --api-only)    BUILD_UI=false; BUILD_RUNNER=false ;;
+    --ui-only)     BUILD_API=false; BUILD_RUNNER=false ;;
+    --runner)      BUILD_RUNNER=true ;;
+    --runner-only) BUILD_API=false; BUILD_UI=false; BUILD_RUNNER=true ;;
   esac
 done
 
@@ -40,6 +46,7 @@ echo "  Commit : $COMMIT"
 echo "  Date   : $DATE"
 echo "  API    : $BUILD_API"
 echo "  UI     : $BUILD_UI"
+echo "  Runner : $BUILD_RUNNER"
 echo "========================================"
 
 mkdir -p "$OUT_DIR"
@@ -65,6 +72,16 @@ if [ "$BUILD_UI" = true ]; then
   echo "✔ qa-ui-hotfix-$COMMIT.tar.gz ($UI_SIZE)"
 fi
 
+if [ "$BUILD_RUNNER" = true ]; then
+  echo ""
+  echo "▶ Building qa-runner:$COMMIT (large image — this may take several minutes) ..."
+  docker build -f packages/runner/Dockerfile -t "qa-runner:$COMMIT" -t "qa-runner:latest" .
+  echo "▶ Saving qa-runner image ..."
+  docker save "qa-runner:latest" | gzip > "$OUT_DIR/qa-runner-hotfix-$COMMIT.tar.gz"
+  RUNNER_SIZE=$(du -sh "$OUT_DIR/qa-runner-hotfix-$COMMIT.tar.gz" | cut -f1)
+  echo "✔ qa-runner-hotfix-$COMMIT.tar.gz ($RUNNER_SIZE)"
+fi
+
 # ── Get recent commits for changelog ─────────────────────────────────────────
 CHANGELOG=$(git log --oneline -10 | sed 's/^/| /' | sed 's/ /  |  /' | awk '{print $0 " |"}')
 
@@ -77,6 +94,7 @@ cat > "$OUT_DIR/README-hotfix-$COMMIT.md" << README
 **Built images:**
 $([ "$BUILD_API" = true ] && echo "- \`qa-api-hotfix-$COMMIT.tar.gz\` ($API_SIZE)")
 $([ "$BUILD_UI" = true ] && echo "- \`qa-ui-hotfix-$COMMIT.tar.gz\` ($UI_SIZE)")
+$([ "$BUILD_RUNNER" = true ] && echo "- \`qa-runner-hotfix-$COMMIT.tar.gz\` ($RUNNER_SIZE)")
 
 ---
 
@@ -89,8 +107,9 @@ $(git log --oneline -10 | sed 's/^/- /')
 ## Step 1 — Transfer files to the target server
 
 \`\`\`bash
-scp $OUT_DIR/qa-api-hotfix-$COMMIT.tar.gz admin@<server-ip>:/data/
+$([ "$BUILD_API" = true ] && echo "scp $OUT_DIR/qa-api-hotfix-$COMMIT.tar.gz admin@<server-ip>:/data/")
 $([ "$BUILD_UI" = true ] && echo "scp $OUT_DIR/qa-ui-hotfix-$COMMIT.tar.gz admin@<server-ip>:/data/")
+$([ "$BUILD_RUNNER" = true ] && echo "scp $OUT_DIR/qa-runner-hotfix-$COMMIT.tar.gz admin@<server-ip>:/data/")
 scp $OUT_DIR/README-hotfix-$COMMIT.md admin@<server-ip>:/data/
 \`\`\`
 
@@ -99,8 +118,9 @@ scp $OUT_DIR/README-hotfix-$COMMIT.md admin@<server-ip>:/data/
 ## Step 2 — On the target server: load images
 
 \`\`\`bash
-docker load < /data/qa-api-hotfix-$COMMIT.tar.gz
+$([ "$BUILD_API" = true ] && echo "docker load < /data/qa-api-hotfix-$COMMIT.tar.gz")
 $([ "$BUILD_UI" = true ] && echo "docker load < /data/qa-ui-hotfix-$COMMIT.tar.gz")
+$([ "$BUILD_RUNNER" = true ] && echo "docker load < /data/qa-runner-hotfix-$COMMIT.tar.gz")
 \`\`\`
 
 ---
@@ -110,18 +130,17 @@ $([ "$BUILD_UI" = true ] && echo "docker load < /data/qa-ui-hotfix-$COMMIT.tar.g
 In the target server's \`docker-compose.yml\`, update the image tags:
 
 \`\`\`yaml
-# qa-api service — change image: line to:
-image: qa-api:$COMMIT
-
-$([ "$BUILD_UI" = true ] && printf "# qa-ui service — change image: line to:\nimage: qa-ui:$COMMIT")
+$([ "$BUILD_API" = true ] && printf "# qa-api service — change image: line to:\nimage: qa-api:$COMMIT\n")
+$([ "$BUILD_UI" = true ] && printf "# qa-ui service — change image: line to:\nimage: qa-ui:$COMMIT\n")
+$([ "$BUILD_RUNNER" = true ] && printf "# qa-runner service — change image: line to:\nimage: qa-runner:$COMMIT")
 \`\`\`
 
 Or if docker-compose.yml uses \`build:\` instead of \`image:\`, add/replace with:
 \`\`\`yaml
 services:
-  qa-api:
-    image: qa-api:$COMMIT
-$([ "$BUILD_UI" = true ] && printf "  qa-ui:\n    image: qa-ui:$COMMIT")
+$([ "$BUILD_API" = true ] && printf "  qa-api:\n    image: qa-api:$COMMIT\n")
+$([ "$BUILD_UI" = true ] && printf "  qa-ui:\n    image: qa-ui:$COMMIT\n")
+$([ "$BUILD_RUNNER" = true ] && printf "  qa-runner:\n    image: qa-runner:$COMMIT")
 \`\`\`
 
 ---
@@ -137,7 +156,7 @@ docker-compose exec qa-api sh -c "cd /app/packages/api && node_modules/.bin/pris
 ## Step 5 — Restart containers
 
 \`\`\`bash
-docker-compose up -d --force-recreate qa-api$([ "$BUILD_UI" = true ] && echo " qa-ui")
+docker-compose up -d --force-recreate$([ "$BUILD_API" = true ] && echo " qa-api")$([ "$BUILD_UI" = true ] && echo " qa-ui")$([ "$BUILD_RUNNER" = true ] && echo " qa-runner")
 \`\`\`
 
 ---
