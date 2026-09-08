@@ -671,7 +671,7 @@ const server = http.createServer(async (req, res) => {
       sendLine(vncClaim ? { type: 'vnc-session', token: vncClaim.token } : { type: 'vnc-busy' });
     }
 
-    const HARD_KILL_MS = 900_000;
+    const HARD_KILL_MS = Number(process.env.RUNNER_HARD_KILL_MS) || 900_000;
     let proc;
     let procDone = false;
 
