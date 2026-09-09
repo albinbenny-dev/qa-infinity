@@ -23,13 +23,13 @@
 #   ./release-k8s.sh --registry <path> --runner       # also build qa-runner
 #   ./release-k8s.sh --registry <path> --runner-only  # qa-runner only (~1.5 GB)
 #
-# Output (all files land in ../releases/k8s/, named with date+time+commit):
+# Output (all files land in ../releases/k8s-release/, named with date+time+commit):
 #   qa-api-k8s-YYYY-MM-DD_HHMM-<commit>.tar.gz     (unless --ui-only or --runner-only)
 #   qa-ui-k8s-YYYY-MM-DD_HHMM-<commit>.tar.gz      (unless --api-only or --runner-only)
 #   qa-runner-k8s-YYYY-MM-DD_HHMM-<commit>.tar.gz  (only with --runner or --runner-only)
 #   README-k8s-YYYY-MM-DD_HHMM-<commit>.md
 #
-# Output folder is OUTSIDE the repo (../releases/k8s) — same convention as
+# Output folder is OUTSIDE the repo (../releases/k8s-release) — same convention as
 # build-hotfix.sh's ../releases/hotfix — so tarballs are never committed to
 # git and don't bloat the SharePoint-synced repo folder.
 # =============================================================================
@@ -39,7 +39,7 @@ set -e
 REGISTRY=""
 COMMIT=$(git rev-parse --short HEAD)
 STAMP=$(date +%Y-%m-%d_%H%M)
-OUT_DIR="../releases/k8s"
+OUT_DIR="../releases/k8s-release"
 PREFIX="${STAMP}-${COMMIT}"
 BUILD_API=true
 BUILD_UI=true
@@ -150,10 +150,10 @@ Physical handover -- USB, internal file share, secure email. This machine
 does NOT need internet access, only a network path to \`${REGISTRY}\`:
 
 \`\`\`bash
-$([ "$BUILD_API" = true ] && echo "scp releases/k8s/qa-api-k8s-${PREFIX}.tar.gz admin@<jump-host>:/data/")
-$([ "$BUILD_UI" = true ] && echo "scp releases/k8s/qa-ui-k8s-${PREFIX}.tar.gz admin@<jump-host>:/data/")
-$([ "$BUILD_RUNNER" = true ] && echo "scp releases/k8s/qa-runner-k8s-${PREFIX}.tar.gz admin@<jump-host>:/data/")
-scp releases/k8s/README-k8s-${PREFIX}.md admin@<jump-host>:/data/
+$([ "$BUILD_API" = true ] && echo "scp releases/k8s-release/qa-api-k8s-${PREFIX}.tar.gz admin@<jump-host>:/data/")
+$([ "$BUILD_UI" = true ] && echo "scp releases/k8s-release/qa-ui-k8s-${PREFIX}.tar.gz admin@<jump-host>:/data/")
+$([ "$BUILD_RUNNER" = true ] && echo "scp releases/k8s-release/qa-runner-k8s-${PREFIX}.tar.gz admin@<jump-host>:/data/")
+scp releases/k8s-release/README-k8s-${PREFIX}.md admin@<jump-host>:/data/
 \`\`\`
 
 ---
