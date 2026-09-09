@@ -284,6 +284,7 @@
     <a class="nav-link sub" href="#tls-ingress">TLS / Ingress</a>
     <a class="nav-link sub" href="#cors-prod">CORS (Production)</a>
     <a class="nav-link sub" href="#k8s-hotfix">Shipping a K8s Hotfix</a>
+    <a class="nav-link sub" href="#k8s-multi-opco">Multiple OpCos</a>
     <a class="nav-link" href="#airgapped">Air-Gapped Deployment</a>
     <a class="nav-link" href="#ops-workflow">Day-to-Day Ops</a>
 
@@ -934,6 +935,21 @@ spec:
         <div class="callout-body"><strong>Why not <code>:latest</code> here, when <code>build-hotfix.sh</code> keeps it?</strong> <code>docker-compose up -d --force-recreate</code> always reloads the local image cache regardless of tag, so <code>:latest</code> is correct there. Kubernetes&rsquo; <code>imagePullPolicy: IfNotPresent</code> instead checks whether a node already has something tagged <code>:latest</code> cached &mdash; and skips pulling if so, even after the registry's <code>:latest</code> now points at different bytes. Every K8s hotfix needs a unique tag (the commit SHA) or the rollout silently keeps the old image. See <code>helm/qa-infinity/README.md</code> for the full explanation.</div>
       </div>
       <p>The Helm chart&rsquo;s <code>image.tag</code> value is <code>required</code> for exactly this reason &mdash; <code>helm install</code>/<code>upgrade</code> fails loudly if it's left unset, rather than silently reusing whatever image was already running.</p>
+
+      <h3 id="k8s-multi-opco">Shipping the Same Release to Multiple OpCos</h3>
+      <p>Different OpCos commonly run different registries &mdash; one on Harbor, another on Nexus &mdash; but need the exact same commit. Repeat <code>--registry</code> in one run: the image is built <strong>once</strong> and re-tagged/re-saved per OpCo, never rebuilt.</p>
+      <pre><code><span class="cmd">./release-k8s.sh</span> <span class="cm">`</span>
+  --registry opco1=harbor.opco1.local/qa-infinity <span class="cm">`</span>
+  --registry opco2=nexus.opco2.local:8082/qa-infinity</code><span class="pre-label">bash</span></pre>
+      <p>Output lands as one self-contained folder per OpCo under a single timestamped release directory &mdash; each with its own tarballs and its own <code>README.md</code> tailored to that OpCo&rsquo;s exact registry &mdash; plus a top-level <code>RELEASE-SUMMARY.md</code> listing every OpCo in that run:</p>
+      <pre><code>releases/k8s-release/&lt;stamp&gt;-&lt;commit&gt;/
+  RELEASE-SUMMARY.md
+  opco1/  (qa-api-k8s.tar.gz, README.md, ...)
+  opco2/  (qa-api-k8s.tar.gz, README.md, ...)</code><span class="pre-label">tree</span></pre>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">Hand each OpCo <strong>only its own subfolder</strong> &mdash; don&rsquo;t ship the whole release directory to a single team. The <code>label=</code> part of <code>--registry label=path</code> is optional; omit it and a folder name gets derived from the registry path instead (works, but uglier &mdash; e.g. <code>harbor-opco1-local-qa-infinity/</code>).</div>
+      </div>
     </section>
 
     <hr>

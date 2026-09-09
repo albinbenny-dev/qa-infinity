@@ -70,11 +70,42 @@ loudly if you forget it, rather than silently reusing a stale image.
 This is the common case for this project's client deployments. See
 `release-k8s.sh` — it builds locally (where you have internet), saves each
 image to a tarball, and generates a README with the exact `docker load` +
-`docker tag` + `docker push` (into *their* internal registry, from *their*
-side) + `helm upgrade` commands for that specific release. The physical
-handover is the tarball (USB, file share, secure email) — same mechanism
+`docker push` (into *their* internal registry, from *their* side) +
+`helm upgrade` commands for that specific release. The physical handover
+is the tarball (USB, file share, secure email) — same mechanism
 `build-hotfix.sh`/`release.sh` already use, just paired with registry-push
 instructions instead of docker-compose-restart instructions.
+
+### Shipping the same release to multiple OpCos
+
+Different OpCos commonly run different registries (one on Harbor, another
+on Nexus, etc.) but need the exact same commit. Repeat `--registry` in one
+run — the image is built **once** and re-tagged/re-saved per OpCo, not
+rebuilt:
+
+```bash
+./release-k8s.sh \
+  --registry opco1=harbor.opco1.local/qa-infinity \
+  --registry opco2=nexus.opco2.local:8082/qa-infinity
+```
+
+Output lands as one folder per OpCo under a single timestamped release
+directory, each self-contained with its own tarballs and its own
+`README.md` (load/push/helm-upgrade steps tailored to that OpCo's exact
+registry) — plus a top-level `RELEASE-SUMMARY.md` listing every OpCo in
+that run:
+
+```
+releases/k8s-release/<stamp>-<commit>/
+  RELEASE-SUMMARY.md
+  opco1/  (qa-api-k8s.tar.gz, README.md, ...)
+  opco2/  (qa-api-k8s.tar.gz, README.md, ...)
+```
+
+Hand each OpCo only its own subfolder — don't ship the whole release
+directory to a single team. The `label=` part of `--registry label=path` is
+optional; omit it and a folder name gets derived from the registry path
+instead (uglier, but works).
 
 ## Registry examples — different teams, different registries
 
