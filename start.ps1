@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # QA Infinity — Windows PowerShell Startup Script
 #
 # First time:  .\start.ps1          (sets up .env, builds images, starts stack)
