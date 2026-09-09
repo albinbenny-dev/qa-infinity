@@ -76,6 +76,40 @@ handover is the tarball (USB, file share, secure email) — same mechanism
 `build-hotfix.sh`/`release.sh` already use, just paired with registry-push
 instructions instead of docker-compose-restart instructions.
 
+## Registry examples — different teams, different registries
+
+`--registry` (release-k8s.sh) and `image.registry` (this chart) are plain
+string prefixes — nothing here is Harbor-specific despite the examples
+elsewhere in this doc. `docker push`/`docker load` are standard Docker
+Registry API v2 operations that Harbor, Nexus, ECR, ACR, and GitLab's
+registry all implement the same way. Whatever full path (port included)
+your team's registry needs is exactly what you pass:
+
+| Registry | `--registry` / `image.registry` value | Login command (once, before pushing) |
+|---|---|---|
+| Harbor | `harbor.client.local/qa-infinity` | `docker login harbor.client.local` |
+| Nexus (Docker-hosted repo) | `nexus.client.local:8082/qa-infinity` — Nexus typically routes each Docker repo through its own port | `docker login nexus.client.local:8082` |
+| AWS ECR | `123456789012.dkr.ecr.ap-south-1.amazonaws.com/qa-infinity` | `aws ecr get-login-password \| docker login --username AWS --password-stdin <registry>` |
+| Azure ACR | `myregistry.azurecr.io/qa-infinity` | `az acr login --name myregistry` |
+| GitLab Container Registry | `registry.gitlab.com/<group>/qa-infinity` | `docker login registry.gitlab.com` |
+| Plain Docker Registry v2 | `registry.client.local:5000/qa-infinity` | `docker login registry.client.local:5000` |
+
+If the registry requires auth for **pulling** too (kubelet, not just your
+own `docker push`), create a standard `docker-registry`-type Secret and
+reference it via `image.pullSecrets` — same mechanism regardless of vendor:
+
+```bash
+kubectl create secret docker-registry qa-infinity-pull-secret \
+  --docker-server=<registry> --docker-username=<user> --docker-password=<pass> \
+  --namespace qa-infinity
+```
+```yaml
+# values-secrets.yaml or --set
+image:
+  pullSecrets:
+    - name: qa-infinity-pull-secret
+```
+
 ## Values you'll almost always need to set per environment
 
 | Value | Why |
