@@ -1279,6 +1279,29 @@ router.post(
       const testScripts = files.filter(f => f.isTestScript);
       const imported: { filename: string; relPath: string; testCasesCreated: number }[] = [];
 
+      // Seed the auto-TC-ID counter numerically, once, up front — same approach as
+      // the manual bulk-create route (testCases.ts POST /). We used to re-derive
+      // "next number" per file via `orderBy: { tcId: 'desc' }`, but that's a DB-level
+      // STRING sort: once IDs cross from 3 digits to 4 ("...-999" → "...-1000"),
+      // "999" lexicographically outranks "1000" forever, so every subsequent file
+      // recomputed the same colliding ID, hit the @@unique([projectId, tcId])
+      // constraint, and silently dropped both its Script and TestCase row into
+      // `warnings`. Computing the max numerically once and incrementing in memory
+      // avoids both the bug and ~2000 redundant per-file queries.
+      const tcPrefix = slug.toUpperCase().slice(0, 6);
+      let nextTcNum = 1;
+      if (createTCs) {
+        const existingTcs = await prisma.testCase.findMany({
+          where: { projectId },
+          select: { tcId: true },
+        });
+        const maxTcNum = existingTcs.reduce((max, tc) => {
+          const m = tc.tcId.match(/(\d+)$/);
+          return m ? Math.max(max, parseInt(m[1], 10)) : max;
+        }, 0);
+        nextTcNum = maxTcNum + 1;
+      }
+
       for (const f of testScripts) {
         // relPath like "TestCases/Geo Hierarchy/TC01_Create_Region.robot"
         const parts = f.relPath.split('/');
@@ -1293,14 +1316,7 @@ router.post(
           const autoCreateTc = async (): Promise<{ id: string } | null> => {
             if (!createTCs) return null;
             const title = filename.replace(/\.(robot|spec\.ts|spec\.js)$/, '');
-            const maxTc = await prisma.testCase.findFirst({
-              where: { projectId },
-              orderBy: { tcId: 'desc' },
-              select: { tcId: true },
-            });
-            const prefix = slug.toUpperCase().slice(0, 6);
-            const nextNum = maxTc ? (parseInt(maxTc.tcId.replace(/\D/g, '') || '0', 10) + 1) : 1;
-            const newTcId = `TC-${prefix}-${String(nextNum).padStart(3, '0')}`;
+            const newTcId = `TC-${tcPrefix}-${String(nextTcNum++).padStart(3, '0')}`;
             return prisma.testCase.create({
               data: { projectId, tcId: newTcId, title, useCaseTag, steps: '', expectedResult: '' },
             });
