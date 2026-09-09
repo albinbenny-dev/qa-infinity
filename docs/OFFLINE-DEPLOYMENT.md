@@ -153,10 +153,11 @@ docker compose up -d
 docker compose ps
 ```
 
-## Do NOT use `release-deploy.sh` for this
+## A note on retired scripts
 
-That script (and the `release-push.ps1` it references) is **stale** — it
-operates on a `qa-infinity.db` SQLite file from before this app migrated to
-Postgres. The current schema is Postgres-only (`schema.prisma` →
-`provider = "postgresql"`), and `release-push.ps1` no longer exists in this
-repo. Use `deploy.ps1 -Mode release` as described above instead.
+`release-deploy.sh` and `deploy.sh` have been removed from the repo. The
+former operated on a `qa-infinity.db` SQLite file from before this app
+migrated to Postgres (`schema.prisma` → `provider = "postgresql"`) and
+depended on a `release-push.ps1` that was never committed; the latter
+targeted a different host via rsync and is no longer used. Use
+`deploy.ps1 -Mode release` as described above instead.
