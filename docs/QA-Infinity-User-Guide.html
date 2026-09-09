@@ -255,7 +255,7 @@
       <div class="logo-icon">&#9854;</div>
       <div>
         <div class="logo-text">QA Infinity</div>
-        <div class="logo-sub">User Guide v1.2</div>
+        <div class="logo-sub">User Guide v2.1</div>
       </div>
     </a>
   </div>
@@ -297,9 +297,19 @@
     <a class="nav-link sub" href="#seed-tcs">Seed TCs</a>
     <a class="nav-link" href="#tc-library">TC Library</a>
     <a class="nav-link" href="#scripts">Scripts</a>
-    <a class="nav-link" href="#test-runs">Test Runs</a>
+    <a class="nav-link sub" href="#script-generation">Generating Scripts</a>
+    <a class="nav-link sub" href="#script-import">Importing Legacy Scripts</a>
+    <a class="nav-link" href="#test-runs">Test Runs &amp; Execution</a>
+    <a class="nav-link sub" href="#suites">Suites &amp; Scheduling</a>
     <a class="nav-link" href="#healing">Healing</a>
     <a class="nav-link" href="#skills">Skills</a>
+    <a class="nav-link sub" href="#feature-groups">Feature Groups</a>
+    <a class="nav-link" href="#chrome-extension">Chrome Extension</a>
+    <a class="nav-link sub" href="#ext-install">Download &amp; Install</a>
+    <a class="nav-link sub" href="#ext-locator">Locator Picker</a>
+    <a class="nav-link sub" href="#ext-recorder">Flow Recorder</a>
+    <a class="nav-link sub" href="#ext-skill-login">Record a Login Skill</a>
+    <a class="nav-link sub" href="#ext-skill-nav">Record a Navigation Skill</a>
     <a class="nav-link" href="#reports">Reports</a>
     <a class="nav-link" href="#chat">AI Chat</a>
 
@@ -323,7 +333,7 @@
   <div class="top-bar">
     <span class="top-bar-title">qa-infinity / docs</span>
     <div style="display:flex;gap:8px;align-items:center">
-      <span class="badge">&#9854; v1.0</span>
+      <span class="badge">&#9854; v2.1</span>
       <button class="theme-btn" onclick="toggleTheme()">&#9728; / &#9790; Theme</button>
     </div>
   </div>
@@ -938,6 +948,56 @@ spec:
       <h3>Prerequisites on the Target Server</h3>
       <p>Docker Engine + Docker Compose v2 already installed &mdash; the one piece this doesn&rsquo;t handle, since if the server has zero internet Docker itself has to come from an offline installer or their own IT/imaging process. 20 GB free disk, 8 GB RAM minimum. A way to get files onto the box: SCP over a reachable network path, or physically via USB if there&rsquo;s truly no network path.</p>
 
+      <h3 id="deploy-modes">All Deploy Modes Explained</h3>
+      <p>The <code>deploy.ps1</code> script supports five modes. Only <code>package</code> and <code>package -AppOnly</code> are relevant for air-gapped handoffs &mdash; the others require direct SSH/network access to the server.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mode</th><th>What it does</th><th>Server needs internet?</th><th>SSH required?</th><th>Zip size</th><th>When to use</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>sync</code> <span class="tag tag-cyan">DEFAULT</span></td>
+              <td>Pushes local commits to GitHub, then SSH&rsquo;s into the server and runs <code>git pull &amp;&amp; docker compose build</code>. Docker rebuilds only the changed layers.</td>
+              <td>Yes &mdash; needs GitHub + npm</td>
+              <td>Yes</td>
+              <td>&mdash;</td>
+              <td>Routine code updates to your own internet-connected server. Fastest option (~3&ndash;5 min).</td>
+            </tr>
+            <tr>
+              <td><code>release</code></td>
+              <td>Builds all images locally, exports them as tarballs, SCPs the tarballs + compose files to the server, and loads them via <code>docker load</code>.</td>
+              <td>No</td>
+              <td>Yes</td>
+              <td>&mdash; (streamed)</td>
+              <td>First-time setup on any server, or after runner/dependency changes, when you have SSH access.</td>
+            </tr>
+            <tr>
+              <td><code>full</code></td>
+              <td>Everything in <code>release</code>, plus a PostgreSQL dump of your local DB is transferred and restored on the remote.</td>
+              <td>No</td>
+              <td>Yes</td>
+              <td>&mdash;</td>
+              <td>Seeding a fresh remote server with your existing local data.</td>
+            </tr>
+            <tr>
+              <td><code>package</code> <span class="tag tag-green">AIR-GAPPED</span></td>
+              <td>Builds all four images locally, saves them to tarballs, and zips everything into a single file you hand over manually. No SSH or SCP at any point.</td>
+              <td>No</td>
+              <td>No</td>
+              <td>~2.5 GB</td>
+              <td>First-time install on a completely isolated server. Send the zip via USB or internal file share.</td>
+            </tr>
+            <tr>
+              <td><code>package -AppOnly</code> <span class="tag tag-green">AIR-GAPPED</span></td>
+              <td>Same as <code>package</code> but only builds api + ui + runner. Postgres and redis are skipped (already on server from prior full package).</td>
+              <td>No</td>
+              <td>No</td>
+              <td>~300&ndash;500 MB</td>
+              <td>Every routine code update after the first full install. Much smaller and faster.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <h3>Build &amp; Package</h3>
       <p>If you have <strong>SSH/SCP access</strong> to their server, use <strong>release mode</strong> &mdash; it builds, transfers, and starts everything in one shot:</p>
       <pre><code><span class="cmd">.\deploy.ps1</span> -Mode release -SSH &lt;new-team-ssh-alias&gt; -RemoteDir /opt/qa-infinity <span class="cm">`</span>
@@ -1202,41 +1262,361 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 /opt/rfbrowser/bin/python -m Browser.entr
     <!-- SCRIPTS -->
     <section class="section" id="scripts">
       <h2><span class="h2-icon">&#128220;</span> Scripts</h2>
-      <p>The Scripts page shows all Robot Framework scripts generated from approved test cases. Scripts are automatically written when TCs are saved after generation.</p>
-      <h3>Script Structure</h3>
-      <pre><code>scripts/
-&#9492;&#9472;&#9472; <span class="key">&lt;project-slug&gt;/</span>
-    &#9492;&#9472;&#9472; <span class="key">&lt;use-case-tag&gt;/</span>
-        &#9500;&#9472;&#9472; TC-AIR-001_Login_to_dashboard.robot
-        &#9500;&#9472;&#9472; TC-AIR-002_Create_new_order.robot
-        &#9492;&#9472;&#9472; resources/common.resource</code><span class="pre-label">tree</span></pre>
-      <h3>Left Panel Tabs</h3>
-      <ul>
-        <li><strong>Use Cases</strong> &mdash; browse scripts organized by feature/use-case, mirroring the TC Library.</li>
-        <li><strong>All Scripts</strong> &mdash; flat list of all scripts with run status and pass/fail badge.</li>
+      <p>The Scripts page shows all Robot Framework (<code>.robot</code>) and Playwright TypeScript (<code>.spec.ts</code>) scripts in the project, generated from test cases or imported from legacy suites.</p>
+
+      <h3>TC List Badges</h3>
+      <p>The top of the TC list shows <strong>Scripted</strong> and <strong>Pending</strong> badge counters. Click either badge to instantly filter the list to only scripted or only unscripted test cases.</p>
+
+      <h3 id="script-generation">Generating Scripts</h3>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Select test cases</div>
+            <div class="step-desc">Use the <strong>Pending</strong> badge filter to show only unscripted TCs. Select one or more using the checkboxes.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Generate Scripts</strong></div>
+            <div class="step-desc">The Generate N Scripts modal opens. Choose the framework (Robot Framework or Playwright TypeScript). Select skills from the skill picker &mdash; grouped by feature group, with matching skills pre-selected.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Monitor job progress</div>
+            <div class="step-desc">Jobs are queued and processed with up to 3 concurrent workers. Each script moves through the states below.</div>
+          </div>
+        </li>
       </ul>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>QUEUED</code></td><td>Waiting for a worker slot.</td></tr>
+            <tr><td><code>GENERATING</code></td><td>AI agent is writing the script.</td></tr>
+            <tr><td><code>GENERATED</code></td><td>Script written; awaiting automated verification.</td></tr>
+            <tr><td><code>QUEUED_VERIFY</code></td><td>Queued for the verification pass.</td></tr>
+            <tr><td><code>VERIFYING</code></td><td>Automated linting and dry-run check in progress.</td></tr>
+            <tr><td><code>VERIFIED</code></td><td>Script passed all checks. Ready to run.</td></tr>
+            <tr><td><code>MANUAL_REVIEW</code></td><td>Automated checks flagged issues. Human review recommended.</td></tr>
+            <tr><td><code>FAILED</code></td><td>Generation or verification failed. Retry available.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <h3>Script Editor</h3>
       <p>Click any script to open it in the Monaco editor. Changes are saved to the bind-mounted <code>scripts/</code> folder and picked up immediately by the runner &mdash; no rebuild needed.</p>
+      <p>After a script passes, click <strong>&#128278; Ref Skill</strong> in the editor toolbar to promote it as a Reference Script skill for future generation in the same feature group.</p>
+      <h3>Generation Hints</h3>
+      <p>Click the <strong>Hints</strong> icon on any TC in the Scripts list to store persistent generation instructions for that TC (e.g. <em>&ldquo;always use <code>role=</code> selectors for this form&rdquo;</em>). Hints are automatically pre-filled into the <strong>Additional Context</strong> field every time a script is generated for that TC &mdash; no need to retype them each time.</p>
+    </section>
+
+    <!-- LEGACY SCRIPT IMPORT -->
+    <section class="section" id="script-import">
+      <h2><span class="h2-icon">&#128229;</span> Importing Legacy Scripts</h2>
+      <p>QA Infinity can import existing Robot Framework (<code>.robot</code>) and Playwright TypeScript / JavaScript (<code>.spec.ts</code>, <code>.spec.js</code>) scripts from any legacy automation suite &mdash; without rewriting them from scratch.</p>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>SeleniumLibrary scripts are auto-converted.</strong> If your legacy <code>.robot</code> files use <code>SeleniumLibrary</code>, QA Infinity automatically translates keyword calls to RF Browser (Playwright-based) equivalents on import. Review the converted script to verify the translation.</div>
+      </div>
+
+      <h3>Import Modes</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mode</th><th>What It Does</th><th>Best For</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Create TC from Script</strong></td>
+              <td>Uploads the script and uses AI to automatically create a Draft test case with title and steps extracted from the script content. Script is linked to the new TC.</td>
+              <td>Well-documented legacy scripts where you want a matching TC generated automatically.</td>
+            </tr>
+            <tr>
+              <td><strong>Link to Existing TC</strong></td>
+              <td>Uploads the script and links it to a TC you pick from the library by ID or title. No AI extraction &mdash; the TC already exists.</td>
+              <td>When you have already created TCs manually and just need to attach scripts to them.</td>
+            </tr>
+            <tr>
+              <td><strong>Import Standalone</strong></td>
+              <td>Imports the script with no TC linkage. Appears in the Scripts page as a custom script available for execution or reference.</td>
+              <td>When you want the script available for reference or execution but don&rsquo;t need it tied to a TC yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Importing a Single Script File</h3>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Import Script</strong> on the Scripts page</div>
+            <div class="step-desc">The Import Script button is in the toolbar at the top-right of the Scripts page.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Select an import mode</div>
+            <div class="step-desc">Choose Create TC from Script, Link to Existing TC, or Import Standalone (see table above).</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Upload your file</div>
+            <div class="step-desc">Drag-and-drop or browse for your <code>.robot</code>, <code>.spec.ts</code>, or <code>.spec.js</code> file. Maximum 2 MB per file. If you chose &ldquo;Link to Existing TC&rdquo;, search for the TC by ID or title.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Import</strong></div>
+            <div class="step-desc">The script is uploaded, processed, and appears in the project. SeleniumLibrary keywords are auto-converted to RF Browser equivalents.</div>
+          </div>
+        </li>
+      </ul>
+
+      <h3>Importing a Full RF Project (ZIP)</h3>
+      <p>For a structured Robot Framework project with resource files, keyword libraries, and test data &mdash; import the entire folder as a ZIP archive. The full directory structure is preserved inside QA Infinity.</p>
+
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">
+          <strong>Prepare your folder before zipping &mdash; these three steps prevent the most common import failures:</strong>
+          <ol style="margin:10px 0 0 0;padding-left:20px;line-height:2">
+            <li>
+              <strong>Use relative paths everywhere.</strong>
+              Replace any hardcoded Windows paths (e.g. <code>C:\Users\john\project\resources\keywords.resource</code>) with project-relative paths (e.g. <code>resources/keywords.resource</code>).
+              QA Infinity runs scripts inside a Linux container &mdash; absolute Windows paths will cause an immediate <code>FileNotFoundError</code> at runtime. Search your <code>.robot</code> files for <code>C:\</code> or <code>D:\</code> before zipping.
+            </li>
+            <li>
+              <strong>Delete output and artifact folders.</strong>
+              Remove <code>output/</code>, <code>results/</code>, <code>logs/</code>, <code>screenshots/</code>, <code>reports/</code>, and any other generated folders before creating the ZIP. These add tens of megabytes, slow the upload, and can confuse the import parser. A clean project folder typically zips to under 5 MB.
+            </li>
+            <li>
+              <strong>Validate your scripts locally before importing.</strong>
+              Run <code>robot --dryrun tests/</code> (Robot Framework) or <code>npx playwright test --list</code> (Playwright) from the project root. Fix any syntax errors or broken imports the dry-run flags before uploading &mdash; errors that only surface during a real run are much harder to diagnose inside QA Infinity.
+            </li>
+          </ol>
+        </div>
+      </div>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Zip your project folder</div>
+            <div class="step-desc">Include all <code>.robot</code> files, resource files (<code>.resource</code>), keyword libraries, and test data. Exclude output/results/logs folders (see checklist above). Maximum archive size: 2 GB.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Scripts page &rarr; Import Script &rarr; <strong>Import Folder (ZIP)</strong></div>
+            <div class="step-desc">Upload the ZIP. QA Infinity extracts it preserving the folder hierarchy. Imported scripts appear organised by folder in the Scripts page.</div>
+          </div>
+        </li>
+      </ul>
+
+      <!-- TC ID TAGGING — CRITICAL SECTION -->
+      <h3>&#128204; TC ID Tagging &mdash; Required for Correct Per-Test Reporting</h3>
+
+      <div class="callout danger">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">
+          <strong>Without TC ID tags, all test cases in a .robot file will show FAILED if even one test fails.</strong>
+          QA Infinity maps execution results back to individual test cases using the <code>[Tags]</code> field in each Robot Framework test case block. If the tag is missing, the tool has no way to distinguish which test passed and which failed &mdash; so it falls back to the file-level exit code and marks every TC in the file as FAILED.
+        </div>
+      </div>
+
+      <p>Follow this four-step workflow for any legacy Selenium or Robot Framework script import to ensure individual test case results are reported correctly:</p>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Prepare your master test cases and import them via Excel</div>
+            <div class="step-desc">
+              Before importing any scripts, create your test cases in the TC Library using the <strong>Import Excel</strong> function.
+              <br><br>
+              <strong>If your team already has TC IDs in an offline Excel sheet</strong> (e.g. <code>TC-AIRTEL-161</code>, <code>TC-AIRTEL-162</code>), include a <strong>TC ID column</strong> in the Excel file when importing. The tool will retain your existing IDs rather than auto-assigning new ones &mdash; so the IDs you have already used in your <code>.robot</code> files' <code>[Tags]</code> will match exactly after import. No renaming needed.
+              <br><br>
+              If no TC ID column is provided, the tool auto-assigns IDs. In that case, note the assigned IDs and update the <code>[Tags]</code> in your <code>.robot</code> files to match before importing the ZIP.
+              <br><br>
+              <em>TC Library &rarr; Import &rarr; Upload Excel &rarr; Map columns (map your TC ID column) &rarr; Import</em>
+            </div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Add the TC ID to <code>[Tags]</code> in each Robot Framework test case</div>
+            <div class="step-desc">
+              Open each <code>.robot</code> file and add a <code>[Tags]</code> line containing the matching TC ID inside every <code>*** Test Cases ***</code> block. The TC ID must match exactly (including case) what is shown in the TC Library.
+            </div>
+          </div>
+        </li>
+      </ul>
+
+      <p>Example &mdash; a <code>.robot</code> file with two test cases, each tagged with its TC ID:</p>
+      <pre><code><span class="kw">*** Test Cases ***</span>
+<span class="str">TC06_Deactivate_Parent_With_Active_Child_Blocked</span>
+    <span class="cm">[Tags]    TC-AIRTEL-161</span>
+    Open Browser    ${URL}    chrome
+    Login To Application    ${USERNAME}    ${PASSWORD}
+    Navigate To Customer Management
+    Select Parent Account    PARENT-001
+    Click Deactivate
+    Verify Error Message    Cannot deactivate: active child accounts exist
+    [Teardown]    Close Browser
+
+<span class="str">TC08_Delete_Parent_Designation_With_Child_Blocked</span>
+    <span class="cm">[Tags]    TC-AIRTEL-162</span>
+    Open Browser    ${URL}    chrome
+    Login To Application    ${USERNAME}    ${PASSWORD}
+    Navigate To Designation Management
+    Select Parent Designation    DESIG-001
+    Click Delete
+    Verify Error Message    Cannot delete: child designations are linked
+    [Teardown]    Close Browser</code><span class="pre-label">.robot</span></pre>
+
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body">
+          <strong>One TC ID per test case block.</strong> If a single <code>.robot</code> file contains multiple <code>*** Test Cases ***</code> blocks (a suite file), every block must have its own unique <code>[Tags]    TC-AIRTEL-XXX</code> line. The TC ID in <code>[Tags]</code> is how QA Infinity knows which test case result belongs to which TC in the library.
+        </div>
+      </div>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Import the ZIP &mdash; the tool maps scripts to TCs automatically</div>
+            <div class="step-desc">
+              Once your <code>.robot</code> files have the correct <code>[Tags]</code>, zip the project and import it via <strong>Scripts &rarr; Import Script &rarr; Import Folder (ZIP)</strong>.
+              <br><br>
+              QA Infinity scans every test case block in the uploaded scripts, reads the <code>[Tags]</code> field, and automatically links each test to the matching TC ID in the library. No manual linking needed.
+              <br><br>
+              <strong>To verify the mapping was successful:</strong> go to the <strong>TC Library</strong>. Any TC that has been linked to a script will show a <strong>&#128279; link icon</strong> next to its TC ID. If the link icon is missing, the tag in the <code>.robot</code> file is either absent or does not match the TC ID exactly.
+            </div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Run &mdash; results are reported per test case, not per file</div>
+            <div class="step-desc">
+              When you execute the suite, QA Infinity reads the individual PASS / FAIL result for each test case from the RF <code>output.xml</code> and maps it back to the correct TC via its tag. Each TC in the run report shows its own result independently &mdash; a failing test in a suite file does <strong>not</strong> mark all other tests in the file as FAILED.
+              <br><br>
+              Without the tag, the tool can only see the file-level exit code &mdash; fail anywhere = fail everywhere.
+            </div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body">
+          <strong>Quick checklist before importing a legacy script ZIP:</strong>
+          <ol style="margin:10px 0 0 0;padding-left:20px;line-height:2.2">
+            <li>All master TCs imported to the TC Library via Excel &mdash; TC IDs assigned &#10003;</li>
+            <li>Every <code>*** Test Cases ***</code> block in every <code>.robot</code> file has <code>[Tags]    TC-AIRTEL-XXX</code> &#10003;</li>
+            <li>TC IDs in <code>[Tags]</code> match exactly what the TC Library shows &#10003;</li>
+            <li>After import: TC Library shows &#128279; link icon next to each mapped TC &#10003;</li>
+          </ol>
+        </div>
+      </div>
+
+      <h3>After Import &mdash; Recommended Next Steps</h3>
+      <ol>
+        <li>Review imported scripts in the script editor. The editor highlights syntax issues and locator mismatches.</li>
+        <li>Run the imported scripts against a non-production environment to establish a baseline pass rate.</li>
+        <li>For scripts in <code>MANUAL_REVIEW</code> state, use the AI-assisted fix: open the script &rarr; <strong>Fix with AI</strong> &rarr; describe the problem.</li>
+        <li>Once a script is verified and passing, click <strong>&#128278; Ref Skill</strong> to promote it as a Reference Script skill for the feature group.</li>
+        <li>Create a Suite and set a nightly schedule to run the imported scripts automatically (see <a href="#suites">Suites &amp; Scheduling</a>).</li>
+      </ol>
+
+      <h3>Supported File Formats</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Format</th><th>Extension</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Robot Framework</td><td><code>.robot</code></td><td>Full support. SeleniumLibrary keywords auto-converted to RF Browser on import.</td></tr>
+            <tr><td>Playwright TypeScript</td><td><code>.spec.ts</code></td><td>Full support. No conversion needed.</td></tr>
+            <tr><td>Playwright JavaScript</td><td><code>.spec.js</code></td><td>Full support. No conversion needed.</td></tr>
+            <tr><td>ZIP Archive</td><td><code>.zip</code></td><td>Must contain a valid RF or Playwright project structure. Up to 2 GB.</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- TEST RUNS -->
     <section class="section" id="test-runs">
-      <h2><span class="h2-icon">&#9654;&#65039;</span> Test Runs</h2>
-      <p>Execute your Robot Framework scripts against the target application.</p>
-      <h3>Running a Single Script</h3>
+      <h2><span class="h2-icon">&#9654;&#65039;</span> Test Runs &amp; Execution</h2>
+      <p>Execute test cases against a configured environment and monitor results in real time via WebSocket live logs.</p>
+
+      <h3>Running Tests Manually</h3>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Select test cases on the Execution page</div>
+            <div class="step-desc">Use the use-case filter to narrow the TC list. Select one or more TCs using the checkboxes.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Choose environment and parallel workers</div>
+            <div class="step-desc">Select the target environment from the dropdown. Set the number of parallel workers (1&ndash;8). Higher values speed up large runs but require more CPU on the runner host.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Run</strong></div>
+            <div class="step-desc">A run record is created and a WebSocket connection streams live logs to the right panel. The progress bar shows % complete, pass count, and fail count in real time.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout info">
+        <span class="callout-icon">&#9654;&#65039;</span>
+        <div class="callout-body"><strong>Cancelling a run.</strong> Click the <strong>Cancel</strong> button in the Execution Monitor panel to stop the active run immediately. The run status transitions to <code>CANCELLED</code>. Partial results up to the point of cancellation are saved.</div>
+      </div>
+
+      <h3 id="suites">Suites &amp; Scheduling</h3>
+      <p>Suites are named, saved collections of test cases with defined execution stages and modes. Use suites for scheduled regressions or standardised smoke/regression packs.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Concept</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Stage order</strong></td><td>Suites execute stages in the defined order. The order is honoured exactly &mdash; reordering stages in the UI changes execution sequence.</td></tr>
+            <tr><td><strong>Mode</strong></td><td>Each stage can run in <em>sequential</em> or <em>parallel</em> mode. Parallel mode runs all TCs in that stage concurrently.</td></tr>
+            <tr><td><strong>Schedule</strong></td><td>Add a cron expression to a suite (e.g. <code>0 1 * * *</code> for 01:00 am daily) to run it automatically. Results appear in the Runs history with pass-rate trends.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Setting Up a Nightly Regression</h3>
       <ol>
-        <li>Open the Scripts page and find the script.</li>
-        <li>Click <strong>&#9654; Run</strong>.</li>
-        <li>Select the environment (Dev / Staging / UAT).</li>
-        <li>Click <strong>Execute</strong>.</li>
+        <li>Go to <strong>Suites</strong> and create or open a suite.</li>
+        <li>Add the test cases you want to run nightly.</li>
+        <li>Click <strong>Add Schedule</strong> and enter a cron expression.</li>
+        <li>Select the target environment and click <strong>Save</strong>.</li>
       </ol>
-      <h3>Running a Suite</h3>
-      <ol>
-        <li>Go to <strong>Suites</strong> and create a suite by selecting scripts to include.</li>
-        <li>Click <strong>Run Suite</strong> and monitor via the <strong>Runs</strong> page.</li>
-      </ol>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Schedules survive restarts.</strong> All configured schedules are stored in the database and automatically reloaded when the API container restarts or is updated. No manual reconfiguration is needed after a <code>./start.sh --build</code> or container restart.</div>
+      </div>
+
       <h3>Watching Tests Live</h3>
-      <p>Open <code>http://localhost:6180</code> to see the noVNC stream &mdash; a live view of Chromium inside the runner container as tests execute.</p>
+      <p>Open <code>http://localhost:6180</code> to see the noVNC stream &mdash; a live view of Chromium inside the runner container as tests execute. Multiple active runs appear in the job queue panel; click a run to switch the monitored view.</p>
     </section>
 
     <!-- HEALING -->
@@ -1264,20 +1644,61 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 /opt/rfbrowser/bin/python -m Browser.entr
       <h3>Skill Types</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Type</th><th>Description</th></tr></thead>
+          <thead><tr><th>Type</th><th>What It Contains</th><th>When to Create</th></tr></thead>
           <tbody>
-            <tr><td><strong>Login</strong> <span class="tag tag-amber">mandatory</span></td><td>Teaches the AI your login flow. Required for live screen capture. Stores username/password field selectors.</td></tr>
-            <tr><td><strong>Navigation</strong></td><td>Records how to reach specific pages (menu paths, URL patterns)</td></tr>
-            <tr><td><strong>Form Fill</strong></td><td>Captures interactions with complex forms, dropdowns, date pickers</td></tr>
-            <tr><td><strong>API Auth</strong></td><td>Stores API authentication patterns (Bearer tokens, Basic auth)</td></tr>
-            <tr><td><strong>Custom</strong></td><td>Freeform instructions for any repeatable sequence</td></tr>
+            <tr><td><strong>UI Flow</strong> <span class="tag tag-amber">Login = mandatory</span></td><td>Step-by-step navigation paths, real selectors, modal/panel state transitions. Login UI_FLOW skills are the mandatory login skill.</td><td>Every major user journey. Login skill is required before live screen capture.</td></tr>
+            <tr><td><strong>Business Use Case</strong></td><td>Business rules, acceptance criteria, decision branches, edge cases.</td><td>When TCs need to reflect business logic, not just UI clicks.</td></tr>
+            <tr><td><strong>Test Data</strong></td><td>Valid/invalid input sets, boundary values, account numbers, product codes.</td><td>Any flow that requires specific data to execute correctly.</td></tr>
+            <tr><td><strong>HLD / Architecture</strong></td><td>Module boundaries, service integrations, async processing flows.</td><td>For integration and SIT test case generation.</td></tr>
+            <tr><td><strong>API Contract</strong></td><td>Endpoint URLs, request/response schemas, authentication details.</td><td>For API test case generation or verifying ERP postings.</td></tr>
+            <tr><td><strong>User Role</strong></td><td>Role names, permissions, test login credentials per role.</td><td>When different roles see different screens or have different capabilities.</td></tr>
+            <tr><td><strong>UX Design</strong></td><td>Component types (ng-select, date picker), exact label text, error messages.</td><td>To improve locator accuracy and assertion text in generated scripts.</td></tr>
+            <tr><td><strong>Functional Rules</strong></td><td>Failure modes, permission enforcement, field validation rules.</td><td>For negative test case generation.</td></tr>
+            <tr><td><strong>Locator Guide</strong></td><td>Element ID patterns, CSS naming conventions, <code>data-testid</code> structures.</td><td>When the app has a consistent locator naming pattern across all pages.</td></tr>
+            <tr><td><strong>Test Case Doc</strong></td><td>High-level TC scenarios lifted from a BRS or design document.</td><td>As seed material when starting a new project.</td></tr>
+            <tr><td><strong>Reference Script</strong></td><td>A verified TC + script pair. Future scripts in the same feature group mirror its locator style.</td><td>After a script passes and should serve as a template for the feature group.</td></tr>
+            <tr><td><strong>Historical</strong></td><td>Accumulated from past run failures and AI-guided heals.</td><td>Created automatically by the platform &mdash; no manual action needed.</td></tr>
           </tbody>
         </table>
       </div>
+
+      <h3 id="feature-groups">Feature Groups</h3>
+      <p>Skills and scripts can be assigned to a <strong>feature group</strong> (e.g. &ldquo;Primary Sales&rdquo;, &ldquo;Recharge&rdquo;, &ldquo;Reporting&rdquo;). Feature groups control which skills are auto-detected in the Generate Script modal, filter the skill picker, and organise the Scripts page by functional area.</p>
+      <ul>
+        <li>Skills with a matching feature group are <strong>pre-selected</strong> when you generate a script for a TC that carries the same use-case tag.</li>
+        <li>To rename a feature group: Scripts page &rarr; click the pencil icon beside the group name in the left panel.</li>
+        <li>GLOBAL-tier skills (Login, Locator Guide) inject into every script regardless of feature group.</li>
+      </ul>
+
+      <h3>Capture Methods</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Method</th><th>How</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag tag-amber">USER_RECORDED</span></td><td>Recorded via the Chrome extension Flow Recorder. Captures real interactions on the live app.</td></tr>
+            <tr><td><span class="tag tag-cyan">AGENT_RECORDED</span></td><td>Recorded by the QA Infinity browser agent (Agentic Trace in Test Writer). Fully automated session.</td></tr>
+            <tr><td><span class="tag tag-violet">LLM_EXTRACTED</span></td><td>Extracted from an uploaded document (XLSX, Word, PDF) via the &ldquo;Extract from doc&rdquo; action.</td></tr>
+            <tr><td><span class="tag tag-green">MANUALLY_ENTERED</span></td><td>Typed or pasted directly in the skill editor.</td></tr>
+            <tr><td><span class="tag tag-green">MANUALLY_UPLOADED</span></td><td>Uploaded as a raw JSON skill file via the <strong>Upload Skill File</strong> action. Useful for migrating skills from another project.</td></tr>
+            <tr><td><span class="tag tag-cyan">AUTO_ACCUMULATED</span></td><td>Accumulated automatically by the platform over time from run results and self-heal feedback. No manual action required.</td></tr>
+            <tr><td><span class="tag tag-violet">MANUAL_QA_FEEDBACK</span></td><td>Added by a QA engineer as direct feedback on a specific run failure &mdash; stored as a HISTORICAL skill to prevent the same mistake in future generations.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Convert from Text</h3>
+      <p>When creating or editing any skill, click <strong>Convert from Text</strong> to paste a plain-text description and have the AI convert it to the correct structured JSON for the selected skill type automatically. Useful for quickly creating skills from existing documentation without manual JSON authoring.</p>
+
+      <h3>Generate TCs from Feature Group</h3>
+      <p>From the <strong>Feature Groups</strong> panel on the Skills page, click <strong>Generate TCs</strong> to auto-generate test cases for every active skill in the feature group sequentially. Results stream in as each skill is processed &mdash; approve the ones you want and discard the rest. This is an alternative to the Test Writer for bulk TC creation from an existing skills library.</p>
+
+      <h3>Bulk API Contract Import</h3>
+      <p>After uploading an OpenAPI/Swagger spec or Postman collection in the Test Writer &rarr; API tab, QA Infinity parses all endpoints and offers to save them as <strong>API_CONTRACT</strong> skills in bulk (up to 200 endpoints at once). Click <strong>Import as Skills</strong> in the parsed endpoint list to save the entire API surface to the Skills library for use in future script generation and TC creation.</p>
+
       <h3>Creating a Login Skill</h3>
       <ol>
         <li>Go to <strong>Skills</strong> and click <strong>+ New Skill</strong>.</li>
-        <li>Select type <strong>Login</strong>.</li>
+        <li>Select type <strong>UI Flow</strong>, name it &ldquo;Login&rdquo; (the word &ldquo;login&rdquo; in the name activates the mandatory login skill behaviour).</li>
         <li>Enter your application URL and credentials.</li>
         <li>Click <strong>Capture</strong> &mdash; the system opens a browser and records the login flow.</li>
         <li>Review and save the captured selectors.</li>
@@ -1285,6 +1706,312 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 /opt/rfbrowser/bin/python -m Browser.entr
       <div class="callout danger">
         <span class="callout-icon">&#128308;</span>
         <div class="callout-body"><strong>A Login skill is required before using Live Screen Capture.</strong> Without it, the automated browser will land on the login page and capture that instead of the target page.</div>
+      </div>
+    </section>
+
+    <!-- CHROME EXTENSION -->
+    <section class="section" id="chrome-extension">
+      <h2><span class="h2-icon">&#129717;</span> Chrome Extension</h2>
+      <p>The QA Infinity Chrome Extension (Manifest V3, compatible with Chrome, Edge, and Brave) is a browser-side companion tool with two capabilities: <strong>Locator Picker</strong> and <strong>Flow Recorder</strong>. Both write directly into your QA Infinity project in real time &mdash; no copy-pasting, no manual skill editing required.</p>
+
+      <div class="cards" style="margin-bottom:8px">
+        <div class="card">
+          <div class="card-icon">&#128250;</div>
+          <div class="card-title">Locator Picker</div>
+          <div class="card-desc">Click any element on the live application. The extension captures the best selector and saves it to your project&rsquo;s Object Repository instantly.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">&#9654;&#65039;</div>
+          <div class="card-title">Flow Recorder</div>
+          <div class="card-desc">Perform a flow on the live application. The extension records every click and input, then imports the complete interaction as a verified <code>UI_FLOW</code> skill.</div>
+        </div>
+      </div>
+
+      <!-- INSTALL -->
+      <h3 id="ext-install" style="font-size:18px;margin-top:36px;padding-bottom:8px;border-bottom:1px solid var(--border2)">Download &amp; Install</h3>
+      <p>The extension is served directly from your QA Infinity instance &mdash; no Chrome Web Store or external download needed.</p>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Open the Install Extension modal</div>
+            <div class="step-desc">In QA Infinity, navigate to the <strong>Skills</strong> page or the <strong>Locators</strong> page. Click the <strong>Install Extension</strong> button in the top toolbar. A modal appears with download instructions and a download link.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Download the extension ZIP</div>
+            <div class="step-desc">Click <strong>Download Extension</strong> in the modal. Your browser saves a file named <code>qa-infinity-extension.zip</code>. This file is generated by your QA Infinity server and pre-configured with your instance URL.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Extract to a permanent folder</div>
+            <div class="step-desc">Right-click the ZIP &rarr; <strong>Extract All</strong> (Windows) or double-click (Mac). Choose a stable folder such as <code>C:\Tools\qa-infinity-extension\</code> or <code>~/tools/qa-infinity-extension/</code>. <strong>Do not delete this folder</strong> &mdash; Chrome references it on every launch. Moving or renaming it disables the extension.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Open Chrome Extensions and enable Developer Mode</div>
+            <div class="step-desc">In Chrome, type <code>chrome://extensions</code> in the address bar and press Enter. In the top-right corner of the page, toggle <strong>Developer mode</strong> ON. Three new buttons appear: Load unpacked, Pack extension, Update.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <div class="step-title">Load the extension</div>
+            <div class="step-desc">Click <strong>Load unpacked</strong>. In the file picker, navigate to the folder you extracted in step 3 and click <strong>Select Folder</strong>. The QA Infinity extension card appears on the Extensions page with a green active indicator.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">6</div>
+          <div class="step-body">
+            <div class="step-title">Pin the extension to the toolbar</div>
+            <div class="step-desc">Click the <strong>puzzle-piece &#129717;</strong> icon in the Chrome toolbar. Find <em>QA Infinity</em> in the list and click the pin icon next to it. The QA Infinity icon now appears permanently in your toolbar for one-click access.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">7</div>
+          <div class="step-body">
+            <div class="step-title">Verify the connection</div>
+            <div class="step-desc">Click the QA Infinity toolbar icon. The popup should show your instance URL and the active project name. If it shows &ldquo;Unable to connect&rdquo;, check that QA Infinity is running and the URL in the popup settings matches your instance (default: <code>http://localhost:3300</code>).</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">
+          <strong>Edge and Brave users.</strong> The same steps apply &mdash; both browsers support unpacked extensions via Developer mode. In Edge, navigate to <code>edge://extensions</code>. In Brave, navigate to <code>brave://extensions</code>.
+        </div>
+      </div>
+
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body">
+          <strong>Changing the API URL.</strong> If your QA Infinity instance is hosted on a remote server (not localhost), click the QA Infinity extension icon &rarr; <strong>Settings</strong> (gear icon) &rarr; update the <strong>API URL</strong> field to your server address, e.g. <code>https://qa.yourcompany.com</code>. Save and reload.
+        </div>
+      </div>
+
+      <!-- LOCATOR PICKER -->
+      <h3 id="ext-locator" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">Locator Picker &mdash; Building the Object Repository</h3>
+      <p>The Locator Picker lets you click elements on the live application and have their selectors saved to the <strong>Locators</strong> page (Object Repository) in your project. The AI script agent reads this repository during generation, dramatically improving selector accuracy over guessed locators.</p>
+
+      <h3>How to capture locators</h3>
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Activate Locator Picker mode</div>
+            <div class="step-desc">Click the QA Infinity toolbar icon. In the popup, click <strong>Locator Picker</strong>. The button turns active (highlighted) and a thin coloured border appears around the browser viewport indicating picker mode is ON.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Navigate to the page and hover over elements</div>
+            <div class="step-desc">Navigate your application to the page containing the elements you want to capture. As you move the mouse, the extension highlights each element under the cursor in <strong>blue</strong> and shows a tooltip with the candidate selector.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Click the element to capture it</div>
+            <div class="step-desc">Click the highlighted element. The extension evaluates all available selectors (ID, data-testid, role+name, CSS path, XPath) and picks the most stable one. A confirmation tooltip shows the chosen selector and the name it will be saved under.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Confirm and save</div>
+            <div class="step-desc">The captured locator is sent to QA Infinity and saved to the project&rsquo;s Locators page immediately. A green toast notification in the popup confirms the save. No copy-paste or manual entry needed.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <div class="step-title">Repeat for all key elements on the page</div>
+            <div class="step-desc">Capture all important interactive elements: username/password fields, submit buttons, nav menu items, dropdowns, date pickers, modal triggers. The picker stays active until you click the button again to deactivate it.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="table-wrap" style="margin-top:8px">
+        <table>
+          <thead><tr><th>Selector Priority</th><th>Example</th><th>Why preferred</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag tag-green">1st</span> <code>data-testid</code></td><td><code>css=[data-testid="submit-btn"]</code></td><td>Explicitly added for testing — never changes with UI refactors.</td></tr>
+            <tr><td><span class="tag tag-cyan">2nd</span> Role + Name</td><td><code>role=button[name="Save Order"]</code></td><td>Semantic, readable, resilient to CSS class changes.</td></tr>
+            <tr><td><span class="tag tag-amber">3rd</span> Stable ID</td><td><code>css=#kc-login</code></td><td>Fast and reliable when IDs are stable.</td></tr>
+            <tr><td><span class="tag tag-violet">4th</span> CSS Path</td><td><code>css=.order-form button[type="submit"]</code></td><td>Used as fallback when no stable attribute exists.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="ext-locator-use">How captured locators improve script generation</h3>
+      <p>Locators saved to the repository are surfaced to the AI script agent as an autocomplete hint pool. When the agent writes a keyword like <code>Click   Save Order button</code>, it checks the repository first. If a matching locator exists, it uses the exact captured selector instead of guessing.</p>
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body">
+          <strong>Recommended workflow.</strong> Before generating scripts for a new feature, spend 5&ndash;10 minutes on the Locator Picker &mdash; click every button, field, and nav item the feature uses. This one-time investment eliminates most selector failures across all scripts generated for that feature.
+        </div>
+      </div>
+      <p>You can also view and edit all saved locators on the <strong>Locators</strong> page in QA Infinity: rename them, correct the selector string, or delete stale entries. Locators are project-scoped &mdash; the same repository is used by all TCs in the project.</p>
+
+      <!-- FLOW RECORDER -->
+      <h3 id="ext-recorder" style="font-size:18px;margin-top:40px;padding-bottom:8px;border-bottom:1px solid var(--border2)">Flow Recorder &mdash; Creating Skills from Live Interactions</h3>
+      <p>The Flow Recorder captures your interactions on the live application step by step and imports them as a <code>UI_FLOW</code> skill. Because the skill was recorded against the real application, it contains verified selectors &mdash; the AI treats these as authoritative and copies them verbatim into every generated script that uses the skill.</p>
+
+      <div class="callout info">
+        <span class="callout-icon">&#128250;</span>
+        <div class="callout-body">
+          <strong>What the recorder captures:</strong>
+          <ul style="margin:6px 0 0;padding-left:18px">
+            <li>Clicks on buttons, links, icon buttons</li>
+            <li>Text input into form fields (<code>type</code> events)</li>
+            <li>React Select / infinite-select dropdown selections</li>
+            <li>Checkbox and radio toggle interactions</li>
+            <li>Navigation between pages (URL changes recorded as steps)</li>
+          </ul>
+          Locators are resolved in reliability order: <code>data-testid</code> &rarr; <code>role+name</code> &rarr; stable ID &rarr; CSS path.
+        </div>
+      </div>
+
+      <h3 id="ext-skill-login">Use Case 1 &mdash; Recording a Login Skill</h3>
+      <p>The Login skill is the single most important skill in any project. Recording it via the extension captures the exact selectors your application uses for authentication &mdash; SSO redirects, Keycloak pages, custom login forms.</p>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Navigate to your application&rsquo;s login page</div>
+            <div class="step-desc">Open the application in Chrome. Make sure you are <em>logged out</em> so the login form is visible. Navigate to the base URL &mdash; the extension will record from this point.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Click the extension icon &rarr; <strong>Flow Recorder</strong> &rarr; <strong>Start Recording</strong></div>
+            <div class="step-desc">A red recording indicator appears in the extension popup. Every interaction you perform from this point is captured.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Perform the login flow exactly as a user would</div>
+            <div class="step-desc">Click the username field &rarr; type the test username &rarr; click the password field &rarr; type the test password &rarr; click the Login / Submit button. If your app has an SSO redirect (Keycloak, ADFS), perform the redirect and authenticate there too. Wait for the dashboard to load fully.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Stop Recording</strong></div>
+            <div class="step-desc">The recorder shows a summary of all captured steps (e.g. &ldquo;Navigate to https://app.example.com&rdquo;, &ldquo;Fill [css=#username] with testuser&rdquo;, &ldquo;Click [role=button[name=&ldquo;Sign In&rdquo;]]&rdquo;). Review the steps to confirm they look correct.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Import as Skill</strong></div>
+            <div class="step-desc">A dialog opens asking for the skill name and project. Name it <strong>Login</strong> (the word &ldquo;login&rdquo; activates the mandatory login skill behaviour). Select your project. Click <strong>Save</strong>. The skill appears in your Skills page with capture method <span class="tag tag-amber">USER_RECORDED</span>.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">
+          <strong>Do not record your real admin password.</strong> Use dedicated test credentials for all recorded skills. Skills are stored in the project database and visible to all project members.
+        </div>
+      </div>
+
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Cancel recording.</strong> Click <strong>Cancel</strong> in the recording panel at any time to abort the session without creating a skill. The browser session is terminated and no data is saved.</div>
+      </div>
+
+      <h3 id="ext-skill-nav">Use Case 2 &mdash; Recording a Navigation Skill</h3>
+      <p>Navigation skills teach the AI how to reach specific pages inside the application after login. Without them, the agent guesses sidebar menu clicks &mdash; which is the most common source of script failure in navigation-heavy apps.</p>
+
+      <ul class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Log in to the application and land on the dashboard</div>
+            <div class="step-desc">Start from the post-login state. You do not need to record the login again &mdash; the Login skill already handles that. Start recording from the dashboard.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Click the extension icon &rarr; <strong>Flow Recorder</strong> &rarr; <strong>Start Recording</strong></div>
+            <div class="step-desc">Red recording indicator activates.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Navigate to the target page using the sidebar menu</div>
+            <div class="step-desc">Click every menu item in order: section headers (if the sidebar has collapsible groups) followed by the leaf page link. For example: click <em>Primary Sales</em> section header to expand it &rarr; click <em>New Order</em> leaf link. Wait for the page to load fully before stopping.</div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Click <strong>Stop Recording</strong>, then <strong>Import as Skill</strong></div>
+            <div class="step-desc">Name the skill descriptively: <strong>&ldquo;Navigate to New Order&rdquo;</strong>. Set the <strong>Feature Group</strong> to match the use-case tag of the TCs this navigation supports (e.g. <code>primary-sales</code>). Set tier to <strong>FEATURE</strong>. Click Save.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body">
+          <strong>Record one navigation skill per feature group.</strong> You only need to record the path to the main landing page for each feature &mdash; individual TCs describe what to do once there. A single &ldquo;Navigate to Stock Management&rdquo; skill covers all 30+ TCs in the stock management feature group.
+        </div>
+      </div>
+
+      <h3>Use Case 3 &mdash; Recording a Complex Form Interaction</h3>
+      <p>For forms with custom dropdowns, date pickers, or multi-step modals, a recorded skill gives the agent the exact interaction sequence. Without it, the agent must guess how to open and select from custom components &mdash; which almost always fails.</p>
+      <ol>
+        <li>Start recording from the page containing the form (after navigating there manually).</li>
+        <li>Fill the form completely: click each field in order, select dropdown values, pick dates, handle any modals.</li>
+        <li>Stop recording after the form is submitted or after the interaction sequence you want to teach.</li>
+        <li>Import as a skill named after the form action (e.g. &ldquo;Create POS Sale Order &mdash; Form Fill&rdquo;). Set Feature Group to match the relevant TCs.</li>
+      </ol>
+      <p>When this skill is selected in the Generate Script modal, the agent replicates the exact interaction sequence &mdash; including the custom dropdown open/select pattern &mdash; for every TC in that feature group.</p>
+
+      <h3>What happens to a recorded skill in script generation</h3>
+      <p>When the Generate Script modal runs with a <code>USER_RECORDED</code> skill selected, the agent prompt contains:</p>
+      <pre><code><span class="cm">╔══════════════════════════════════════════════════════════╗</span>
+<span class="cm">║  RECORDED SKILL — LIVE BROWSER VERIFIED                  ║</span>
+<span class="cm">║  These selectors were captured from the real application ║</span>
+<span class="cm">║  Copy them VERBATIM. Do NOT substitute alternatives.     ║</span>
+<span class="cm">╚══════════════════════════════════════════════════════════╝</span>
+<span class="cm"># Steps recorded from live browser:</span>
+<span class="key">Step 1:</span> <span class="str">Navigate   https://app.example.com</span>
+<span class="key">Step 2:</span> <span class="str">Fill Text  css=#username              ${TC_USERNAME}</span>
+<span class="key">Step 3:</span> <span class="str">Fill Text  css=#password              ${TC_PASSWORD}</span>
+<span class="key">Step 4:</span> <span class="str">Click      role=button[name="Sign In"]</span>
+<span class="key">Step 5:</span> <span class="str">Wait For   css=.dashboard-header</span></code><span class="pre-label">agent prompt (excerpt)</span></pre>
+      <p>The agent treats these as ground truth and copies them exactly into the <code>*** Keywords ***</code> section. The result is a script that runs correctly on the first attempt &mdash; no manual selector hunting required.</p>
+
+      <h3>Skill management after recording</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Action</th><th>Where</th><th>When to do it</th></tr></thead>
+          <tbody>
+            <tr><td><strong>View recorded steps</strong></td><td>Skills page &rarr; click skill name</td><td>To verify what was captured before using the skill in generation.</td></tr>
+            <tr><td><strong>Edit a step</strong></td><td>Skills page &rarr; skill detail &rarr; Edit</td><td>If a selector changed after a UI update. Edit the specific step; no need to re-record the entire flow.</td></tr>
+            <tr><td><strong>Re-record</strong></td><td>Delete old skill &rarr; record again</td><td>After major UI redesigns where multiple selectors changed.</td></tr>
+            <tr><td><strong>Set Feature Group</strong></td><td>Skills page &rarr; skill detail &rarr; Edit metadata</td><td>To ensure the skill auto-appears in the Generate Script modal for the right TCs.</td></tr>
+            <tr><td><strong>Set tier to GLOBAL</strong></td><td>Skills page &rarr; skill detail &rarr; Edit metadata</td><td>For the Login skill only &mdash; makes it inject into every generated script in the project.</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
