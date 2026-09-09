@@ -1,0 +1,23 @@
+# Force LF line endings for shell scripts on all platforms.
+# Prevents Windows git (autocrlf=true) from converting LF -> CRLF on checkout,
+# which causes bash to emit "command not found" errors on Linux servers.
+*.sh    text eol=lf
+
+# Standard text files — normalise to LF in repo, checkout as native
+*.ts    text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.env*  text eol=lf
+*.conf  text eol=lf
+*.prisma text eol=lf
+
+# Binary files — no line ending conversion
+*.tar.gz  binary
+*.tar     binary
+*.gz      binary
+*.png     binary
+*.jpg     binary
+*.ico     binary

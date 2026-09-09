@@ -129,9 +129,12 @@ $([ "$BUILD_RUNNER" = true ] && echo "docker load < /data/qa-runner-hotfix-${PRE
 ## Step 3 -- Update docker-compose.yml image tags
 
 \`\`\`yaml
-$([ "$BUILD_API" = true ] && printf "# qa-api:\nimage: qa-api:$COMMIT\n")
-$([ "$BUILD_UI" = true ] && printf "# qa-ui:\nimage: qa-ui:$COMMIT\n")
-$([ "$BUILD_RUNNER" = true ] && printf "# qa-runner:\nimage: qa-runner:$COMMIT")
+$([ "$BUILD_API" = true ] && echo "# qa-api:")
+$([ "$BUILD_API" = true ] && echo "image: qa-api:$COMMIT")
+$([ "$BUILD_UI" = true ] && echo "# qa-ui:")
+$([ "$BUILD_UI" = true ] && echo "image: qa-ui:$COMMIT")
+$([ "$BUILD_RUNNER" = true ] && echo "# qa-runner:")
+$([ "$BUILD_RUNNER" = true ] && echo "image: qa-runner:$COMMIT")
 \`\`\`
 
 ---
