@@ -175,3 +175,41 @@ echo ""
 echo "  Next: scp the files above to the target server"
 echo "  Then follow README-hotfix-${PREFIX}.md"
 echo "========================================"
+
+# --- Google Drive upload (auto, if rclone is configured) ---
+#
+# One-time setup on this machine:
+#   1. Install rclone:  curl https://rclone.org/install.sh | sudo bash
+#   2. Configure Drive: rclone config
+#        -> New remote -> name it "gdrive" -> type "drive"
+#        -> Follow the OAuth browser link, grant access
+#        -> Leave all other options as default
+#   3. Test:            rclone ls gdrive:
+#
+# After setup, every build automatically uploads to:
+#   Google Drive -> QA-Infinity-Hotfixes/
+#
+GDRIVE_REMOTE="gdrive"
+GDRIVE_FOLDER="QA-Infinity-Hotfixes"
+
+if command -v rclone &>/dev/null && rclone listremotes 2>/dev/null | grep -q "^${GDRIVE_REMOTE}:"; then
+  echo ""
+  echo "--- Uploading to Google Drive (${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/) ---"
+  rclone copy "$OUT_DIR/" "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/" \
+    --include "*${PREFIX}*" \
+    --progress \
+    --transfers 4
+  echo ""
+  echo "Drive upload complete. Files at:"
+  rclone ls "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/" --include "*${PREFIX}*" | \
+    awk '{printf "  %-12s %s\n", $1, $2}'
+  echo ""
+  echo "Full folder on Drive:"
+  rclone ls "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/" | sort | tail -20 | \
+    awk '{printf "  %-12s %s\n", $1, $2}'
+else
+  echo ""
+  echo "  [Drive] rclone not configured -- skipping upload."
+  echo "  To enable: install rclone and run 'rclone config' to add a remote"
+  echo "  named '${GDRIVE_REMOTE}' pointing to your Google Drive."
+fi
