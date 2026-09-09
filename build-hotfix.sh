@@ -14,20 +14,22 @@
 #   ./build-hotfix.sh --runner       # build qa-api + qa-ui + qa-runner
 #   ./build-hotfix.sh --runner-only  # build qa-runner only (large ~1.5 GB)
 #
-# Output (all files land in ./releases/hotfix/, named with date+time+commit):
+# Output (all files land in ../releases/hotfix/, named with date+time+commit):
 #   qa-api-hotfix-YYYY-MM-DD_HHMM-<commit>.tar.gz     (unless --ui-only or --runner-only)
 #   qa-ui-hotfix-YYYY-MM-DD_HHMM-<commit>.tar.gz      (unless --api-only or --runner-only)
 #   qa-runner-hotfix-YYYY-MM-DD_HHMM-<commit>.tar.gz  (only with --runner or --runner-only)
 #   README-hotfix-YYYY-MM-DD_HHMM-<commit>.md
 #
 # Files sort chronologically by name — latest is always at the bottom of ls.
+# Output folder is OUTSIDE the repo (../releases/hotfix) so tarballs are never
+# committed to git and don't bloat the SharePoint-synced repo folder.
 # =============================================================================
 
 set -e
 
 COMMIT=$(git rev-parse --short HEAD)
 STAMP=$(date +%Y-%m-%d_%H%M)
-OUT_DIR="./releases/hotfix"
+OUT_DIR="../releases/hotfix"
 PREFIX="${STAMP}-${COMMIT}"
 BUILD_API=true
 BUILD_UI=true
