@@ -82,6 +82,9 @@ services:
     build:
       context: .
       dockerfile: packages/api/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     image: qa-infinity-qa-api:latest
     container_name: qa-api
     restart: unless-stopped
@@ -138,6 +141,9 @@ services:
     build:
       context: .
       dockerfile: packages/runner/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     image: qa-infinity-qa-runner:latest
     container_name: qa-runner
     restart: unless-stopped
@@ -172,6 +178,9 @@ services:
     build:
       context: .
       dockerfile: packages/frontend/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     image: qa-infinity-qa-ui:latest
     container_name: qa-ui
     restart: unless-stopped

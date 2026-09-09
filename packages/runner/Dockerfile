@@ -126,6 +126,14 @@ RUN chmod +x /docker-entrypoint.sh \
 #   /artifacts  → screenshots, traces, videos partitioned by projectId
 VOLUME ["/scripts", "/artifacts"]
 
+# Build-time version info, exposed via GET /health. Placed last (after the
+# expensive pnpm install layer above) so a changing GIT_SHA on every build
+# only invalidates this cheap final layer, not the dependency cache.
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_SHA=$GIT_SHA
+ENV BUILD_DATE=$BUILD_DATE
+
 EXPOSE 5001
 EXPOSE 6080
 

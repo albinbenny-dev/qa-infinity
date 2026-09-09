@@ -22,6 +22,13 @@ FROM nginx:alpine
 
 COPY --from=builder /app/packages/frontend/dist /usr/share/nginx/html
 
+# Build-time version info, served statically at GET /version.json — the UI
+# has no server-side process to expose a /health-style endpoint from, so a
+# plain static file plays that role instead.
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+RUN printf '{"gitSha":"%s","buildDate":"%s"}\n' "$GIT_SHA" "$BUILD_DATE" > /usr/share/nginx/html/version.json
+
 # The COPY above can carry over restrictive permission bits from the build
 # host's checkout (e.g. some public/ files ending up owner/group-readable
 # only) — nginx's worker runs as a low-privileged user, so a non-world-

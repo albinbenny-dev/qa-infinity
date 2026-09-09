@@ -56,6 +56,9 @@ try {
 
     # ── 4. Build updated images (layer-cached — only changed layers rebuild) ─
     Write-Host "⟳ Building images…"
+    $env:GIT_SHA = (git -C $Dir rev-parse --short HEAD 2>$null)
+    if (-not $env:GIT_SHA) { $env:GIT_SHA = 'unknown' }
+    $env:BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     & $dc[0] $dc[1..($dc.Length - 1)] -p $ProjectName build --parallel @Services
     Write-Host "✔ Build done" -ForegroundColor Green
     Write-Host ""

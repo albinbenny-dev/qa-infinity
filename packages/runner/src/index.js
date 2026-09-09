@@ -566,8 +566,12 @@ function collectBody(req) {
 const server = http.createServer(async (req, res) => {
   // GET /health
   if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      gitSha: process.env.GIT_SHA || 'unknown',
+      buildDate: process.env.BUILD_DATE || 'unknown',
+    }));
     return;
   }
 

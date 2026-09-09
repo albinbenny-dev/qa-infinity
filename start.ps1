@@ -148,6 +148,9 @@ if ($Build -or $isFirstRun) {
     } else {
         Write-Step "Rebuilding Docker images (layer cache preserved)"
     }
+    $env:GIT_SHA = (git -C $PSScriptRoot rev-parse --short HEAD 2>$null)
+    if (-not $env:GIT_SHA) { $env:GIT_SHA = 'unknown' }
+    $env:BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     Compose build qa-api qa-runner qa-ui
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Docker build failed. Check the output above."

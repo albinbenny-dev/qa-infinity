@@ -167,6 +167,8 @@ if $BUILD || $is_first_run; then
   else
     step "Rebuilding Docker images (layer cache preserved)"
   fi
+  export GIT_SHA="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   $COMPOSE build qa-api qa-runner qa-ui
   ok "Images built"
 else

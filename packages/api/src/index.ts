@@ -196,6 +196,8 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     version: '1.0.0',
+    gitSha: process.env.GIT_SHA || 'unknown',
+    buildDate: process.env.BUILD_DATE || 'unknown',
     timestamp: new Date(),
     uptime: process.uptime(),
   });

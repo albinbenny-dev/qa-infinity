@@ -52,6 +52,14 @@ RUN chown -R node:node /app /opt/playwright-cache
 # Switch to non-root user. The 'node' user (uid 1000) is provided by node:alpine.
 USER node
 
+# Build-time version info, exposed via GET /health. Placed last (after the
+# expensive install/generate layers above) so a changing GIT_SHA on every
+# build only invalidates this cheap final layer, not the dependency cache.
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_SHA=$GIT_SHA
+ENV BUILD_DATE=$BUILD_DATE
+
 EXPOSE 4000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \

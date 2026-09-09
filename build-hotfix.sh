@@ -28,6 +28,7 @@
 set -e
 
 COMMIT=$(git rev-parse --short HEAD)
+BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 STAMP=$(date +%Y-%m-%d_%H%M)
 OUT_DIR="../releases/hotfix"
 PREFIX="${STAMP}-${COMMIT}"
@@ -61,7 +62,7 @@ mkdir -p "$OUT_DIR"
 if [ "$BUILD_API" = true ]; then
   echo ""
   echo ">> Building qa-api:$COMMIT ..."
-  docker build -f packages/api/Dockerfile -t "qa-api:$COMMIT" -t "qa-api:latest" .
+  docker build -f packages/api/Dockerfile --build-arg GIT_SHA="$COMMIT" --build-arg BUILD_DATE="$BUILD_DATE" -t "qa-api:$COMMIT" -t "qa-api:latest" .
   echo ">> Saving qa-api image ..."
   docker save "qa-api:latest" | gzip > "$OUT_DIR/qa-api-hotfix-${PREFIX}.tar.gz"
   API_SIZE=$(du -sh "$OUT_DIR/qa-api-hotfix-${PREFIX}.tar.gz" | cut -f1)
@@ -71,7 +72,7 @@ fi
 if [ "$BUILD_UI" = true ]; then
   echo ""
   echo ">> Building qa-ui:$COMMIT ..."
-  docker build -f packages/frontend/Dockerfile -t "qa-ui:$COMMIT" -t "qa-ui:latest" .
+  docker build -f packages/frontend/Dockerfile --build-arg GIT_SHA="$COMMIT" --build-arg BUILD_DATE="$BUILD_DATE" -t "qa-ui:$COMMIT" -t "qa-ui:latest" .
   echo ">> Saving qa-ui image ..."
   docker save "qa-ui:latest" | gzip > "$OUT_DIR/qa-ui-hotfix-${PREFIX}.tar.gz"
   UI_SIZE=$(du -sh "$OUT_DIR/qa-ui-hotfix-${PREFIX}.tar.gz" | cut -f1)
@@ -81,7 +82,7 @@ fi
 if [ "$BUILD_RUNNER" = true ]; then
   echo ""
   echo ">> Building qa-runner:$COMMIT (large image -- this may take several minutes) ..."
-  docker build -f packages/runner/Dockerfile -t "qa-runner:$COMMIT" -t "qa-runner:latest" .
+  docker build -f packages/runner/Dockerfile --build-arg GIT_SHA="$COMMIT" --build-arg BUILD_DATE="$BUILD_DATE" -t "qa-runner:$COMMIT" -t "qa-runner:latest" .
   echo ">> Saving qa-runner image ..."
   docker save "qa-runner:latest" | gzip > "$OUT_DIR/qa-runner-hotfix-${PREFIX}.tar.gz"
   RUNNER_SIZE=$(du -sh "$OUT_DIR/qa-runner-hotfix-${PREFIX}.tar.gz" | cut -f1)

@@ -116,7 +116,12 @@ echo ""
 
 # ── 2. Build updated images (layer-cached — only changed layers rebuild) ─────
 echo "⟳ Building images…"
-DOCKER_BUILDKIT=0 $SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
+GIT_SHA="$(git -C "$DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Routed through `env` (not a bare inline prefix) so the values survive $SUDO —
+# sudo resets the environment before exec'ing its target command by default,
+# which would silently drop a plain `GIT_SHA=... sudo docker compose build`.
+DOCKER_BUILDKIT=0 $SUDO env "GIT_SHA=$GIT_SHA" "BUILD_DATE=$BUILD_DATE" $DC -p "$PROJECT_NAME" build --parallel $SERVICES
 echo "✔ Build done"
 echo ""
 

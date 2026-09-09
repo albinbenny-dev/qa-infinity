@@ -219,7 +219,13 @@ if ($Mode -eq 'sync') {
     # .env and scripts/ are gitignored - untouched by pull.
     # Docker named volumes (qa-pgdata etc.) are completely unaffected.
     Log-Step "Pulling + building on remote for: $Services"
-    ssh $SSH "cd $RemoteDir && git checkout -- . && git pull && sudo $RemoteComposeCmd -p $ProjectName build --parallel $Services && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
+    # GIT_SHA/BUILD_DATE are computed remotely (after the pull, from what was
+    # actually just checked out) and routed through `env` so they survive
+    # `sudo`, which resets the environment before exec'ing its target command.
+    # The backticks below escape `$(...)` so PowerShell passes it through
+    # literally for the REMOTE shell to evaluate — without them, PowerShell
+    # would run `git rev-parse`/`date` locally before the string ever reaches ssh.
+    ssh $SSH "cd $RemoteDir && git checkout -- . && git pull && sudo env `"GIT_SHA=`$(git rev-parse --short HEAD)`" `"BUILD_DATE=`$(date -u +%Y-%m-%dT%H:%M:%SZ)`" $RemoteComposeCmd -p $ProjectName build --parallel $Services && sudo $RemoteComposeCmd -p $ProjectName up -d --no-build $Services"
     if ($LASTEXITCODE -ne 0) { Log-Error "Remote pull/build/restart failed" }
     Log-Ok "Build and restart complete"
 
@@ -284,6 +290,10 @@ New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 # ==============================================================================
 # PHASE 1 - Build images
 # ==============================================================================
+$env:GIT_SHA = (git -C $PSScriptRoot rev-parse --short HEAD 2>$null)
+if (-not $env:GIT_SHA) { $env:GIT_SHA = 'unknown' }
+$env:BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+
 if ($AppOnly) {
     Log-Step "Building Docker images (api + runner + ui — AppOnly mode)"
     Push-Location $PSScriptRoot

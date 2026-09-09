@@ -44,7 +44,15 @@ cd "$DIR"
 
 # ── 1. Build images from current working tree ────────────────────────────────
 echo "⟳ Building images…"
-$SUDO $DC -p "$PROJECT_NAME" build --parallel $SERVICES
+GIT_SHA="$(git -C "$DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# This script builds the working tree as-is (uncommitted edits included) —
+# flag that in the recorded version so /health never claims a clean commit
+# that isn't actually what's running.
+if [ -n "$(git -C "$DIR" status --porcelain 2>/dev/null)" ]; then
+  GIT_SHA="${GIT_SHA}-dirty"
+fi
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+$SUDO env "GIT_SHA=$GIT_SHA" "BUILD_DATE=$BUILD_DATE" $DC -p "$PROJECT_NAME" build --parallel $SERVICES
 echo "✔ Build done"
 echo ""
 
