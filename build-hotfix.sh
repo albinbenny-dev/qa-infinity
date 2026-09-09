@@ -30,7 +30,7 @@ BUILD_API=true
 BUILD_UI=true
 BUILD_RUNNER=false
 
-# ── Parse flags ───────────────────────────────────────────────────────────────
+# --- Parse flags ---
 for arg in "$@"; do
   case $arg in
     --api-only)    BUILD_UI=false; BUILD_RUNNER=false ;;
@@ -51,7 +51,7 @@ echo "========================================"
 
 mkdir -p "$OUT_DIR"
 
-# ── Build images ──────────────────────────────────────────────────────────────
+# --- Build images ---
 if [ "$BUILD_API" = true ]; then
   echo ""
   echo "▶ Building qa-api:$COMMIT ..."
@@ -82,10 +82,10 @@ if [ "$BUILD_RUNNER" = true ]; then
   echo "✔ qa-runner-hotfix-$COMMIT.tar.gz ($RUNNER_SIZE)"
 fi
 
-# ── Get recent commits for changelog ─────────────────────────────────────────
+# --- Get recent commits for changelog ---
 CHANGELOG=$(git log --oneline -10 | sed 's/^/| /' | sed 's/ /  |  /' | awk '{print $0 " |"}')
 
-# ── Generate README ───────────────────────────────────────────────────────────
+# --- Generate README ---
 cat > "$OUT_DIR/README-hotfix-$COMMIT.md" << README
 # QA Infinity — Hotfix $COMMIT
 
