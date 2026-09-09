@@ -11,7 +11,7 @@
 #   ./release.sh v1.0.0 --no-infra       # omit postgres + redis (already on server)
 #   ./release.sh v1.0.0 --no-tag         # build without creating a git tag
 #
-# Output:  ./qa-infinity-v1.0.0.tar.gz   (copy this to each air-gapped server)
+# Output:  ../releases/Fresh Install/qa-infinity-v1.0.0.tar.gz   (copy this to each air-gapped server)
 #
 # On the server:
 #   tar xzf qa-infinity-v1.0.0.tar.gz
@@ -42,7 +42,12 @@ done
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_NAME="qa-infinity-${VERSION}"
 TMP_DIR="$(mktemp -d)/release-$$"
-OUT="${DIR}/${BUNDLE_NAME}.tar.gz"
+# Output lands OUTSIDE the repo (../releases/Fresh Install) — same convention
+# as build-hotfix.sh's ../releases/hotfix — so bundles are never committed to
+# git and don't bloat the SharePoint-synced repo folder.
+OUT_DIR="${DIR}/../releases/Fresh Install"
+OUT="${OUT_DIR}/${BUNDLE_NAME}.tar.gz"
+mkdir -p "${OUT_DIR}"
 
 if docker compose version &>/dev/null 2>&1; then
   DC="docker compose"
@@ -276,7 +281,7 @@ echo "╔═══════════════════════�
 echo "║  ✅ Release bundle ready                                     ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
-echo "  File  : ${BUNDLE_NAME}.tar.gz  (${SIZE})"
+echo "  File  : ${OUT}  (${SIZE})"
 echo "  Tag   : ${VERSION}  →  push with:  git push origin ${VERSION}"
 echo ""
 echo "  Scenario 1 — server has internet:"
@@ -284,7 +289,7 @@ echo "    (server already has the remote pointing to 6D git)"
 echo "    ssh server  →  cd qa-infinity  →  ./sync.sh"
 echo ""
 echo "  Scenario 2 — air-gapped server:"
-echo "    scp ${BUNDLE_NAME}.tar.gz  server:/opt/"
+echo "    scp \"${OUT}\"  server:/opt/"
 echo "    ssh server"
 echo "      tar xzf /opt/${BUNDLE_NAME}.tar.gz -C /opt/"
 echo "      cd /opt/${BUNDLE_NAME}"

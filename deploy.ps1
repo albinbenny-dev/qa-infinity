@@ -104,7 +104,7 @@ param(
     # already present from a prior full deploy. Cuts zip size from ~2.5 GB to ~300-500 MB.
     [switch]$AppOnly,
     # -Mode package only: output zip path. Defaults to
-    # .\qa-infinity-offline-<timestamp>.zip in the repo root.
+    # ..\releases\Fresh Install\qa-infinity-offline-<timestamp>.zip
     [string]$OutZip
 )
 $RemoteComposeCmdExplicit = $PSBoundParameters.ContainsKey('RemoteComposeCmd')
@@ -631,7 +631,12 @@ chmod +x scripts/backup-db.sh
 
     Log-Step "Building zip package"
     if (-not $OutZip) {
-        $OutZip = "$PSScriptRoot\qa-infinity-offline-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
+        # Output lands OUTSIDE the repo (..\releases\Fresh Install) — same
+        # convention as release.sh / build-hotfix.sh — so packages are never
+        # committed to git and don't bloat the SharePoint-synced repo folder.
+        $ReleasesDir = "$PSScriptRoot\..\releases\Fresh Install"
+        New-Item -ItemType Directory -Force -Path $ReleasesDir | Out-Null
+        $OutZip = "$ReleasesDir\qa-infinity-offline-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
     }
     if (Test-Path $OutZip) { Remove-Item -Force $OutZip }
 
