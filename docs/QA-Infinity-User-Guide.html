@@ -273,6 +273,19 @@
     <a class="nav-link sub" href="#updating">Updating</a>
     <a class="nav-link sub" href="#ports">Service Ports</a>
 
+    <div class="nav-section-label">Production Deployment</div>
+    <a class="nav-link" href="#fresh-server">Fresh Server Setup</a>
+    <a class="nav-link" href="#resource-sizing">Resource Sizing</a>
+    <a class="nav-link" href="#k8s-production">Kubernetes / OpenShift</a>
+    <a class="nav-link sub" href="#pod-security">Pod Security</a>
+    <a class="nav-link sub" href="#postgres-nfs">Postgres on NFS</a>
+    <a class="nav-link sub" href="#redis-nonroot">Redis Non-Root</a>
+    <a class="nav-link sub" href="#websocket-proxy">WebSocket Proxying</a>
+    <a class="nav-link sub" href="#tls-ingress">TLS / Ingress</a>
+    <a class="nav-link sub" href="#cors-prod">CORS (Production)</a>
+    <a class="nav-link" href="#airgapped">Air-Gapped Deployment</a>
+    <a class="nav-link" href="#ops-workflow">Day-to-Day Ops</a>
+
     <div class="nav-section-label">User Manual</div>
     <a class="nav-link" href="#projects">Projects</a>
     <a class="nav-link" href="#test-writer">Test Writer</a>
@@ -606,6 +619,472 @@
         <span class="callout-icon">&#8505;&#65039;</span>
         <div class="callout-body"><strong>Advanced / Manual.</strong> You can still run raw <code>docker compose</code> commands directly if you need more control &mdash; e.g. <code>docker compose build qa-api &amp;&amp; docker compose up -d qa-api</code> to rebuild a single service.</div>
       </div>
+    </section>
+
+    <hr>
+
+    <!-- FRESH SERVER SETUP -->
+    <section class="section" id="fresh-server">
+      <h2><span class="h2-icon">&#127959;&#65039;</span> Fresh Server Setup (RHEL / CentOS)</h2>
+      <p>For standing up QA Infinity on a brand-new server <strong>that has internet access</strong>. If it doesn&rsquo;t, use <a href="#airgapped">Air-Gapped Deployment</a> instead &mdash; that path builds images elsewhere and ships tarballs over.</p>
+
+      <h3>Check what you&rsquo;re actually working with</h3>
+      <p>Don&rsquo;t trust the hostname or what you were told the OS is &mdash; check directly:</p>
+      <pre><code><span class="cmd">cat</span> /etc/os-release          <span class="cm"># e.g. "CentOS Stream 9" on a box named like a RHEL prod server</span>
+<span class="cmd">whoami</span>
+<span class="cmd">sudo firewall-cmd</span> --state    <span class="cm"># running / not running</span>
+<span class="cmd">getenforce</span>                   <span class="cm"># Enforcing / Permissive / Disabled</span>
+<span class="cmd">df -h</span>                        <span class="cm"># partition layout &mdash; matters a lot below</span></code><span class="pre-label">bash</span></pre>
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body">If <code>firewalld</code> isn&rsquo;t running and SELinux is <code>Disabled</code>, that&rsquo;s two whole categories of setup work (port rules, SELinux relabeling of bind mounts) you get to skip. Don&rsquo;t add them speculatively &mdash; verify first.</div>
+      </div>
+
+      <h3>Install Docker Engine + Compose v2</h3>
+      <pre><code><span class="cmd">sudo dnf install</span> -y dnf-plugins-core
+<span class="cmd">sudo dnf config-manager</span> --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+<span class="cmd">sudo dnf install</span> -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin</code><span class="pre-label">bash</span></pre>
+      <p>If this fails with conflicts against <code>podman</code>/<code>runc</code>/<code>containerd</code> (RHEL/CentOS ship Podman by default, and <code>podman-docker</code> collides with <code>docker-ce</code>), rerun with <code>--allowerasing</code>.</p>
+      <pre><code><span class="cmd">sudo systemctl enable --now</span> docker
+<span class="cmd">sudo usermod -aG</span> docker &lt;your-user&gt;
+<span class="cmd">newgrp</span> docker            <span class="cm"># or log out/in</span>
+<span class="cmd">docker compose version</span>   <span class="cm"># confirm v2</span></code><span class="pre-label">bash</span></pre>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><code>sudo dnf install</code> may print &ldquo;Unable to read consumer identity&rdquo; / &ldquo;not registered with an entitlement server&rdquo; &mdash; that&rsquo;s just RHEL&rsquo;s subscription-manager nagging because the box isn&rsquo;t registered with Red Hat. Harmless on CentOS Stream, ignore it.</div>
+      </div>
+
+      <h3>Fix disk layout <em>before</em> building anything</h3>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body"><strong>This is the step that will bite you if skipped.</strong> Servers are often provisioned with a small OS disk (<code>/</code>, <code>/var</code>, a few GB each) and a large separate data volume (<code>/data</code>, <code>/opt</code>). Docker and containerd both default to storing everything under <code>/var/lib/...</code>, which fills up mid-build with a cryptic error, not an obvious &ldquo;disk full&rdquo; message: <code>failed to compute cache key: symlink ... /var/lib/containerd/...: no space left on device</code></div>
+      </div>
+      <p>Check first with <code>df -h</code>. If <code>/var</code> is small and something else (e.g. <code>/data</code>) has real space, redirect <strong>both</strong> Docker&rsquo;s data-root and containerd&rsquo;s root/state <em>before</em> running any build &mdash; both daemons need a full stop/reconfigure/restart cycle, which is disruptive once containers are running.</p>
+
+      <p><strong>Redirect Docker&rsquo;s data-root:</strong></p>
+      <pre><code><span class="cmd">sudo systemctl stop</span> docker
+<span class="cmd">sudo mkdir -p</span> /data/docker
+<span class="cmd">sudo tee</span> /etc/docker/daemon.json &lt;&lt;'EOF'
+{
+  "data-root": "/data/docker"
+}
+EOF
+<span class="cmd">sudo rm -rf</span> /var/lib/docker/*   <span class="cm"># safe pre-first-build; it's only cache at this point</span>
+<span class="cmd">sudo systemctl start</span> docker
+<span class="cmd">docker info</span> | grep "Docker Root Dir"   <span class="cm"># should show /data/docker</span></code><span class="pre-label">bash</span></pre>
+
+      <p><strong>Redirect containerd&rsquo;s root/state &mdash; separately, it&rsquo;s a different daemon:</strong></p>
+      <p><code>docker-ce</code> on RHEL/CentOS installs <code>containerd.io</code> as its own systemd service with its own config, independent of Docker&rsquo;s <code>daemon.json</code>. Fixing Docker&rsquo;s data-root alone is <strong>not enough</strong>:</p>
+      <pre><code><span class="cmd">sudo systemctl stop</span> docker containerd
+<span class="cmd">sudo mkdir -p</span> /data/containerd /data/containerd-state
+<span class="cmd">sudo containerd config default</span> | sudo tee /etc/containerd/config.toml &gt; /dev/null
+<span class="cmd">sudo sed -i</span> 's|^root = .*|root = "/data/containerd"|' /etc/containerd/config.toml
+<span class="cmd">sudo sed -i</span> 's|^state = .*|state = "/data/containerd-state"|' /etc/containerd/config.toml
+<span class="cmd">sudo rm -rf</span> /var/lib/containerd/*
+<span class="cmd">sudo systemctl start</span> containerd docker
+<span class="cmd">grep -E</span> '^root|^state' /etc/containerd/config.toml   <span class="cm"># confirm the paths took</span>
+<span class="cmd">df -h</span> /var /data                                       <span class="cm"># confirm /var is no longer filling up</span></code><span class="pre-label">bash</span></pre>
+      <p>Do both together, in that order, before the first build attempt.</p>
+
+      <h3>SELinux &amp; firewalld <span class="tag tag-amber">only if step 1 showed them active</span></h3>
+      <p>Skip this whole section if <code>getenforce</code> said <code>Disabled</code> and <code>firewall-cmd --state</code> said <code>not running</code>.</p>
+      <p><strong>If SELinux is <code>Enforcing</code>:</strong> <code>docker-compose.yml</code> bind-mounts host paths (<code>./scripts:/scripts</code>, <code>./nginx/nginx.conf:...</code>) that need container-accessible labels or the containers get silent permission-denied errors:</p>
+      <pre><code><span class="cmd">sudo dnf install</span> -y policycoreutils-python-utils   <span class="cm"># provides semanage, if missing</span>
+<span class="cmd">sudo semanage fcontext</span> -a -t container_file_t "/data/qa-infinity/scripts(/.*)?"
+<span class="cmd">sudo semanage fcontext</span> -a -t container_file_t "/data/qa-infinity/nginx(/.*)?"
+<span class="cmd">sudo restorecon -Rv</span> /data/qa-infinity/scripts /data/qa-infinity/nginx</code><span class="pre-label">bash</span></pre>
+      <p><strong>If <code>firewalld</code> is running:</strong> open the app ports &mdash; skip <code>5655</code> (Prisma Studio, dev-only, don&rsquo;t expose it):</p>
+      <pre><code><span class="cmd">sudo firewall-cmd</span> --permanent --add-port=3100/tcp   <span class="cm"># UI</span>
+<span class="cmd">sudo firewall-cmd</span> --permanent --add-port=4100/tcp   <span class="cm"># API</span>
+<span class="cmd">sudo firewall-cmd</span> --permanent --add-port=6180/tcp   <span class="cm"># noVNC live runner view</span>
+<span class="cmd">sudo firewall-cmd</span> --reload</code><span class="pre-label">bash</span></pre>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body">Even with the local firewall off/disabled, there may still be a network-level firewall or security group in front of the box that needs these same three ports opened separately &mdash; that&rsquo;s outside anything you can check from the server itself.</div>
+      </div>
+
+      <h3>Get the code onto the server</h3>
+      <p>Check target directory ownership before cloning into it &mdash; a data volume is often root-owned even when your user has sudo:</p>
+      <pre><code><span class="cmd">sudo dnf install</span> -y git   <span class="cm"># not installed by default on a minimal image</span>
+<span class="cmd">ls -ld</span> /data</code><span class="pre-label">bash</span></pre>
+      <p>If it&rsquo;s <code>root:root</code> with no group/other write bit, <code>git clone</code> into it fails with <code>Permission denied</code>. Fix by owning the specific subdirectory (don&rsquo;t <code>chown</code> the whole <code>/data</code> mount &mdash; other things may live there):</p>
+      <pre><code><span class="cmd">sudo mkdir -p</span> /data/qa-infinity
+<span class="cmd">sudo chown -R</span> &lt;your-user&gt;:&lt;your-user&gt; /data/qa-infinity
+<span class="cmd">git clone</span> https://github.com/albinbenny-dev/qa-infinity.git /data/qa-infinity
+<span class="cmd">cd</span> /data/qa-infinity</code><span class="pre-label">bash</span></pre>
+
+      <h3>Configure &amp; start</h3>
+      <p>See <a href="#configure">Configure</a> above for the full <code>.env</code> reference. Two fields need special attention on a fresh server: if you&rsquo;re copying an existing <code>.env</code> from another server (valid &mdash; DB password, JWT secret, LLM/JIRA/SMTP config all carry over fine), update these to match the <em>new</em> server or you&rsquo;ll get CORS errors and broken report/email links pointing at the old box:</p>
+      <pre><code><span class="cmd">ip -4 addr show</span> scope global | grep inet   <span class="cm"># get this server's IP</span></code><span class="pre-label">bash</span></pre>
+      <pre><code><span class="key">CORS_ORIGIN</span>=<span class="str">http://&lt;new-server-ip&gt;:3100</span>
+<span class="key">APP_URL</span>=<span class="str">http://&lt;new-server-ip&gt;:3100</span></code><span class="pre-label">.env</span></pre>
+      <p>Also check <code>docker-compose.yml</code> &mdash; <code>qa-api</code>/<code>qa-runner</code> have an <code>extra_hosts</code> entry hardcoding an internal hostname to an IP. Only matters if this server needs to reach that host for test execution against an internal target app; harmless otherwise.</p>
+      <pre><code><span class="cmd">chmod +x</span> start.sh
+<span class="cmd">./start.sh</span> --build</code><span class="pre-label">bash</span></pre>
+      <p>First build takes ~3&ndash;5 minutes. If this fails with <code>no space left on device</code>, you skipped the disk-layout step above &mdash; go back and do it before retrying; a partial build&rsquo;s cache doesn&rsquo;t carry over cleanly between data roots.</p>
+
+      <h3>Verify</h3>
+      <pre><code><span class="cmd">docker compose ps</span>                                   <span class="cm"># all 5 containers healthy</span>
+<span class="cmd">curl -sf</span> http://localhost:4100/health &amp;&amp; echo OK</code><span class="pre-label">bash</span></pre>
+      <p>Then open <code>http://&lt;server-ip&gt;:3100</code>, register the first account (auto-gets Super Admin), create a project, and confirm a test run executes end-to-end (watch it live via noVNC at <code>http://&lt;server-ip&gt;:6180</code>).</p>
+
+      <div class="callout tip">
+        <span class="callout-icon">&#128161;</span>
+        <div class="callout-body"><strong>Quick reference &mdash; the two things that most often go wrong:</strong> (1) <code>/var</code> is a small partition; Docker and containerd both default there &mdash; fix <em>both</em> <code>daemon.json</code> and <code>/etc/containerd/config.toml</code>, they&rsquo;re separate daemons. (2) <code>/data</code> is root-owned; <code>git clone</code> into it fails silently-ish with <code>Permission denied</code> &mdash; <code>chown</code> the specific subdirectory, not the whole mount.</div>
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- RESOURCE SIZING -->
+    <section class="section" id="resource-sizing">
+      <h2><span class="h2-icon">&#128202;</span> Resource Requirements &amp; Sizing</h2>
+
+      <h3>Runner (<code>qa-runner</code>)</h3>
+      <p>The runner container has significant always-on overhead before any test runs:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Always-on component</th><th>Memory</th></tr></thead>
+          <tbody>
+            <tr><td>6 &times; Xvfb displays + x11vnc</td><td>~360 MB</td></tr>
+            <tr><td>3 &times; warm rfbrowser-node gRPC servers</td><td>~300 MB</td></tr>
+            <tr><td>Node.js runner server</td><td>~80 MB</td></tr>
+            <tr><td><strong>Idle total</strong></td><td><strong>~740 MB</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Each concurrent browser lane adds:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Per-lane component</th><th>Memory</th></tr></thead>
+          <tbody>
+            <tr><td>Headed Chromium (<code>--disable-dev-shm-usage</code>)</td><td>~400&ndash;500 MB</td></tr>
+            <tr><td>Robot Framework process + Python venv imports</td><td>~120&ndash;150 MB</td></tr>
+            <tr><td>Video recording buffers (unbounded until flush)</td><td>~100&ndash;150 MB</td></tr>
+            <tr><td><strong>Per-lane total</strong></td><td><strong>~620&ndash;800 MB</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Recommended settings by deployment type:</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Deployment</th><th>Memory limit</th><th>Workers</th><th><code>/dev/shm</code></th></tr></thead>
+          <tbody>
+            <tr><td>Single-node (constrained cluster)</td><td><strong>6 Gi</strong></td><td>1</td><td>disk-backed (omit <code>shm_size</code>)</td></tr>
+            <tr><td>Multi-node (one runner per node)</td><td><strong>6 Gi per replica</strong></td><td>1&ndash;2</td><td>1 Gi memory-backed</td></tr>
+            <tr><td>High-throughput (dedicated runner nodes)</td><td><strong>8&ndash;12 Gi</strong></td><td>2&ndash;3</td><td>2 Gi memory-backed</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Why 6 Gi?</strong> The default <code>docker-compose.yml</code> sizes the runner for up to 6 concurrent runs (matching BullMQ <code>concurrency: 6</code>). At 3 parallel workers peak usage is ~3 GB; 6 Gi provides headroom for video recording spikes, RF XML output, and <code>/tmp</code> run dirs.</div>
+      </div>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body"><strong>Note on <code>/dev/shm</code>:</strong> Both the Playwright config and the Chrome wrapper already pass <code>--disable-dev-shm-usage</code>, routing Chrome&rsquo;s shared memory to <code>/tmp</code>. The <code>shm_size</code> value in docker-compose is only needed for Selenium-based scripts. Using a disk-backed mount for <code>/tmp</code> removes it from the container memory limit.</div>
+      </div>
+
+      <h3>API (<code>qa-api</code>)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Memory limit</td><td>1 Gi (default)</td></tr>
+            <tr><td>CPU limit</td><td>0.75 (default)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Other Services</h3>
+      <p>Redis: 256 Mi &middot; Postgres: 512 Mi &middot; UI (nginx): 64 Mi</p>
+    </section>
+
+    <hr>
+
+    <!-- KUBERNETES / OPENSHIFT -->
+    <section class="section" id="k8s-production">
+      <h2><span class="h2-icon">&#9096;&#65039;</span> Kubernetes / OpenShift Production</h2>
+      <p>Lessons learned bringing QA Infinity up in restricted, on-premises Kubernetes / OpenShift environments.</p>
+
+      <h3 id="pod-security">Pod Security Context</h3>
+      <p>QA Infinity images are built to run as non-root. Apply this security context to every workload in your Helm chart or Kubernetes manifests:</p>
+      <pre><code>securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000          <span class="cm"># 'node' user (api), 'runner' user (runner)</span>
+  fsGroup: 1000
+  supplementalGroups: [0]
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop: [ALL]</code><span class="pre-label">yaml</span></pre>
+      <p>For the UI (<code>qa-ui</code> / nginx), use <code>runAsUser: 65534</code> (nobody).</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Image</th><th>Runtime user</th></tr></thead>
+          <tbody>
+            <tr><td><code>qa-api</code></td><td><code>node</code> (uid 1000, built into <code>node:alpine</code>)</td></tr>
+            <tr><td><code>qa-runner</code></td><td><code>runner</code> (uid 1000, created in Dockerfile)</td></tr>
+            <tr><td><code>qa-ui</code></td><td><code>nobody</code> (uid 65534, built into <code>nginx:alpine</code>)</td></tr>
+            <tr><td><code>qa-redis</code></td><td><code>redis</code> (uid 999, official image default)</td></tr>
+            <tr><td><code>qa-postgres</code></td><td><code>postgres</code> (uid 999, official image default)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="postgres-nfs">Postgres on NFS / Restricted Volumes</h3>
+      <p>The stock <code>postgres:16-alpine</code> image runs <code>initdb</code> as the <code>postgres</code> user (uid 999). On NFS-backed PVCs the volume root is usually owned by root, so <code>initdb</code> fails with permission errors unless the runtime UID owns the data directory.</p>
+      <p><strong>Fix:</strong> set <code>PGDATA</code> to a subdirectory of the mount point. Postgres will <code>mkdir</code> and <code>chown</code> the subdirectory at init time, and because the runtime UID owns the subdirectory (not the volume root) the permission check passes.</p>
+      <pre><code>environment:
+  - PGDATA=/var/lib/postgresql/data/pgdata   <span class="cm"># &larr; subdirectory, not the volume root</span>
+volumes:
+  - qa-pgdata:/var/lib/postgresql/data       <span class="cm"># &larr; PVC mounted at parent dir</span></code><span class="pre-label">yaml</span></pre>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body"><strong>Existing deployments:</strong> changing <code>PGDATA</code> on a deployment that already has data in <code>/var/lib/postgresql/data</code> will cause Postgres to reinitialise from scratch. Take a <code>pg_dump</code> backup before applying this to an existing cluster, then restore after.</div>
+      </div>
+
+      <h3 id="redis-nonroot">Redis &mdash; Non-Root Configuration</h3>
+      <p>The default Redis config writes its RDB snapshot to <code>/data</code> (the volume mount root), which is root-owned on most restricted PVCs. With <code>stop-writes-on-bgsave-error yes</code> (the Redis default), a failed background save <strong>blocks all writes</strong> while Redis keeps responding to <code>PING</code> &mdash; the pod looks healthy but all operations return errors.</p>
+      <p><code>docker-compose.yml</code> already passes the correct flags (<code>redis-server --dir /tmp --stop-writes-on-bgsave-error no</code>). For Helm / Kubernetes, set these in your Redis config map or command args:</p>
+      <pre><code>command: ["redis-server"]
+args:
+  - "--dir"
+  - "/tmp"
+  - "--stop-writes-on-bgsave-error"
+  - "no"
+  - "--requirepass"
+  - "$(REDIS_PASSWORD)"</code><span class="pre-label">yaml</span></pre>
+
+      <h3 id="websocket-proxy">WebSocket Proxying (Contour / Envoy)</h3>
+      <p>The live execution log streams over Socket.io (WebSocket upgrade). OpenShift&rsquo;s HAProxy router proxies WebSocket upgrades automatically; <strong>Contour/Envoy does not</strong> &mdash; you must opt in per-route. Add this annotation to the <code>qa-ui</code> Ingress:</p>
+      <pre><code>apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qa-infinity
+  annotations:
+    projectcontour.io/websocket-routes: "/"   <span class="cm"># &larr; enables WS upgrade on all paths</span>
+spec:
+  rules:
+    - host: qa-infinity.apps.your-cluster.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: qa-ui
+                port:
+                  number: 8080</code><span class="pre-label">yaml</span></pre>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">Without this annotation the Socket.io handshake falls back to HTTP long-polling, which causes the live log panel to appear blank even though tests are running.</div>
+      </div>
+
+      <h3 id="tls-ingress">TLS / Ingress Configuration</h3>
+      <p>QA Infinity must be served over HTTPS in production &mdash; the CORS and cookie configuration assumes a single canonical <code>https://</code> origin. Requirements: the ingress host must be under a reachable DNS name, the TLS certificate must match the ingress host (wildcard certs work), and port 443 must be reachable from workstations, not just port 80.</p>
+      <pre><code>spec:
+  tls:
+    - hosts:
+        - qa-infinity.apps.your-cluster.example.com
+      secretName: wildcard-tls-secret   <span class="cm"># existing cert secret in the namespace</span>
+  rules:
+    - host: qa-infinity.apps.your-cluster.example.com
+      ...</code><span class="pre-label">yaml</span></pre>
+
+      <h3 id="cors-prod">CORS Configuration (Production)</h3>
+      <p>The API rejects requests from origins not listed in <code>CORS_ORIGIN</code> with <strong>403 Forbidden</strong> (not 500). A mismatch causes all browser requests to fail with a CORS error. Set both variables to the exact <code>https://</code> URL your users access QA Infinity on:</p>
+      <pre><code><span class="key">APP_URL</span>=<span class="str">https://qa-infinity.apps.your-cluster.example.com</span>
+<span class="key">CORS_ORIGIN</span>=<span class="str">https://qa-infinity.apps.your-cluster.example.com</span></code><span class="pre-label">.env</span></pre>
+      <div class="callout info">
+        <span class="callout-icon">&#8505;&#65039;</span>
+        <div class="callout-body">The API logs a startup warning if <code>CORS_ORIGIN</code> is unset or does not include <code>APP_URL</code>. Check <code>docker logs qa-api</code> (or your pod logs) immediately after startup if browser requests fail.</div>
+      </div>
+      <p><strong>Multiple origins</strong> (e.g. staging + production on the same API):</p>
+      <pre><code><span class="key">CORS_ORIGIN</span>=<span class="str">https://qa-infinity-staging.example.com,https://qa-infinity.example.com</span></code><span class="pre-label">.env</span></pre>
+    </section>
+
+    <hr>
+
+    <!-- AIR-GAPPED -->
+    <section class="section" id="airgapped">
+      <h2><span class="h2-icon">&#128268;</span> Air-Gapped / Offline Deployment</h2>
+      <p>For a new team whose Linux server has <strong>no internet access</strong>. All images are built and saved on a machine that <em>does</em> have internet, then transferred and loaded on the target server &mdash; the target never needs to reach Docker Hub, npm, apt, PyPI, or any other registry.</p>
+
+      <h3>What Ships to the New Team</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>qa-api.tar</code>, <code>qa-runner.tar</code>, <code>qa-ui.tar</code></td><td>The three app images, pre-built</td></tr>
+            <tr><td><code>postgres.tar</code>, <code>redis.tar</code></td><td>Base images, pre-pulled &mdash; the target never calls Docker Hub</td></tr>
+            <tr><td><code>docker-compose.yml</code></td><td>Stack definition (<code>extra_hosts</code> stripped if built with <code>-StripExtraHosts</code>)</td></tr>
+            <tr><td><code>.env</code></td><td>Filled-in config, incl. <code>CORS_ORIGIN</code>/<code>APP_URL</code> patched if built with <code>-CorsOrigin</code></td></tr>
+            <tr><td><code>nginx/nginx.conf</code></td><td>Frontend proxy config</td></tr>
+            <tr><td><code>scripts/backup-db.sh</code> (optional)</td><td>Nightly DB backup cron, if used</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">Do <strong>not</strong> carry over this environment&rsquo;s <code>scripts/</code> folder &mdash; it holds generated <code>.robot</code> files for <em>this</em> team&rsquo;s test cases. The new team starts with an empty one; Docker creates it automatically on first container start.</div>
+      </div>
+
+      <h3>Prerequisites on the Target Server</h3>
+      <p>Docker Engine + Docker Compose v2 already installed &mdash; the one piece this doesn&rsquo;t handle, since if the server has zero internet Docker itself has to come from an offline installer or their own IT/imaging process. 20 GB free disk, 8 GB RAM minimum. A way to get files onto the box: SCP over a reachable network path, or physically via USB if there&rsquo;s truly no network path.</p>
+
+      <h3>Build &amp; Package</h3>
+      <p>If you have <strong>SSH/SCP access</strong> to their server, use <strong>release mode</strong> &mdash; it builds, transfers, and starts everything in one shot:</p>
+      <pre><code><span class="cmd">.\deploy.ps1</span> -Mode release -SSH &lt;new-team-ssh-alias&gt; -RemoteDir /opt/qa-infinity <span class="cm">`</span>
+             -CorsOrigin http://&lt;their-server-ip&gt;:3100 <span class="cm">`</span>
+             -StripExtraHosts</code><span class="pre-label">powershell</span></pre>
+      <p>If there&rsquo;s <strong>no SSH/network path</strong> to their server at all, use <strong>package mode</strong> instead. It does the exact same build+save, but skips SSH entirely and produces a single zip (image tarballs + config + a generated <code>INSTALL.md</code> guide) that you hand over however you can &mdash; email, USB, file share:</p>
+      <pre><code><span class="cmd">.\deploy.ps1</span> -Mode package -CorsOrigin http://&lt;their-server-ip&gt;:3100 <span class="cm">`</span>
+             -StripExtraHosts -OutZip C:\handoff\qa-infinity.zip</code><span class="pre-label">powershell</span></pre>
+      <p><code>-StripExtraHosts</code> removes this deployment&rsquo;s internal-network <code>extra_hosts</code> entries &mdash; specific to the current target application and meaningless (and unnecessarily revealing) on the new team&rsquo;s network. <code>-OutZip</code> is optional; defaults to <code>..\releases\Fresh Install\qa-infinity-offline-&lt;timestamp&gt;.zip</code>.</p>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body">The zip&rsquo;s <code>.env</code> carries real secrets from this deployment (DB password, JWT secret) &mdash; share it over a secure channel, and tell the receiving team to rotate those values for their own instance rather than reuse them.</div>
+      </div>
+
+      <h3>Configure <code>.env</code> for the New Team</h3>
+      <p>Copy <code>.env.example</code> to <code>.env</code> and set, at minimum: <code>POSTGRES_PASSWORD</code>, <code>JWT_SECRET</code>, <code>APP_MODE</code> (see below), <code>ALLOWED_DOMAINS</code>, and <code>CORS_ORIGIN</code>/<code>APP_URL</code> to <code>http://&lt;their-server-ip&gt;:3100</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><code>APP_MODE</code></th><th>When to use</th></tr></thead>
+          <tbody>
+            <tr><td><code>runner</code></td><td>Recommended if the server truly has no reachable LLM endpoint. Disables AI-dependent routes (Test Writer, Chat Agent, Healing Agent, UI Scanner) so nothing tries to phone out. Test Case Library, script execution, Scheduler, and Reports all work fully offline regardless of this setting.</td></tr>
+            <tr><td><code>full</code></td><td>Only if the new team has <em>some</em> reachable LLM endpoint: OpenRouter/Anthropic (needs outbound internet), or an internally-hosted LLM proxy (<code>LLM_PROVIDER=local</code> + <code>LOCAL_LLM_BASE_URL=...</code>).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Leave <code>JIRA_*</code> and <code>SMTP_*</code> blank unless the new team actually has those services reachable.</p>
+
+      <h3>Verify</h3>
+      <pre><code><span class="cmd">cd</span> /opt/qa-infinity
+<span class="cmd">docker compose ps</span>                                   <span class="cm"># all 5 containers healthy</span>
+<span class="cmd">curl -sf</span> http://localhost:4100/health &amp;&amp; echo OK</code><span class="pre-label">bash</span></pre>
+
+      <h3>Manual Fallback <span class="tag tag-amber">only if you can&rsquo;t run deploy.ps1 at all</span></h3>
+      <pre><code><span class="cmd">docker compose build</span> qa-api qa-runner qa-ui
+<span class="cmd">docker pull</span> postgres:16-alpine
+<span class="cmd">docker pull</span> redis:7-alpine
+
+<span class="cmd">docker save</span> qa-infinity-qa-api:latest    -o qa-api.tar
+<span class="cmd">docker save</span> qa-infinity-qa-runner:latest -o qa-runner.tar
+<span class="cmd">docker save</span> qa-infinity-qa-ui:latest     -o qa-ui.tar
+<span class="cmd">docker save</span> postgres:16-alpine           -o postgres.tar
+<span class="cmd">docker save</span> redis:7-alpine               -o redis.tar</code><span class="pre-label">bash</span></pre>
+      <p>Copy those five <code>.tar</code> files, <code>docker-compose.yml</code>, <code>.env</code>, and <code>nginx/nginx.conf</code> onto the media, then on the target server:</p>
+      <pre><code><span class="cmd">mkdir -p</span> /opt/qa-infinity &amp;&amp; cd /opt/qa-infinity
+<span class="cm"># copy all the files above into this directory, then:</span>
+<span class="cmd">docker load</span> -i qa-api.tar
+<span class="cmd">docker load</span> -i qa-runner.tar
+<span class="cmd">docker load</span> -i qa-ui.tar
+<span class="cmd">docker load</span> -i postgres.tar
+<span class="cmd">docker load</span> -i redis.tar
+
+<span class="cmd">docker compose up</span> -d
+<span class="cmd">docker compose ps</span></code><span class="pre-label">bash</span></pre>
+
+      <h3>Building Images in an Air-Gapped Build Environment</h3>
+      <p>The runner Dockerfile fetches Chrome for Testing and Playwright browsers <strong>at build time</strong>. An air-gapped <em>build</em> environment (as opposed to an air-gapped deploy target, above) needs these pre-staged.</p>
+      <p><strong>Chrome for Testing</strong> &mdash; the two ZIPs are fetched from <code>storage.googleapis.com</code>. Mirror them to an internal object store and override the download URLs with build args:</p>
+      <pre><code>ARG CHROME_BASE_URL=https://storage.googleapis.com/chrome-for-testing-public
+ARG CHROME_VERSION=131.0.6778.85
+RUN curl -fsSL "${CHROME_BASE_URL}/${CHROME_VERSION}/linux64/chrome-linux64.zip" ...</code><span class="pre-label">dockerfile</span></pre>
+      <pre><code><span class="cmd">docker build</span> <span class="cm">`</span>
+  --build-arg CHROME_BASE_URL=https://internal-mirror.example.com/cft <span class="cm">`</span>
+  --build-arg CHROME_VERSION=131.0.6778.85 <span class="cm">`</span>
+  -f packages/runner/Dockerfile .</code><span class="pre-label">bash</span></pre>
+      <p><strong>Playwright / RF Browser browsers</strong> &mdash; <code>python -m Browser.entry init</code> and <code>@playwright/test install chromium</code> both contact <code>playwright.azureedge.net</code>. Since the base image already ships the correct Chromium, set <code>PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1</code> to reuse it:</p>
+      <pre><code>ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 /opt/rfbrowser/bin/python -m Browser.entry init || true</code><span class="pre-label">dockerfile</span></pre>
+      <p><strong>Podman rootless storage on a jump server</strong> &mdash; if building with rootless Podman on a jump server with a small <code>/home</code> partition, relocate the storage root before building:</p>
+      <pre><code>[storage]
+  driver = "overlay"
+  graphRoot = "/data/podman-storage"   <span class="cm"># point to a larger partition</span></code><span class="pre-label">~/.config/containers/storage.conf</span></pre>
+      <p><strong>Harbor with an internal CA:</strong></p>
+      <pre><code><span class="cmd">podman push</span> --tls-verify=false harbor.internal.example.com/qa-infinity/qa-api:latest
+<span class="cm"># Or add the CA to the system trust store on the jump server:</span>
+<span class="cmd">cp</span> internal-ca.crt /etc/pki/ca-trust/source/anchors/
+<span class="cmd">update-ca-trust</span></code><span class="pre-label">bash</span></pre>
+
+      <h3><code>APP_MODE=runner</code> for Air-Gapped Sites</h3>
+      <p>Sites without internet access (no Anthropic API key, no JIRA, no SMTP) should set <code>APP_MODE=runner</code> in <code>.env</code>. Strip these keys before deployment to avoid confusing error logs: <code>ANTHROPIC_API_KEY</code>, <code>JIRA_HOST</code>/<code>JIRA_EMAIL</code>/<code>JIRA_API_TOKEN</code>, <code>SMTP_HOST</code>/<code>SMTP_USER</code>/<code>SMTP_PASS</code>.</p>
+    </section>
+
+    <hr>
+
+    <!-- DAY-TO-DAY OPS -->
+    <section class="section" id="ops-workflow">
+      <h2><span class="h2-icon">&#128260;</span> Day-to-Day Ops</h2>
+
+      <h3>Git Workflow</h3>
+      <p><strong>Changes made on the server &rarr; pull locally:</strong></p>
+      <pre><code><span class="cm"># On the server</span>
+<span class="cmd">cd</span> /data/autoab/qa-infinity
+<span class="cmd">git add</span> .
+<span class="cmd">git commit</span> -m "feat: describe what changed"
+<span class="cmd">git push</span></code><span class="pre-label">bash</span></pre>
+      <pre><code><span class="cm"># On your local Windows machine</span>
+<span class="cmd">git pull</span></code><span class="pre-label">powershell</span></pre>
+      <p><strong>Changes made locally &rarr; deploy to server:</strong></p>
+      <pre><code><span class="cm"># Local machine</span>
+<span class="cmd">git add</span> .
+<span class="cmd">git commit</span> -m "feat: describe what changed"
+<span class="cmd">git push</span>
+
+<span class="cm"># On the server — pull and apply</span>
+<span class="cmd">./sync.sh</span>          <span class="cm"># pulls latest and restarts affected services</span></code><span class="pre-label">bash</span></pre>
+
+      <h3>When to Rebuild vs Restart</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>What changed</th><th>Command on server</th></tr></thead>
+          <tbody>
+            <tr><td>TypeScript / JS source files only (<code>src/</code>)</td><td><code>docker compose restart</code></td></tr>
+            <tr><td><code>package.json</code>, <code>pnpm-lock.yaml</code></td><td><code>docker compose up -d --build</code></td></tr>
+            <tr><td>Any <code>Dockerfile</code></td><td><code>docker compose up -d --build</code></td></tr>
+            <tr><td>New Prisma migration</td><td><code>docker compose exec qa-api npx prisma migrate deploy</code></td></tr>
+            <tr><td><code>nginx/nginx.conf</code></td><td><code>docker compose restart qa-ui</code></td></tr>
+            <tr><td><code>.env</code> values changed</td><td><code>docker compose up -d</code> (re-reads env)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Database Migrations</h3>
+      <p>All schema changes must go through Prisma migrations &mdash; <strong>never alter the database directly</strong>.</p>
+      <pre><code><span class="cm"># 1. Edit packages/api/prisma/schema.prisma, then generate a migration:</span>
+<span class="cmd">docker compose exec</span> qa-api npx prisma migrate dev --name add_your_column
+
+<span class="cm"># 2. Commit and push</span>
+<span class="cmd">git add</span> packages/api/prisma/
+<span class="cmd">git commit</span> -m "feat: add column xyz to table abc"
+<span class="cmd">git push</span>
+
+<span class="cm"># 3. Apply on the server</span>
+<span class="cmd">git pull</span>
+<span class="cmd">docker compose exec</span> qa-api npx prisma migrate deploy</code><span class="pre-label">bash</span></pre>
+      <div class="callout warning">
+        <span class="callout-icon">&#9888;&#65039;</span>
+        <div class="callout-body"><strong>Never edit the database file directly.</strong> Direct edits cause schema drift and are lost on the next deploy.</div>
+      </div>
+
+      <h3>Sync Script (DB &amp; Volumes)</h3>
+      <p><code>git pull</code> syncs code only. The PostgreSQL data and uploaded files (scripts, artifacts) live in Docker named volumes and need the <code>sync.sh</code> script &mdash; it does <code>git pull &rarr; docker compose up -d --build</code> for services whose images changed, or <code>docker compose restart</code> for source-only changes.</p>
+
+      <h3>GitHub Personal Access Token</h3>
+      <p>GitHub requires a token (not your account password) for git operations from the server.</p>
+      <ol>
+        <li>GitHub &rarr; avatar &rarr; <strong>Settings</strong> &rarr; <strong>Developer settings</strong> &rarr; <strong>Personal access tokens</strong> &rarr; <strong>Tokens (classic)</strong> &rarr; <strong>Generate new token (classic)</strong>.</li>
+        <li>Check the <strong><code>repo</code></strong> scope. Set an expiry date.</li>
+        <li>Copy the token immediately &mdash; GitHub only shows it once.</li>
+        <li>Use it as the <strong>Password</strong> when <code>git push</code> prompts for credentials.</li>
+      </ol>
+      <p>To avoid re-entering credentials on every push:</p>
+      <pre><code><span class="cmd">git config</span> --global credential.helper store</code><span class="pre-label">bash</span></pre>
+      <p>After the first authenticated push, git caches the token permanently on disk.</p>
     </section>
 
     <hr>
