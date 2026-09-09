@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-ui
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-ui") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "qa-infinity.selectorLabels" (dict "name" "qa-ui") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qa-infinity.selectorLabels" (dict "name" "qa-ui") | nindent 8 }}
+    spec:
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.image.pullSecrets | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # 'nobody', built into nginx:alpine
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        seccompProfile:
+          type: {{ .Values.podSecurityContext.seccompProfile.type }}
+      containers:
+        - name: qa-ui
+          image: {{ .Values.image.registry }}/qa-ui:{{ required "image.tag is required — pass --set image.tag=<commit-sha>" .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: TZ
+              value: "Asia/Kolkata"
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.resources.ui | nindent 12 }}
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: qa-infinity-nginx-conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-ui
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-ui") | nindent 4 }}
+  ports:
+    - port: 8080
+      targetPort: 8080

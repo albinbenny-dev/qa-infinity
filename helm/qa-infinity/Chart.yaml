@@ -1,0 +1,11 @@
+apiVersion: v2
+name: qa-infinity
+description: >-
+  QA Infinity — self-hosted, AI-driven QA automation platform. Kubernetes/
+  OpenShift translation of the project's docker-compose.yml, for air-gapped
+  and on-prem cluster deployments. See README.md in this chart for the
+  release workflow (build images -> push to internal registry -> helm
+  upgrade) used for hotfixes shipped via release-k8s.sh.
+type: application
+version: 0.1.0
+appVersion: "1.2.0"

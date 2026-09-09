@@ -1,0 +1,84 @@
+# One PVC per docker-compose named volume (qa-pgdata, qa-data, qa-artifacts,
+# qa-reqdocs) plus qa-scripts, which replaces the ./scripts bind mount.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qa-pgdata
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.postgres.accessMode | quote }}]
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.postgres.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qa-data
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.data.accessMode | quote }}]
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qa-artifacts
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.artifacts.accessMode | quote }}]
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.artifacts.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qa-reqdocs
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.reqdocs.accessMode | quote }}]
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.reqdocs.size }}
+---
+# ReadWriteMany — qa-api writes generated .robot files, qa-runner reads/runs
+# them, concurrently. Needs a storage class that supports RWX (NFS, CephFS,
+# EFS, etc). Same data docker-compose's ./scripts bind mount holds.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qa-scripts
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.scripts.accessMode | quote }}]
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.scripts.size }}

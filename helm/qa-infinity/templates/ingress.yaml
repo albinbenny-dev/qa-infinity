@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qa-infinity
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.ingress.websocketAnnotation }}
+    # Live execution logs stream over Socket.io (WebSocket upgrade). OpenShift's
+    # HAProxy router proxies this automatically; Contour/Envoy does not — this
+    # opts in per-route. See User Guide, "WebSocket Proxying (Contour / Envoy)".
+    # No-op (harmless) on ingress controllers that don't recognize it.
+    projectcontour.io/websocket-routes: "/"
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ required "ingress.tls.secretName is required when ingress.tls.enabled" .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: qa-ui
+                port:
+                  number: 8080
+{{- end }}

@@ -1,0 +1,206 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# QA Infinity — Helm values
+#
+# Mirrors docker-compose.yml + .env.example. Every value here has a direct
+# counterpart in one of those two files — comments below cross-reference them
+# so this stays easy to keep in sync as the compose stack evolves.
+#
+# SECRETS: do not put real passwords/API keys in this file if it's committed
+# to git as-is. Leave the secrets.* block blank here and pass real values via
+# a separate, gitignored values-secrets.yaml (same convention as .env being
+# gitignored) at install/upgrade time:
+#   helm upgrade --install qa-infinity ./helm/qa-infinity \
+#     -f ./helm/qa-infinity/values.yaml \
+#     -f ./values-secrets.yaml
+# ═══════════════════════════════════════════════════════════════════════════
+
+namespace: qa-infinity
+
+# ── Images ────────────────────────────────────────────────────────────────
+# registry: your internal registry path (Harbor, etc). Air-gapped clusters
+# push here via release-k8s.sh — see that script and this chart's README.
+# tag: set per release — release-k8s.sh fills this in automatically from
+# the commit SHA when it packages a hotfix (never ":latest" — see the
+# chart README for why that matters specifically for Kubernetes).
+image:
+  registry: harbor.internal.example.com/qa-infinity
+  tag: "" # REQUIRED at install time — e.g. --set image.tag=abc1234
+  pullPolicy: IfNotPresent
+  pullSecrets: [] # e.g. [{ name: harbor-pull-secret }] if the registry needs auth
+
+# Base images — pulled from Docker Hub by default. For a fully air-gapped
+# cluster with no path to Docker Hub even from the registry side, mirror
+# these into your internal registry too and override the two lines below.
+postgresImage: postgres:16-alpine
+redisImage: redis:7-alpine
+
+# ── App mode (.env: APP_MODE) ────────────────────────────────────────────
+# full   — complete platform with AI agents (requires an LLM key below)
+# runner — no AI features; TC Library, Scripts, Execution, Scheduler, Reports
+#           only. Safe default for air-gapped / client clusters.
+appMode: runner
+
+# ── CORS / App URL (.env: CORS_ORIGIN, APP_URL) ──────────────────────────
+# Set to the public URL/hostname this cluster will actually be reached at
+# (the ingress host below, typically) — required or the UI can't talk to
+# the API. See the User Guide's "CORS Configuration (Production)" section.
+corsOrigin: "http://localhost:3100"
+appUrl: "http://localhost:3100"
+
+# ── Auth domain restriction (.env: ALLOWED_DOMAINS) ──────────────────────
+allowedDomains: ""
+
+# ── JWT (.env: JWT_SECRET, JWT_EXPIRES_IN) ───────────────────────────────
+jwtExpiresIn: "7d"
+
+# ── LLM provider (.env: LLM_PROVIDER + one of the three provider blocks) ─
+# One of: openrouter | anthropic | local
+llm:
+  provider: openrouter
+  openrouterModel: anthropic/claude-sonnet-4-5
+  anthropicModel: claude-sonnet-4-6
+  localBaseUrl: ""
+  localModel: ""
+  localScriptModel: ""
+
+# ── Jira integration (.env: JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN) ───────
+jira:
+  host: ""
+  email: ""
+
+# ── SMTP (.env: SMTP_*) ───────────────────────────────────────────────────
+smtp:
+  host: smtp.gmail.com
+  port: 587
+  secure: false
+  user: ""
+  from: "QA Infinity <no-reply@6dtech.co.in>"
+
+# ── Runner (.env: PLAYWRIGHT_WORKERS, MAX_VNC_SESSIONS) ──────────────────
+playwrightWorkers: 2
+maxVncSessions: 6
+
+# ── Upload / retention (.env: MAX_UPLOAD_BYTES, RETENTION_*) ─────────────
+maxUploadBytes: 52428800
+retention:
+  runResultDays: 90
+  healDays: 30
+  llmCallDays: 90
+  artifactsDays: 30
+  videoDays: 30
+  traceDays: 14
+  screenshotDays: 30
+  maxRunsPerProject: 500
+
+# ── Target app under test (docker-compose.yml: extra_hosts) ──────────────
+# Only needed when the app under test isn't resolvable via normal cluster
+# DNS. Leave hostname blank to omit hostAliases entirely (equivalent to
+# deploy.ps1's -StripExtraHosts — do this when handing the chart to a
+# different team/client).
+targetApp:
+  hostname: ""
+  ip: ""
+
+# ── Secrets (.env: POSTGRES_PASSWORD, JWT_SECRET, *_API_KEY, etc.) ───────
+# See the file header — override these via a separate values-secrets.yaml,
+# never commit real values here.
+secrets:
+  postgresUser: qauser
+  postgresDb: qa_infinity
+  postgresPassword: ""
+  redisPassword: ""
+  jwtSecret: ""
+  openrouterApiKey: ""
+  anthropicApiKey: ""
+  localLlmApiKey: ""
+  jiraApiToken: ""
+  smtpPass: ""
+
+# ── Per-service resource requests/limits ──────────────────────────────────
+# Defaults match docker-compose.yml's deploy.resources blocks / the User
+# Guide's "Resource Requirements & Sizing" section. Tune per cluster.
+resources:
+  postgres:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { cpu: "500m", memory: "512Mi" }
+  redis:
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits: { cpu: "250m", memory: "256Mi" }
+  api:
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits: { cpu: "750m", memory: "1024Mi" }
+  runner:
+    requests: { cpu: "1", memory: "1Gi" }
+    limits: { cpu: "4", memory: "6Gi" } # bump to 8-12Gi for high-throughput — see User Guide
+  ui:
+    requests: { cpu: "50m", memory: "32Mi" }
+    limits: { cpu: "100m", memory: "64Mi" }
+
+# Runner /dev/shm — mirrors docker-compose's shm_size: 256m. Chrome routes
+# its own shared memory to /tmp via --disable-dev-shm-usage; this only
+# covers Selenium-script fallback needs (see User Guide, Resource Sizing).
+runner:
+  replicas: 1
+  shmSizeLimit: "256Mi"
+
+# ── Persistent volumes ─────────────────────────────────────────────────────
+# storageClassName: leave blank to use the cluster default. On NFS-backed
+# storage, postgres needs the PGDATA-subdirectory workaround — already
+# applied in templates/deployment-postgres.yaml (see User Guide, "Postgres
+# on NFS / Restricted Volumes").
+persistence:
+  storageClassName: ""
+  postgres:
+    size: 10Gi
+    accessMode: ReadWriteOnce
+  data:
+    size: 5Gi
+    accessMode: ReadWriteOnce
+  artifacts:
+    size: 20Gi
+    accessMode: ReadWriteOnce
+  reqdocs:
+    size: 5Gi
+    accessMode: ReadWriteOnce
+  scripts:
+    # RWX because both qa-api and qa-runner write/read .robot files here
+    # concurrently — mirrors docker-compose's shared ./scripts bind mount.
+    # Needs a storage class that supports ReadWriteMany (NFS, CephFS, etc).
+    size: 5Gi
+    accessMode: ReadWriteMany
+
+# ── Networking ──────────────────────────────────────────────────────────────
+# Prisma Studio (port 5555) is dev-only — the User Guide explicitly says
+# not to expose it publicly. Off by default; the Service is still created
+# (ClusterIP) so `kubectl port-forward` still works for debugging.
+prismaStudio:
+  enabled: false
+
+# noVNC live-runner viewer. Exposed as its own Service since it's the one
+# thing end users need to reach directly (watching a test execute live).
+novnc:
+  serviceType: ClusterIP # ClusterIP | NodePort | LoadBalancer
+  nodePort: "" # only used when serviceType: NodePort
+
+ingress:
+  enabled: false
+  className: "" # e.g. "contour" — see the WebSocket annotation note below
+  host: qa-infinity.apps.your-cluster.example.com
+  # Live execution logs stream over Socket.io (WebSocket upgrade). OpenShift's
+  # HAProxy router proxies this automatically; Contour/Envoy does not — opt
+  # in per-route. See User Guide, "WebSocket Proxying (Contour / Envoy)".
+  websocketAnnotation: true
+  tls:
+    enabled: false
+    secretName: "" # existing TLS secret in the namespace
+  annotations: {}
+
+# ── Pod security ────────────────────────────────────────────────────────────
+# Matches the User Guide's "Pod Security Context" section exactly — qa-api
+# and qa-runner run as uid 1000 ('node'/'runner' users baked into their
+# images), qa-ui as uid 65534 ('nobody', built into nginx:alpine).
+podSecurityContext:
+  fsGroup: 1000
+  supplementalGroups: [0]
+  seccompProfile:
+    type: RuntimeDefault

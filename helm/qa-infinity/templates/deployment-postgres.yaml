@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-postgres") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single RWO PVC — never run two postgres pods at once
+  selector:
+    matchLabels:
+      {{- include "qa-infinity.selectorLabels" (dict "name" "qa-postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qa-infinity.selectorLabels" (dict "name" "qa-postgres") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999 # postgres official image default
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        seccompProfile:
+          type: {{ .Values.podSecurityContext.seccompProfile.type }}
+      containers:
+        - name: qa-postgres
+          image: {{ .Values.postgresImage }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: TZ
+              value: "Asia/Kolkata"
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_DB
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: POSTGRES_DB } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: POSTGRES_PASSWORD } }
+            # NFS-backed PVCs: the volume root is usually root-owned, so initdb
+            # (running as uid 999) fails unless PGDATA is a subdirectory it can
+            # mkdir+chown itself. See User Guide, "Postgres on NFS".
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.resources.postgres | nindent 12 }}
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: qa-pgdata
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-postgres") | nindent 4 }}
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-api") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "qa-infinity.selectorLabels" (dict "name" "qa-api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qa-infinity.selectorLabels" (dict "name" "qa-api") | nindent 8 }}
+    spec:
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.image.pullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.targetApp.hostname }}
+      hostAliases:
+        - ip: {{ .Values.targetApp.ip | quote }}
+          hostnames: [{{ .Values.targetApp.hostname | quote }}]
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # 'node' user, built into the qa-api image (node:alpine base)
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        supplementalGroups: {{ .Values.podSecurityContext.supplementalGroups }}
+        seccompProfile:
+          type: {{ .Values.podSecurityContext.seccompProfile.type }}
+      containers:
+        - name: qa-api
+          image: {{ .Values.image.registry }}/qa-api:{{ required "image.tag is required — pass --set image.tag=<commit-sha>" .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - configMapRef: { name: qa-infinity-config }
+          env:
+            - name: PORT
+              value: "4000"
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: POSTGRES_DB } }
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: REDIS_PASSWORD } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: JWT_SECRET } }
+            - name: OPENROUTER_API_KEY
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: OPENROUTER_API_KEY } }
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: ANTHROPIC_API_KEY } }
+            - name: LOCAL_LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: LOCAL_LLM_API_KEY } }
+            - name: JIRA_API_TOKEN
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: JIRA_API_TOKEN } }
+            - name: SMTP_PASS
+              valueFrom: { secretKeyRef: { name: qa-infinity-secrets, key: SMTP_PASS } }
+            # $(VAR) below resolves against the env entries already defined
+            # above in this same list — standard Kubernetes env interpolation,
+            # not shell expansion. Same composite URLs docker-compose builds
+            # inline, just assembled here instead of in docker-compose.yml.
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@qa-postgres:5432/$(POSTGRES_DB)"
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@qa-redis:6379"
+          ports:
+            - containerPort: 4000
+            - containerPort: 5555 # Prisma Studio — dev only, see prismaStudio.enabled
+          volumeMounts:
+            - { name: qa-data, mountPath: /data }
+            - { name: qa-scripts, mountPath: /scripts }
+            - { name: qa-artifacts, mountPath: /artifacts }
+            - { name: qa-reqdocs, mountPath: /requirements }
+          readinessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+      volumes:
+        - { name: qa-data, persistentVolumeClaim: { claimName: qa-data } }
+        - { name: qa-scripts, persistentVolumeClaim: { claimName: qa-scripts } }
+        - { name: qa-artifacts, persistentVolumeClaim: { claimName: qa-artifacts } }
+        - { name: qa-reqdocs, persistentVolumeClaim: { claimName: qa-reqdocs } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-api") | nindent 4 }}
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+    {{- if .Values.prismaStudio.enabled }}
+    - name: prisma-studio
+      port: 5555
+      targetPort: 5555
+    {{- end }}

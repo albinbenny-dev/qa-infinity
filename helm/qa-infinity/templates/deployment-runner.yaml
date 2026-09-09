@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-runner
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-runner") | nindent 4 }}
+spec:
+  replicas: {{ .Values.runner.replicas }}
+  selector:
+    matchLabels:
+      {{- include "qa-infinity.selectorLabels" (dict "name" "qa-runner") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qa-infinity.selectorLabels" (dict "name" "qa-runner") | nindent 8 }}
+    spec:
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.image.pullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.targetApp.hostname }}
+      hostAliases:
+        - ip: {{ .Values.targetApp.ip | quote }}
+          hostnames: [{{ .Values.targetApp.hostname | quote }}]
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # 'runner' user, created in packages/runner/Dockerfile
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        supplementalGroups: {{ .Values.podSecurityContext.supplementalGroups }}
+        seccompProfile:
+          type: {{ .Values.podSecurityContext.seccompProfile.type }}
+      containers:
+        - name: qa-runner
+          image: {{ .Values.image.registry }}/qa-runner:{{ required "image.tag is required — pass --set image.tag=<commit-sha>" .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: TZ
+              value: "Asia/Kolkata"
+            - name: MAX_VNC_SESSIONS
+              valueFrom: { configMapKeyRef: { name: qa-infinity-config, key: MAX_VNC_SESSIONS } }
+          ports:
+            - containerPort: 6080
+            - containerPort: 5001 # internal runner API — qa-api calls this via RUNNER_URL
+          volumeMounts:
+            - { name: qa-scripts, mountPath: /scripts }
+            - { name: qa-artifacts, mountPath: /artifacts }
+            # Chrome routes its own shared memory to /tmp via
+            # --disable-dev-shm-usage; this covers Selenium-script fallback
+            # needs only. Mirrors docker-compose's shm_size: 256m.
+            - { name: dshm, mountPath: /dev/shm }
+          resources:
+            {{- toYaml .Values.resources.runner | nindent 12 }}
+      volumes:
+        - { name: qa-scripts, persistentVolumeClaim: { claimName: qa-scripts } }
+        - { name: qa-artifacts, persistentVolumeClaim: { claimName: qa-artifacts } }
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.runner.shmSizeLimit }}
+---
+# Internal-only — qa-api reaches the runner's own API via RUNNER_URL. Always
+# ClusterIP regardless of how noVNC below is exposed, so this never gets
+# accidentally handed a NodePort/LoadBalancer alongside it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-runner
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-runner") | nindent 4 }}
+  ports:
+    - name: runner-api
+      port: 5001
+      targetPort: 5001
+---
+# noVNC — the one thing end users need to reach directly, to watch a test
+# execute live. Exposed separately so its serviceType can differ from the
+# internal-only Service above.
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-runner-novnc
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "qa-infinity.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.novnc.serviceType }}
+  selector:
+    {{- include "qa-infinity.selectorLabels" (dict "name" "qa-runner") | nindent 4 }}
+  ports:
+    - name: novnc
+      port: 6080
+      targetPort: 6080
+      {{- if and (eq .Values.novnc.serviceType "NodePort") .Values.novnc.nodePort }}
+      nodePort: {{ .Values.novnc.nodePort }}
+      {{- end }}

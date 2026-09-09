@@ -1,0 +1,26 @@
+QA Infinity deployed to namespace "{{ .Values.namespace }}".
+
+Check rollout status:
+  kubectl -n {{ .Values.namespace }} get pods
+  kubectl -n {{ .Values.namespace }} rollout status deployment/qa-api
+
+{{- if .Values.ingress.enabled }}
+Reach the UI at:
+  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+No Ingress configured (ingress.enabled: false). Reach the UI with:
+  kubectl -n {{ .Values.namespace }} port-forward svc/qa-ui 3100:8080
+  kubectl -n {{ .Values.namespace }} port-forward svc/qa-api 4100:4000
+{{- end }}
+
+Watch a test run live (noVNC):
+{{- if eq .Values.novnc.serviceType "ClusterIP" }}
+  kubectl -n {{ .Values.namespace }} port-forward svc/qa-runner-novnc 6180:6080
+{{- else }}
+  via the {{ .Values.novnc.serviceType }} Service "qa-runner-novnc"
+{{- end }}
+
+API health check:
+  kubectl -n {{ .Values.namespace }} exec deploy/qa-api -- curl -sf http://localhost:4000/health
+
+First account you register at the UI automatically becomes Super Admin.
