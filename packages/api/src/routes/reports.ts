@@ -811,7 +811,23 @@ function streamFileAsAttachment(res: Response, filePath: string, filename: strin
   fs.createReadStream(filePath).pipe(res);
 }
 
-router.get('/runs/:runId/rf-log-combined', async (req: Request, res: Response, next: NextFunction) => {
+// Poll for a file written by another container on the shared artifacts volume.
+// readdirSync on the parent forces a fresh directory listing, which bypasses a
+// stale negative-lookup cache that existsSync alone would keep hitting.
+async function waitForFile(filePath: string, timeoutMs = 10_000, intervalMs = 250): Promise<boolean> {
+  const dir = path.dirname(filePath);
+  const name = path.basename(filePath);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      if (fs.readdirSync(dir).includes(name) && fs.existsSync(filePath)) return true;
+    } catch { /* dir not visible yet */ }
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+router.get('/runs/:runId/rf-log-combined',async (req: Request, res: Response, next: NextFunction) => {
   try {
     const run = await prisma.run.findFirst({
       where: { id: req.params['runId'], projectId: req.project.id },
@@ -861,7 +877,10 @@ router.get('/runs/:runId/rf-log-combined', async (req: Request, res: Response, n
       }
     }
 
-    if (!fs.existsSync(combinedLogPath)) {
+    // The runner writes the file, not us — on network-backed volumes (NFS/EFS/
+    // Azure Files PVCs) our earlier existsSync above can leave a cached negative
+    // lookup, so the file the runner just wrote may not be visible yet.
+    if (!(await waitForFile(combinedLogPath))) {
       res.status(500).json({ error: 'Combined log was not produced' });
       return;
     }
